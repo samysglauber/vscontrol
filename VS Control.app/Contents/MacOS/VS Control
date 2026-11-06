@@ -1,0 +1,32 @@
+#!/bin/bash
+# Launcher nativo do VS Control.app para macOS
+
+WORKSPACE_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+if [ ! -d "$WORKSPACE_DIR/swift_app" ]; then
+    WORKSPACE_DIR="/Users/samysglauber/Documents/AbletonTracks"
+fi
+
+export PYTHONPATH="$WORKSPACE_DIR:$PYTHONPATH"
+cd "$WORKSPACE_DIR"
+
+# 1. Garante que o servidor Python de Áudio (BlackHole) e AbletonOSC está rodando
+if ! nc -z 127.0.0.1 8080 2>/dev/null; then
+    PYTHON_BIN="/Library/Frameworks/Python.framework/Versions/3.15/bin/python3"
+    if [ ! -f "$PYTHON_BIN" ]; then
+        PYTHON_BIN="$(which python3)"
+    fi
+    "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level warning > /tmp/vs_server.log 2>&1 &
+    for i in {1..35}; do
+        if nc -z 127.0.0.1 8080 2>/dev/null; then
+            break
+        fi
+        sleep 0.15
+    done
+fi
+
+# 2. Executa a aplicação substituindo o processo bash (permite fechamento limpo via Cmd+Q)
+if [ -f "$WORKSPACE_DIR/VS Control.app/Contents/MacOS/VSControl" ]; then
+    exec "$WORKSPACE_DIR/VS Control.app/Contents/MacOS/VSControl"
+else
+    exec "$WORKSPACE_DIR/swift_app/VSControl"
+fi

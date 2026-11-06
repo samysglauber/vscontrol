@@ -1,0 +1,3686 @@
+import SwiftUI
+import AppKit
+import Foundation
+import Combine
+import CoreImage
+import UniformTypeIdentifiers
+
+// ==========================================
+// 1. MODELOS DE DADOS
+// ==========================================
+
+struct CueSection: Identifiable, Codable {
+    var id: String
+    var name: String
+    var time: Double
+    var bar: Double
+    var color: String
+    var waveform: [Double]?
+    
+    var cleanFullName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "Section" }
+        return trimmed
+    }
+    
+    var shortBadgeName: String {
+        let raw = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let upper = raw.uppercased()
+        
+        if upper.contains("COUNT") || upper.contains("CONTAGEM") || upper.contains("1234") {
+            return "Co"
+        }
+        if upper.contains("INTRO") {
+            return "I"
+        }
+        if upper.contains("PRE") || upper.contains("PRÉ") {
+            if upper.contains("2") { return "P2" }
+            return "Pc"
+        }
+        if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") {
+            for n in ["2", "3"] {
+                if upper.contains(n) { return "Po\(n)" }
+            }
+            return "Po"
+        }
+        if upper.contains("CHORUS") || upper.contains("REFRÃO") || upper.contains("REFRAO") {
+            for n in ["2", "3", "4"] {
+                if upper.contains(n) { return "C\(n)" }
+            }
+            return "C"
+        }
+        if upper.contains("VERSE") || upper.contains("VERSO") {
+            for n in ["1", "2", "3", "4", "5", "6"] {
+                if upper.contains(n) { return "V\(n)" }
+            }
+            return "V"
+        }
+        if upper.contains("BRIDGE") || upper.contains("PONTE") {
+            for n in ["2", "3"] {
+                if upper.contains(n) { return "B\(n)" }
+            }
+            return "B"
+        }
+        if upper.contains("SOLO") {
+            return "S"
+        }
+        if upper.contains("VAMP") {
+            return "Vp"
+        }
+        if upper.contains("TAG") {
+            if upper.contains("2") { return "Tg2" }
+            return "Tg"
+        }
+        if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") {
+            return "It"
+        }
+        if upper.contains("INSTRUMENTAL") || upper.contains("INST") {
+            return "Ins"
+        }
+        if upper.contains("OUTRO") || upper.contains("FINAL") || upper.contains("ENDING") {
+            return "O"
+        }
+        
+        if raw.count <= 2 {
+            return raw.uppercased()
+        }
+        return String(raw.prefix(2)).capitalized
+    }
+}
+
+extension Color {
+    init(hex: String) {
+        let clean = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: clean).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch clean.count {
+        case 3:
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 128, 128, 128)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
+}
+
+func formatBpm(_ bpm: Double) -> String {
+    if bpm.truncatingRemainder(dividingBy: 1) == 0 {
+        return "\(Int(bpm))"
+    } else {
+        return String(format: "%.1f", bpm).replacingOccurrences(of: ".", with: ",")
+    }
+}
+
+func formatBars(_ value: Double) -> String {
+    if value.truncatingRemainder(dividingBy: 1.0) == 0 {
+        return "\(Int(value))"
+    } else if value.truncatingRemainder(dividingBy: 0.5) == 0 {
+        let whole = Int(value)
+        return whole > 0 ? "\(whole)½" : "½"
+    } else {
+        return String(format: "%.1f", value)
+    }
+}
+
+func colorForCue(name: String) -> String {
+    let upper = name.uppercased()
+    if upper.contains("COUNT") || upper.contains("CONTAGEM") { return "#64748b" }
+    if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") { return "#fb7185" }
+    if upper.contains("PRE") || upper.contains("PRÉ") { return "#eab308" }
+    if upper.contains("CHORUS") || upper.contains("REFRÃO") { return "#ef4444" }
+    if upper.contains("BRIDGE") || upper.contains("PONTE") { return "#f97316" }
+    if upper.contains("INTRO") { return "#38bdf8" }
+    if upper.contains("VERSE") || upper.contains("VERSO") { return "#a855f7" }
+    if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return "#06b6d4" }
+    if upper.contains("SOLO") { return "#06b6d4" }
+    if upper.contains("TAG") { return "#ec4899" }
+    if upper.contains("OUTRO") || upper.contains("FINAL") { return "#64748b" }
+    return "#3b82f6"
+}
+
+struct SongItem: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let filename: String
+    let path: String
+    var bpm: Double?
+    var time_signature: String?
+    var default_key: String?
+    
+    var displayKey: String {
+        return default_key ?? "D"
+    }
+}
+
+struct SetlistSong: Identifiable, Equatable {
+    let id: UUID
+    let song: SongItem
+    var transitionType: String
+    
+    init(id: UUID = UUID(), song: SongItem, transitionType: String = "AUTO") {
+        self.id = id
+        self.song = song
+        self.transitionType = transitionType
+    }
+    
+    static func == (lhs: SetlistSong, rhs: SetlistSong) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+struct SavedSetlistSongItem: Codable {
+    let song: SongItem
+    let transitionType: String
+}
+
+struct AudioDeviceItem: Identifiable, Codable {
+    let id: Int
+    let name: String
+    let channels: Int
+    let is_default: Bool
+    let is_blackhole: Bool
+}
+
+struct TracksFolderResponse: Codable {
+    let path: String
+    let exists: Bool
+    let songs_count: Int?
+}
+
+struct RefreshTracksResponse: Codable {
+    let status: String
+    let path: String
+    let songs_count: Int
+    let songs: [SongItem]?
+}
+
+struct CueHistorySnapshot {
+    let cues: [CueSection]
+    let bpm: Double
+    let timeSignature: String
+    let description: String
+}
+
+// ==========================================
+// 2. GERENCIADOR DE ESTADO E WEBSOCKET
+// ==========================================
+
+class PlaybackState: ObservableObject {
+    @Published var songs: [SongItem] = []
+    @Published var librarySongs: [SongItem] = []
+    @Published var isLoadingLibrary: Bool = false
+    @Published var tracksFolderPath: String = ""
+    @Published var isScanningFolder: Bool = false
+    
+    // Pilhas de Desfazer e Refazer (Undo / Redo) para Edição de Cues
+    private var undoStack: [CueHistorySnapshot] = []
+    private var redoStack: [CueHistorySnapshot] = []
+    @Published var undoNotificationMessage: String? = nil
+    
+    var shortFolderName: String {
+        if tracksFolderPath.isEmpty { return "Tracks" }
+        let name = URL(fileURLWithPath: tracksFolderPath).lastPathComponent
+        return name.isEmpty ? "Tracks" : name
+    }
+    
+    @Published var setlist: [SetlistSong] = [] {
+        didSet {
+            saveSetlistState()
+        }
+    }
+    @Published var draggedSetlistSong: SetlistSong? = nil
+    @Published var isEditMode: Bool = false
+    
+    @Published var currentSong: SongItem? = nil
+    @Published var currentCues: [CueSection] = []
+    
+    @Published var isPlaying: Bool = false
+    @Published var currentSeconds: Double = 0.0
+    @Published var totalSeconds: Double = 240.0
+    @Published var currentBar: Int = 1
+    @Published var currentBeat: Int = 1
+    @Published var bpm: Double = 120.0
+    @Published var timeSignature: String = "4/4"
+    
+    @Published var currentCueIdx: Int = 0
+    @Published var queuedCueIdx: Int? = nil
+    @Published var loopActive: Bool = false
+    @Published var loopCueIdx: Int? = nil
+    @Published var padActive: Bool = false
+    @Published var padKey: String = "D"
+    
+    @Published var clickVol: Double = 1.0
+    @Published var vsVol: Double = 1.0
+    @Published var clickMute: Bool = false
+    @Published var vsMute: Bool = false
+    @Published var isFadingOut: Bool = false
+    @Published var abletonSynced: Bool = false
+    @Published var scrollToStartTrigger: Int = 0
+    
+    func triggerScrollToStart() {
+        DispatchQueue.main.async {
+            self.scrollToStartTrigger += 1
+        }
+    }
+    
+    @Published var devices: [AudioDeviceItem] = []
+    @Published var selectedDeviceId: Int = 7
+    @Published var selectedDeviceName: String = "BlackHole 2ch"
+    
+    @Published var isAddSongSheetPresented: Bool = false
+    @Published var isQrModalPresented: Bool = false
+    @Published var isSongEditorPresented: Bool = false
+    @Published var serverUrl: String = "http://localhost:8080"
+    
+    // Estado do Editor de Música
+    @Published var editorBpm: Double = 120.0
+    @Published var editorTimeSignature: String = "4/4"
+    @Published var editorCues: [CueSection] = []
+    @Published var isReprocessing: Bool = false
+    @Published var quickEditingCueIdx: Int? = nil
+    @Published var autoAdvance: Bool = true {
+        didSet {
+            UserDefaults.standard.set(autoAdvance, forKey: "saved_auto_advance")
+        }
+    }
+    @Published var guideLeadInBars: Double = 1.0 {
+        didSet {
+            UserDefaults.standard.set(guideLeadInBars, forKey: "saved_guide_lead_in")
+            sendAction("set_guide_lead_in", body: ["bars": guideLeadInBars])
+        }
+    }
+    
+    private var webSocketTask: URLSessionWebSocketTask?
+    
+    init() {
+        if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
+            self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
+        }
+        if let savedLeadIn = UserDefaults.standard.object(forKey: "saved_guide_lead_in") as? Double {
+            self.guideLeadInBars = savedLeadIn
+        }
+        if let savedFolder = UserDefaults.standard.string(forKey: "saved_tracks_folder_path") {
+            self.tracksFolderPath = savedFolder
+        }
+        
+        // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
+        restoreInitialSetlistFromCache()
+        
+        // 2. Busca e atualiza apenas as músicas da Setlist no backend
+        fetchSetlistSongs()
+        fetchTracksFolder()
+        fetchDevices()
+        fetchNetworkInfo()
+        setupWebSocket()
+    }
+    
+    private func restoreInitialSetlistFromCache() {
+        if let fullData = UserDefaults.standard.data(forKey: "saved_setlist_full_songs"),
+           let savedList = try? JSONDecoder().decode([SavedSetlistSongItem].self, from: fullData),
+           !savedList.isEmpty {
+            self.setlist = savedList.map { SetlistSong(song: $0.song, transitionType: $0.transitionType) }
+            let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
+            if let lastId = lastSongId, let target = self.setlist.first(where: { $0.song.id == lastId }) {
+                self.currentSong = target.song
+            } else if let first = self.setlist.first {
+                self.currentSong = first.song
+            }
+        }
+    }
+    
+    func setupWebSocket() {
+        guard let url = URL(string: "ws://127.0.0.1:8080/ws") else { return }
+        let session = URLSession(configuration: .default)
+        webSocketTask = session.webSocketTask(with: url)
+        webSocketTask?.resume()
+        receiveWebSocketMessage()
+    }
+    
+    private func receiveWebSocketMessage() {
+        webSocketTask?.receive { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self.handleWebSocketJson(text)
+                default: break
+                }
+                self.receiveWebSocketMessage()
+            case .failure:
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    self.setupWebSocket()
+                }
+            }
+        }
+    }
+    
+    private func handleWebSocketJson(_ jsonString: String) {
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let event = json["event"] as? String,
+              let eventData = json["data"] as? [String: Any] else { return }
+        
+        DispatchQueue.main.async {
+            if event == "tick" || event == "status" {
+                if let playing = eventData["is_playing"] as? Bool {
+                    // Fallback de segurança para avanço automático de Setlist caso o evento WebSocket de fim se perca
+                    if self.isPlaying && !playing && self.totalSeconds > 0 && self.currentSeconds >= self.totalSeconds - 0.4 {
+                        if self.autoAdvance {
+                            self.advanceToNextSetlistSong()
+                        }
+                    }
+                    self.isPlaying = playing
+                    if !playing { self.isFadingOut = false }
+                }
+                if let fActive = eventData["fade_stop_active"] as? Bool { self.isFadingOut = fActive }
+                if let cMute = eventData["click_mute"] as? Bool { self.clickMute = cMute }
+                if let vMute = eventData["vs_mute"] as? Bool { self.vsMute = vMute }
+                if let cVol = eventData["click_vol"] as? Double { self.clickVol = cVol }
+                if let vVol = eventData["vs_vol"] as? Double { self.vsVol = vVol }
+                if let curSec = eventData["current_seconds"] as? Double { self.currentSeconds = curSec }
+                if let totSec = eventData["total_seconds"] as? Double { if totSec > 0 { self.totalSeconds = totSec } }
+                if let bar = eventData["bar"] as? Int { self.currentBar = bar }
+                if let beat = eventData["beat"] as? Int { self.currentBeat = beat }
+                if let bpmVal = eventData["bpm"] as? Double { self.bpm = bpmVal }
+                if let sig = eventData["time_signature"] as? String { self.timeSignature = sig }
+                if let cIdx = eventData["current_cue_idx"] as? Int { self.currentCueIdx = cIdx }
+                if let qIdx = eventData["queued_cue_idx"] as? Int { self.queuedCueIdx = qIdx } else { self.queuedCueIdx = nil }
+                if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
+                if let lIdx = eventData["loop_cue_idx"] as? Int { self.loopCueIdx = lIdx } else { self.loopCueIdx = nil }
+                if let pad = eventData["pad_active"] as? Bool { self.padActive = pad }
+            } else if event == "fade_stop_started" {
+                self.isFadingOut = true
+            } else if event == "play_state" {
+                if let p = eventData["is_playing"] as? Bool {
+                    self.isPlaying = p
+                    if !p { self.isFadingOut = false }
+                }
+            } else if event == "volume_state" {
+                if let cm = eventData["click_mute"] as? Bool { self.clickMute = cm }
+                if let vm = eventData["vs_mute"] as? Bool { self.vsMute = vm }
+                if let cv = eventData["click_vol"] as? Double { self.clickVol = cv }
+                if let vv = eventData["vs_vol"] as? Double { self.vsVol = vv }
+            } else if event == "cue_queued" {
+                if let qIdx = eventData["queued_cue_idx"] as? Int {
+                    self.queuedCueIdx = qIdx
+                } else {
+                    self.queuedCueIdx = nil
+                }
+            } else if event == "cue_jumped" {
+                if let cIdx = eventData["current_cue_idx"] as? Int { self.currentCueIdx = cIdx }
+                self.queuedCueIdx = nil
+            } else if event == "loop_state" {
+                if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
+                if let lIdx = eventData["loop_cue_idx"] as? Int { self.loopCueIdx = lIdx } else { self.loopCueIdx = nil }
+            } else if event == "song_ended" {
+                self.isPlaying = false
+                if self.autoAdvance {
+                    self.advanceToNextSetlistSong()
+                }
+            }
+        }
+    }
+    
+    func advanceToNextSetlistSong() {
+        guard let current = currentSong,
+              let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }) else {
+            return
+        }
+        let currentItem = setlist[currentIndex]
+        let nextIndex = currentIndex + 1
+        if nextIndex < setlist.count {
+            let nextSong = setlist[nextIndex].song
+            let shouldAutoPlay = (currentItem.transitionType == "AUTO")
+            loadSong(nextSong, autoPlay: shouldAutoPlay)
+        }
+    }
+    
+    func saveSetlistState() {
+        let savedItems = setlist.map { item -> [String: String] in
+            return [
+                "id": item.song.id,
+                "transition": item.transitionType
+            ]
+        }
+        if let data = try? JSONEncoder().encode(savedItems) {
+            UserDefaults.standard.set(data, forKey: "saved_setlist_items")
+        }
+        
+        let fullItems = setlist.map { item -> SavedSetlistSongItem in
+            return SavedSetlistSongItem(song: item.song, transitionType: item.transitionType)
+        }
+        if let fullData = try? JSONEncoder().encode(fullItems) {
+            UserDefaults.standard.set(fullData, forKey: "saved_setlist_full_songs")
+        }
+        
+        if let currentId = currentSong?.id {
+            UserDefaults.standard.set(currentId, forKey: "saved_last_loaded_song_id")
+        }
+    }
+    
+    func toggleTransition(at index: Int) {
+        guard index >= 0 && index < setlist.count else { return }
+        setlist[index].transitionType = (setlist[index].transitionType == "AUTO") ? "STOP" : "AUTO"
+        saveSetlistState()
+    }
+    
+    func restoreSetlist(with availableSongs: [SongItem]) {
+        guard !availableSongs.isEmpty else { return }
+        
+        if let data = UserDefaults.standard.data(forKey: "saved_setlist_items"),
+           let savedList = try? JSONDecoder().decode([[String: String]].self, from: data),
+           !savedList.isEmpty {
+            
+            var restored: [SetlistSong] = []
+            for item in savedList {
+                if let sId = item["id"],
+                   let foundSong = availableSongs.first(where: { $0.id == sId }) {
+                    let trans = item["transition"] ?? "AUTO"
+                    restored.append(SetlistSong(song: foundSong, transitionType: trans))
+                }
+            }
+            
+            if !restored.isEmpty {
+                self.setlist = restored
+                
+                let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
+                if let lastId = lastSongId,
+                   let target = availableSongs.first(where: { $0.id == lastId }) {
+                    self.loadSong(target)
+                } else if let first = restored.first {
+                    self.loadSong(first.song)
+                }
+                return
+            }
+        }
+        
+        // Fallback: Primeiras 4 músicas se não houver setlist salvo
+        let initialSet = availableSongs.prefix(4).map { SetlistSong(song: $0) }
+        self.setlist = Array(initialSet)
+        if let first = availableSongs.first {
+            self.loadSong(first)
+        }
+    }
+    
+    func fetchSetlistSongs(retryCount: Int = 0) {
+        // Carrega APENAS as músicas que estão na setlist para inicialização relâmpago
+        let ids = setlist.map { $0.song.id }
+        let urlStr: String
+        if !ids.isEmpty {
+            let joined = ids.joined(separator: ",")
+            let encoded = joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined
+            urlStr = "http://127.0.0.1:8080/api/songs?ids=\(encoded)"
+        } else {
+            urlStr = "http://127.0.0.1:8080/api/songs"
+        }
+        
+        guard let url = URL(string: urlStr) else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            if let data = data, let songs = try? JSONDecoder().decode([SongItem].self, from: data), !songs.isEmpty {
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.songs = songs
+                    if self.setlist.isEmpty {
+                        self.restoreSetlist(with: songs)
+                    } else {
+                        // Atualiza as instâncias da setlist com dados frescos do servidor
+                        for (idx, item) in self.setlist.enumerated() {
+                            if let updated = songs.first(where: { $0.id == item.song.id }) {
+                                self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
+                            }
+                        }
+                        if let current = self.currentSong {
+                            self.loadSong(current)
+                        } else if let first = self.setlist.first {
+                            self.loadSong(first.song)
+                        }
+                    }
+                }
+            } else {
+                // Tenta novamente enquanto o servidor Python inicializa
+                if retryCount < 15 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.fetchSetlistSongs(retryCount: retryCount + 1)
+                    }
+                }
+            }
+        }.resume()
+    }
+    
+    func fetchAllLibrarySongs() {
+        guard !isLoadingLibrary else { return }
+        isLoadingLibrary = true
+        guard let url = URL(string: "http://127.0.0.1:8080/api/songs") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                self?.isLoadingLibrary = false
+                if let data = data, let songs = try? JSONDecoder().decode([SongItem].self, from: data) {
+                    self?.librarySongs = songs
+                    self?.songs = songs
+                }
+            }
+        }.resume()
+    }
+    
+    func fetchTracksFolder() {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/folder") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data,
+                  let resp = try? JSONDecoder().decode(TracksFolderResponse.self, from: data) else { return }
+            DispatchQueue.main.async {
+                self?.tracksFolderPath = resp.path
+                UserDefaults.standard.set(resp.path, forKey: "saved_tracks_folder_path")
+            }
+        }.resume()
+    }
+    
+    func selectTracksFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Select Folder"
+        panel.message = "Choose the folder where your Multitrack / VS audio files are stored."
+        if !tracksFolderPath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: tracksFolderPath)
+        }
+        
+        if panel.runModal() == .OK, let selectedURL = panel.url {
+            let path = selectedURL.path
+            setTracksFolder(path: path)
+        }
+    }
+    
+    func setTracksFolder(path: String) {
+        self.tracksFolderPath = path
+        UserDefaults.standard.set(path, forKey: "saved_tracks_folder_path")
+        self.isScanningFolder = true
+        
+        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/folder") else {
+            self.isScanningFolder = false
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload = ["path": path]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                self?.isScanningFolder = false
+                self?.fetchAllLibrarySongs()
+                self?.fetchSetlistSongs()
+            }
+        }.resume()
+    }
+    
+    func refreshTracks() {
+        guard !isScanningFolder else { return }
+        isScanningFolder = true
+        
+        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/refresh") else {
+            isScanningFolder = false
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                self?.isScanningFolder = false
+                if let data = data,
+                   let resp = try? JSONDecoder().decode(RefreshTracksResponse.self, from: data),
+                   let songs = resp.songs {
+                    self?.librarySongs = songs
+                    self?.songs = songs
+                }
+                self?.fetchSetlistSongs()
+            }
+        }.resume()
+    }
+    
+    func fetchSongs(retryCount: Int = 0) {
+        fetchSetlistSongs(retryCount: retryCount)
+    }
+    
+    func fetchDevices() {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/devices") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data, let devs = try? JSONDecoder().decode([AudioDeviceItem].self, from: data) else { return }
+            DispatchQueue.main.async {
+                self?.devices = devs
+                
+                let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
+                let savedId = UserDefaults.standard.object(forKey: "saved_audio_device_id") as? Int
+                
+                // 1. Tenta restaurar pelo nome salvo
+                if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
+                    self?.selectedDeviceId = match.id
+                    self?.selectedDeviceName = match.name
+                    self?.setAudioDevice(id: match.id, save: false)
+                } else if let savedId = savedId, let match = devs.first(where: { $0.id == savedId }) {
+                    self?.selectedDeviceId = match.id
+                    self?.selectedDeviceName = match.name
+                    self?.setAudioDevice(id: match.id, save: false)
+                } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
+                    self?.selectedDeviceId = blackhole.id
+                    self?.selectedDeviceName = blackhole.name
+                    self?.setAudioDevice(id: blackhole.id, save: false)
+                } else if let def = devs.first(where: { $0.is_default }) {
+                    self?.selectedDeviceId = def.id
+                    self?.selectedDeviceName = def.name
+                }
+            }
+        }.resume()
+    }
+    
+    func setAudioDevice(id: Int, save: Bool = true) {
+        self.selectedDeviceId = id
+        if let d = devices.first(where: { $0.id == id }) {
+            self.selectedDeviceName = d.name
+            if save {
+                UserDefaults.standard.set(d.name, forKey: "saved_audio_device_name")
+                UserDefaults.standard.set(id, forKey: "saved_audio_device_id")
+            }
+        }
+        sendAction("device", body: ["device_id": id])
+    }
+    
+    func fetchNetworkInfo() {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/network_info") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            DispatchQueue.main.async {
+                if let u = json["url"] as? String { self?.serverUrl = u }
+            }
+        }.resume()
+    }
+    
+    func loadSong(_ song: SongItem, autoPlay: Bool = false) {
+        self.undoStack.removeAll()
+        self.redoStack.removeAll()
+        self.undoNotificationMessage = nil
+        self.currentSong = song
+        self.triggerScrollToStart()
+        UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
+        guard let url = URL(string: "http://127.0.0.1:8080/api/load") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["song_id": song.id]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let songData = json["song"] as? [String: Any],
+                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
+            
+            let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
+            let parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
+            
+            DispatchQueue.main.async {
+                self?.currentCues = parsedCues
+                if let b = songData["bpm"] as? Double { self?.bpm = b }
+                if let ts = songData["time_signature"] as? String { self?.timeSignature = ts }
+                self?.abletonSynced = true
+                self?.sendAction("set_guide_lead_in", body: ["bars": self?.guideLeadInBars ?? 1.0])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    self?.abletonSynced = false
+                }
+                if autoPlay {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        self?.sendAction("play")
+                    }
+                }
+            }
+        }.resume()
+    }
+    
+    func openSongEditor(for song: SongItem? = nil) {
+        if let s = song, currentSong?.id != s.id {
+            loadSong(s, autoPlay: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self = self else { return }
+                self.editorBpm = self.bpm
+                self.editorTimeSignature = self.timeSignature
+                self.editorCues = self.currentCues
+                self.isSongEditorPresented = true
+            }
+            return
+        }
+        guard currentSong != nil else { return }
+        editorBpm = bpm
+        editorTimeSignature = timeSignature
+        editorCues = currentCues
+        isSongEditorPresented = true
+    }
+    
+    func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection]) {
+        guard let song = currentSong else { return }
+        pushUndoSnapshot(description: "Edição no Editor")
+        self.bpm = bpm
+        self.timeSignature = timeSignature
+        self.currentCues = cues
+        
+        let encoder = JSONEncoder()
+        guard let cuesData = try? encoder.encode(cues),
+              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
+        
+        let body: [String: Any] = [
+            "song_id": song.id,
+            "bpm": bpm,
+            "time_signature": timeSignature,
+            "cues": cuesJson
+        ]
+        sendAction("save_cues", body: body)
+        self.isSongEditorPresented = false
+    }
+    
+    func reprocessWithAI() {
+        guard let song = currentSong else { return }
+        pushUndoSnapshot(description: "Re-análise IA")
+        self.isReprocessing = true
+        
+        let body: [String: Any] = [
+            "song_id": song.id,
+            "bpm": editorBpm,
+            "time_signature": editorTimeSignature
+        ]
+        
+        guard let url = URL(string: "http://127.0.0.1:8080/api/reprocess") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                self?.isReprocessing = false
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let songDict = json["song"] as? [String: Any] else { return }
+                
+                if let newBpm = songDict["bpm"] as? Double {
+                    self?.bpm = newBpm
+                    self?.editorBpm = newBpm
+                }
+                if let newTs = songDict["time_signature"] as? String {
+                    self?.timeSignature = newTs
+                    self?.editorTimeSignature = newTs
+                }
+                if let cuesRaw = songDict["cues"],
+                   let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw),
+                   let newCues = try? JSONDecoder().decode([CueSection].self, from: rawData) {
+                    self?.currentCues = newCues
+                    self?.editorCues = newCues
+                }
+            }
+        }.resume()
+    }
+    
+    func playPause() {
+        if isFadingOut {
+            isFadingOut = false
+        }
+        let action = isPlaying ? "pause" : "play"
+        sendAction(action)
+    }
+    
+    // Inicia a música correspondente do Setlist pelo índice (teclas 1 a 8)
+    func playSetlistSong(at index: Int) {
+        guard index >= 0 && index < setlist.count else { return }
+        let target = setlist[index].song
+        if isFadingOut { isFadingOut = false }
+        triggerScrollToStart()
+        if currentSong?.id == target.id {
+            restart()
+            if !isPlaying {
+                sendAction("play")
+            }
+        } else {
+            loadSong(target, autoPlay: true)
+        }
+    }
+    
+    func fadeStop(duration: Double = 3.0) {
+        guard isPlaying else { return }
+        isFadingOut = true
+        sendAction("fade_stop", body: ["duration": duration])
+    }
+    
+    func restart() {
+        if isFadingOut { isFadingOut = false }
+        triggerScrollToStart()
+        sendAction("seek", body: ["seconds": 0.0])
+    }
+    
+    func seekToSeconds(_ sec: Double) {
+        if isFadingOut { isFadingOut = false }
+        sendAction("seek", body: ["seconds": sec])
+    }
+    
+    // Disparo Quantizado: cai no tempo 1 do próximo compasso
+    func triggerCue(idx: Int, quantize: Bool = true) {
+        if isFadingOut { isFadingOut = false }
+        sendAction("trigger_cue", body: ["cue_idx": idx, "quantize": quantize])
+    }
+    
+    func toggleLoop(cueIdx: Int? = nil) {
+        var body: [String: Any] = [:]
+        if let idx = cueIdx {
+            body["cue_idx"] = idx
+        }
+        sendAction("toggle_loop", body: body)
+    }
+    
+    func togglePad() {
+        sendAction("pad", body: ["active": !padActive, "key": padKey, "volume": 0.35])
+    }
+    
+    func sendVolumes() {
+        sendAction("volumes", body: [
+            "click_vol": clickVol,
+            "vs_vol": vsVol,
+            "click_mute": clickMute,
+            "vs_mute": vsMute
+        ])
+    }
+    
+    func toggleClickMute() {
+        clickMute.toggle()
+        sendVolumes()
+    }
+    
+    func toggleVsMute() {
+        vsMute.toggle()
+        sendVolumes()
+    }
+    
+    func calculateSecPerBar() -> Double {
+        let bpmVal = bpm > 20 ? bpm : 120.0
+        let parts = timeSignature.split(separator: "/")
+        let beatsPerBar = Double(parts.first ?? "4") ?? 4.0
+        return (60.0 / bpmVal) * beatsPerBar
+    }
+    
+    // Métodos para Ajuste Rápido de Duração e Cues via Right-Click (Suporta Meios Compassos / 2/4)
+    func calculateDurationBars(for index: Int) -> Double {
+        guard index >= 0 && index < currentCues.count else { return 4.0 }
+        let curBar = currentCues[index].bar
+        if index + 1 < currentCues.count {
+            return max(0.5, currentCues[index + 1].bar - curBar)
+        } else {
+            let secPerBeat = 60.0 / bpm
+            let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
+            let secPerBar = secPerBeat * beatsPerBar
+            let totalBars = max(curBar, totalSeconds / secPerBar)
+            let rawDuration = totalBars - curBar + 1.0
+            return max(0.5, round(rawDuration * 2.0) / 2.0)
+        }
+    }
+    
+    func adjustSectionDuration(at index: Int, deltaBars: Double) {
+        guard index >= 0 && index < currentCues.count else { return }
+        let curDuration = calculateDurationBars(for: index)
+        if curDuration + deltaBars < 0.5 { return }
+        
+        let deltaStr = deltaBars > 0 ? "+\(formatBars(deltaBars))" : "\(formatBars(deltaBars))"
+        pushUndoSnapshot(description: "Ajuste de Compasso (\(deltaStr) comp)")
+        
+        let secPerBeat = 60.0 / bpm
+        let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
+        let secPerBar = secPerBeat * beatsPerBar
+        
+        // Desloca o início de todas as seções subsequentes
+        for i in (index + 1)..<currentCues.count {
+            let newBar = max(currentCues[i - 1].bar + 0.5, currentCues[i].bar + deltaBars)
+            currentCues[i].bar = newBar
+            currentCues[i].time = round(Double(newBar - 1.0) * secPerBar * 100) / 100
+        }
+        saveCurrentCues()
+    }
+    
+    func changeSectionType(at index: Int, newType: String) {
+        guard index >= 0 && index < currentCues.count else { return }
+        let oldName = currentCues[index].name
+        if oldName == newType { return }
+        pushUndoSnapshot(description: "Tipo de Seção (\(newType))")
+        currentCues[index].name = newType
+        currentCues[index].color = colorForCue(name: newType)
+        saveCurrentCues()
+    }
+    
+    func splitSection(at index: Int) {
+        guard index >= 0 && index < currentCues.count else { return }
+        let cur = currentCues[index]
+        pushUndoSnapshot(description: "Divisão de Seção (\(cur.cleanFullName))")
+        let totalBars = calculateDurationBars(for: index)
+        
+        let secPerBeat = 60.0 / bpm
+        let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
+        let secPerBar = secPerBeat * beatsPerBar
+        
+        // Divide os compassos ao meio com precisão de meio compasso
+        let firstHalfBars = max(0.5, round((totalBars / 2.0) * 2.0) / 2.0)
+        let splitBar = cur.bar + firstHalfBars
+        let splitTime = round(Double(splitBar - 1.0) * secPerBar * 100) / 100
+        
+        // Divide os picos de forma de onda do Canal R
+        var firstWaveform: [Double]? = nil
+        var secondWaveform: [Double]? = nil
+        if let wf = cur.waveform, wf.count >= 4 {
+            let mid = wf.count / 2
+            firstWaveform = Array(wf[0..<mid])
+            secondWaveform = Array(wf[mid..<wf.count])
+        }
+        
+        currentCues[index].waveform = firstWaveform
+        
+        let newId = "cue_\(UUID().uuidString.prefix(6))"
+        let newSection = CueSection(
+            id: newId,
+            name: cur.name,
+            time: splitTime,
+            bar: splitBar,
+            color: cur.color,
+            waveform: secondWaveform
+        )
+        
+        currentCues.insert(newSection, at: index + 1)
+        quickEditingCueIdx = nil
+        saveCurrentCues()
+    }
+    
+    func deleteSection(at index: Int) {
+        guard currentCues.count > 1, index >= 0 && index < currentCues.count else { return }
+        let cur = currentCues[index]
+        pushUndoSnapshot(description: "Exclusão de Seção (\(cur.cleanFullName))")
+        currentCues.remove(at: index)
+        if index == 0 && !currentCues.isEmpty {
+            currentCues[0].bar = 1.0
+            currentCues[0].time = 0.0
+        }
+        quickEditingCueIdx = nil
+        saveCurrentCues()
+    }
+    
+    func saveCurrentCues() {
+        guard let song = currentSong else { return }
+        let encoder = JSONEncoder()
+        guard let cuesData = try? encoder.encode(currentCues),
+              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
+        
+        let body: [String: Any] = [
+            "song_id": song.id,
+            "bpm": bpm,
+            "time_signature": timeSignature,
+            "cues": cuesJson
+        ]
+        sendAction("save_cues", body: body)
+    }
+    
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+    
+    func pushUndoSnapshot(description: String = "Edição") {
+        let snapshot = CueHistorySnapshot(
+            cues: self.currentCues,
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            description: description
+        )
+        undoStack.append(snapshot)
+        if undoStack.count > 50 {
+            undoStack.removeFirst()
+        }
+        redoStack.removeAll()
+    }
+    
+    func undo() {
+        guard let previous = undoStack.popLast() else {
+            showUndoFeedback("Nada para desfazer")
+            return
+        }
+        let currentSnapshot = CueHistorySnapshot(
+            cues: self.currentCues,
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            description: previous.description
+        )
+        redoStack.append(currentSnapshot)
+        self.currentCues = previous.cues
+        self.bpm = previous.bpm
+        self.timeSignature = previous.timeSignature
+        self.quickEditingCueIdx = nil
+        if self.currentCueIdx >= self.currentCues.count {
+            self.currentCueIdx = max(0, self.currentCues.count - 1)
+        }
+        saveCurrentCues()
+        showUndoFeedback("Desfeito: \(previous.description)")
+    }
+    
+    func redo() {
+        guard let next = redoStack.popLast() else {
+            showUndoFeedback("Nada para refazer")
+            return
+        }
+        let currentSnapshot = CueHistorySnapshot(
+            cues: self.currentCues,
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            description: next.description
+        )
+        undoStack.append(currentSnapshot)
+        self.currentCues = next.cues
+        self.bpm = next.bpm
+        self.timeSignature = next.timeSignature
+        self.quickEditingCueIdx = nil
+        if self.currentCueIdx >= self.currentCues.count {
+            self.currentCueIdx = max(0, self.currentCues.count - 1)
+        }
+        saveCurrentCues()
+        showUndoFeedback("Refeito: \(next.description)")
+    }
+    
+    func showUndoFeedback(_ message: String) {
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                self.undoNotificationMessage = message
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            if self?.undoNotificationMessage == message {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self?.undoNotificationMessage = nil
+                }
+            }
+        }
+    }
+    
+    func removeSetlistSong(at index: Int) {
+        guard index >= 0 && index < setlist.count else { return }
+        _ = withAnimation(.easeInOut(duration: 0.2)) {
+            setlist.remove(at: index)
+        }
+    }
+    
+    private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/\(endpoint)") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        if let body = body {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        URLSession.shared.dataTask(with: req).resume()
+    }
+}
+
+// ==========================================
+// 3. DROP DELEGATE PARA ARRASTAR MÚSICAS DO SETLIST
+// ==========================================
+
+struct SetlistDropDelegate: DropDelegate {
+    let item: SetlistSong
+    @ObservedObject var state: PlaybackState
+    
+    func performDrop(info: DropInfo) -> Bool {
+        state.draggedSetlistSong = nil
+        state.saveSetlistState()
+        return true
+    }
+    
+    func dropEntered(info: DropInfo) {
+        guard state.isEditMode,
+              let dragged = state.draggedSetlistSong,
+              dragged.id != item.id,
+              let from = state.setlist.firstIndex(where: { $0.id == dragged.id }),
+              let to = state.setlist.firstIndex(where: { $0.id == item.id }) else { return }
+        
+        withAnimation(.easeInOut(duration: 0.25)) {
+            state.setlist.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+    }
+}
+
+// ==========================================
+// 4. VIEW PRINCIPAL (SWIFTUI)
+// ==========================================
+
+struct PlaybackAppView: View {
+    @StateObject var state = PlaybackState()
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 1. Top Bar com Botão EDIT, Métricas e Transporte
+            TopBarView(state: state)
+            
+            Divider().background(Color.white.opacity(0.08))
+            
+            // 2. Carrossel Reordenável por Arraste (Drag-and-Drop)
+            SetlistCarouselView(state: state)
+            
+            Divider().background(Color.white.opacity(0.08))
+            
+            // 3. Espectrograma Real & Blocos de Seções Quantizados
+            SpectrogramWaveformView(state: state)
+            
+            Divider().background(Color.white.opacity(0.08))
+            
+            // 4. Mixer Dock com Seletor de Saída de Áudio Dinâmico
+            BottomMixerDock(state: state)
+        }
+        .background(Color(red: 0.07, green: 0.08, blue: 0.11))
+        .sheet(isPresented: $state.isAddSongSheetPresented) {
+            AddSongSheetView(state: state)
+        }
+        .sheet(isPresented: $state.isQrModalPresented) {
+            QrCodeSheetView(state: state)
+        }
+        .sheet(isPresented: $state.isSongEditorPresented) {
+            SongEditorSheetView(state: state)
+        }
+        .onAppear {
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if let window = NSApp.keyWindow,
+                   let responder = window.firstResponder,
+                   (responder is NSTextView || responder is NSTextField || responder is NSText) {
+                    return event
+                }
+                // Atalho Cmd+Q: Fecha o app imediatamente
+                if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "q" || event.keyCode == 12) {
+                    NSApp.terminate(nil)
+                    return nil
+                }
+                // Atalho Cmd+W: Fecha a janela
+                if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "w" || event.keyCode == 13) {
+                    NSApp.keyWindow?.performClose(nil)
+                    return nil
+                }
+                
+                // Atalho Cmd+Z / Cmd+Shift+Z (Desfazer / Refazer)
+                let isZ = event.keyCode == 6 || event.charactersIgnoringModifiers?.lowercased() == "z"
+                if event.modifierFlags.contains(.command) && isZ {
+                    if state.isSongEditorPresented {
+                        NotificationCenter.default.post(name: NSNotification.Name("SongEditorUndo"), object: nil)
+                        return nil
+                    } else if !state.isAddSongSheetPresented && !state.isQrModalPresented {
+                        if event.modifierFlags.contains(.shift) {
+                            state.redo()
+                        } else {
+                            state.undo()
+                        }
+                        return nil
+                    }
+                }
+                
+                // Se algum modal estiver aberto, não processa atalhos globais de playback
+                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented {
+                    return event
+                }
+                if event.keyCode == 49 { // 49 = Barra de Espaço
+                    state.playPause()
+                    return nil
+                }
+                
+                // Atalhos Numéricos (sem teclas modificadoras como Cmd/Opt/Ctrl)
+                if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                    let char = event.charactersIgnoringModifiers ?? ""
+                    
+                    // Tecla 0: Dispara o Fade Stop de 3 segundos
+                    if char == "0" || event.keyCode == 29 || event.keyCode == 82 {
+                        state.fadeStop(duration: 3.0)
+                        return nil
+                    }
+                    
+                    // Teclas 1 a 8: Inicia as músicas 1 a 8 do Setlist
+                    let songMap: [String: Int] = [
+                        "1": 0, "2": 1, "3": 2, "4": 3,
+                        "5": 4, "6": 5, "7": 6, "8": 7
+                    ]
+                    if let index = songMap[char] {
+                        state.playSetlistSong(at: index)
+                        return nil
+                    }
+                    
+                    // Fallback por keyCode (teclado numérico ou superior)
+                    let keyCodeMap: [UInt16: Int] = [
+                        18: 0, 83: 0, // 1
+                        19: 1, 84: 1, // 2
+                        20: 2, 85: 2, // 3
+                        21: 3, 86: 3, // 4
+                        23: 4, 87: 4, // 5
+                        22: 5, 88: 5, // 6
+                        26: 6, 89: 6, // 7
+                        28: 7, 91: 7  // 8
+                    ]
+                    if let index = keyCodeMap[event.keyCode] {
+                        state.playSetlistSong(at: index)
+                        return nil
+                    }
+                }
+                return event
+            }
+        }
+    }
+}
+
+// ==========================================
+// 5. TOP BAR (TRANSPORTE & EDIT BUTTON)
+// ==========================================
+struct TopBarView: View {
+    @ObservedObject var state: PlaybackState
+    
+    var body: some View {
+        HStack(spacing: 20) {
+            // Métricas (BPM com decimal e Compasso)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(formatBpm(state.bpm))
+                    .font(.system(size: 18, weight: .black, design: .monospaced))
+                    .foregroundColor(.white)
+                Text(state.timeSignature)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.gray)
+            }
+            .frame(minWidth: 48, alignment: .leading)
+            
+            // Clock Principal (Sem contador duplicado)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(formatTime(state.currentSeconds))
+                    .font(.system(size: 26, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                Text("/ \(formatTime(state.totalSeconds))")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+            
+            // Botões de Transporte (Restart, Play, Pad)
+            HStack(spacing: 16) {
+                Button(action: { state.restart() }) {
+                    Image(systemName: "backward.end.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(Color(red: 0.95, green: 0.55, blue: 0.4))
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Button(action: { state.playPause() }) {
+                    ZStack {
+                        Circle()
+                            .fill(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.2) : Color.white.opacity(0.08))
+                            .frame(width: 46, height: 46)
+                        Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(Color(red: 0.19, green: 0.82, blue: 0.60))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .keyboardShortcut(.space, modifiers: [])
+                
+                // Botão FADE STOP (Fade Out Suave com atalho 0)
+                Button(action: { state.fadeStop(duration: 3.0) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: state.isFadingOut ? "speaker.slash.fill" : "waveform.badge.minus")
+                            .font(.system(size: 12, weight: .bold))
+                        Text(state.isFadingOut ? "FADING..." : "FADE")
+                            .font(.system(size: 10, weight: .black, design: .monospaced))
+                    }
+                    .foregroundColor(state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white.opacity(0.85) : Color.white.opacity(0.35)))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.isFadingOut ? Color.orange.opacity(0.22) : Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(state.isFadingOut ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(!state.isPlaying && !state.isFadingOut)
+                .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
+                
+                // Botão Avançar Próxima Música (Setlist Skip)
+                Button(action: { state.advanceToNextSetlistSong() }) {
+                    Image(systemName: "forward.end.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.75))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Advance to next setlist song")
+                
+                // Botão de Loop da Seção Atual
+                Button(action: { state.toggleLoop() }) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.loopActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "repeat")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(state.loopActive ? Color.cyan : Color.white.opacity(0.65))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Loop current section")
+                
+                // Botão AUTO (Auto-Advance do Setlist: sem on/off e sem o raio)
+                Button(action: { state.autoAdvance.toggle() }) {
+                    Text("AUTO")
+                        .font(.system(size: 11, weight: .black, design: .monospaced))
+                        .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.45))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.18) : Color.white.opacity(0.06))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.45) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Auto-Advance: automatically play next track when current song finishes")
+            }
+            
+            Spacer()
+            
+            // Botão Conectar Controle Remoto Mobile
+            Button(action: { state.isQrModalPresented = true }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "qrcode")
+                    Text("Remote")
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.purple.opacity(0.3))
+                .cornerRadius(14)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.6), lineWidth: 1))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Connect smartphone remote control via QR Code")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+    }
+    
+    private func formatTime(_ sec: Double) -> String {
+        let m = Int(sec) / 60
+        let s = Int(sec) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// ==========================================
+// 6. SETLIST CAROUSEL COM DRAG-AND-DROP E EXCLUSÃO EM EDIT MODE
+// ==========================================
+struct SetlistCarouselView: View {
+    @ObservedObject var state: PlaybackState
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                HStack(spacing: 6) {
+                    Text("LIVE SETLIST")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.gray)
+                    if state.isEditMode {
+                        Text("(Edit Mode: Drag to reorder)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.yellow)
+                    }
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    // Botão EDIT do Setlist (Ao lado do Adicionar Música)
+                    Button(action: { state.isEditMode.toggle() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: state.isEditMode ? "checkmark" : "pencil")
+                            Text(state.isEditMode ? "DONE" : "EDIT")
+                        }
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.08))
+                        .cornerRadius(7)
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(state.isEditMode ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Reorder and remove songs from setlist")
+                    
+                    // Botão Adicionar Música
+                    Button(action: { state.isAddSongSheetPresented = true }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                            Text("Add Song")
+                        }
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(red: 0.23, green: 0.51, blue: 0.96))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(red: 0.23, green: 0.51, blue: 0.96).opacity(0.12))
+                        .cornerRadius(7)
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.23, green: 0.51, blue: 0.96).opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
+                        let isSelected = state.currentSong?.id == item.song.id
+                        
+                        ZStack(alignment: .topTrailing) {
+                            // Card da Música (Arrastável quando isEditMode = true)
+                            Button(action: {
+                                if !state.isEditMode {
+                                    state.loadSong(item.song)
+                                }
+                            }) {
+                                ZStack(alignment: .topLeading) {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(cardGradient(for: index))
+                                        .frame(width: 175, height: 75)
+                                    
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.black.opacity(0.35))
+                                        .frame(width: 175, height: 75)
+                                    
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        HStack(alignment: .center, spacing: 5) {
+                                            if isSelected {
+                                                Image(systemName: "play.fill")
+                                                    .font(.system(size: 8, weight: .bold))
+                                                    .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
+                                            }
+                                            
+                                            Text(item.song.time_signature ?? "4/4")
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(.white.opacity(0.65))
+                                            
+                                            Spacer()
+                                            if let bpm = item.song.bpm {
+                                                Text("\(formatBpm(bpm)) BPM")
+                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(.white.opacity(0.8))
+                                            }
+                                        }
+                                        
+                                        Spacer()
+                                        
+                                        Text(item.song.name)
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                            .truncationMode(.tail)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 9)
+                                    .frame(width: 175, height: 75)
+                                }
+                                .frame(width: 175, height: 75)
+                                .clipped()
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(isSelected ? Color.white : (state.isEditMode ? Color.yellow.opacity(0.4) : Color.white.opacity(0.12)), lineWidth: isSelected ? 2.5 : 1)
+                                )
+                                .shadow(color: isSelected ? Color.white.opacity(0.2) : Color.clear, radius: 8)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .frame(width: 175, height: 75)
+                            .contextMenu {
+                                Button(action: {
+                                    state.openSongEditor(for: item.song)
+                                }) {
+                                    Label("Edit Song", systemImage: "slider.horizontal.3")
+                                }
+                                
+                                Divider()
+                                
+                                Button(action: {
+                                    state.playSetlistSong(at: index)
+                                }) {
+                                    Label("Play Now", systemImage: "play.fill")
+                                }
+                                
+                                Button(role: .destructive, action: {
+                                    state.removeSetlistSong(at: index)
+                                }) {
+                                    Label("Remove from Setlist", systemImage: "trash")
+                                }
+                            }
+                            .onDrag {
+                                guard state.isEditMode else { return NSItemProvider() }
+                                state.draggedSetlistSong = item
+                                return NSItemProvider(object: item.id.uuidString as NSString)
+                            }
+                            .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
+                            
+                            // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
+                            if state.isEditMode {
+                                Button(action: { state.removeSetlistSong(at: index) }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(Color.red)
+                                        .background(Color.white.clipShape(Circle()))
+                                        .padding(4)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .frame(width: 175, height: 75)
+                        
+                        // Seta de Transição (Clica para alternar AUTO / STOP)
+                        if index < state.setlist.count - 1 {
+                            Button(action: {
+                                state.toggleTransition(at: index)
+                            }) {
+                                Circle()
+                                    .fill(item.transitionType == "AUTO" ? Color.cyan.opacity(0.18) : Color.white.opacity(0.08))
+                                    .frame(width: 26, height: 26)
+                                    .overlay(
+                                        Image(systemName: item.transitionType == "AUTO" ? "arrow.right" : "pause.fill")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(item.transitionType == "AUTO" ? Color.cyan : Color.gray)
+                                    )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(item.transitionType == "AUTO" ? "Auto-transition to next track" : "Stop after this track")
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+            }
+        }
+        .background(Color(red: 0.08, green: 0.09, blue: 0.13))
+    }
+    
+    private func cardGradient(for index: Int) -> LinearGradient {
+        let colors: [Color]
+        switch index % 4 {
+        case 0: colors = [Color.red.opacity(0.8), Color.orange.opacity(0.8)]
+        case 1: colors = [Color.blue.opacity(0.8), Color.cyan.opacity(0.8)]
+        case 2: colors = [Color.purple.opacity(0.8), Color.pink.opacity(0.8)]
+        default: colors = [Color.green.opacity(0.8), Color.teal.opacity(0.8)]
+        }
+        return LinearGradient(gradient: Gradient(colors: colors), startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+// ==========================================
+// 7. HOOK DE SCROLL HORIZONTAL (RODA DO MOUSE, SHIFT+SCROLL & TRACKPAD)
+// ==========================================
+struct HorizontalScrollWheelHook: NSViewRepresentable {
+    var onUserScrolled: (() -> Void)? = nil
+    var resetTrigger: Int = 0
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    func makeNSView(context: Context) -> HorizontalScrollNSView {
+        let view = HorizontalScrollNSView()
+        view.onUserScrolled = onUserScrolled
+        return view
+    }
+    
+    func updateNSView(_ nsView: HorizontalScrollNSView, context: Context) {
+        nsView.onUserScrolled = onUserScrolled
+        if context.coordinator.lastResetTrigger != resetTrigger {
+            context.coordinator.lastResetTrigger = resetTrigger
+            nsView.scrollToStart()
+        }
+    }
+    
+    class Coordinator {
+        var lastResetTrigger: Int = 0
+    }
+}
+
+class HorizontalScrollNSView: NSView {
+    weak var targetScrollView: NSScrollView?
+    var monitor: Any?
+    var onUserScrolled: (() -> Void)?
+    
+    func scrollToStart() {
+        if targetScrollView == nil {
+            findScrollView()
+        }
+        guard let sv = targetScrollView else { return }
+        let clipView = sv.contentView
+        var origin = clipView.bounds.origin
+        origin.x = 0
+        clipView.scroll(to: origin)
+        sv.reflectScrolledClipView(clipView)
+    }
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            findScrollView()
+            DispatchQueue.main.async { [weak self] in
+                self?.findScrollView()
+            }
+            setupMonitor()
+        } else {
+            removeMonitor()
+        }
+    }
+    
+    func findScrollView() {
+        var current: NSView? = self
+        while let parent = current?.superview {
+            if let sv = parent as? NSScrollView {
+                self.targetScrollView = sv
+                return
+            }
+            current = parent
+        }
+    }
+    
+    func setupMonitor() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self = self, let window = self.window, event.window == window else {
+                return event
+            }
+            if self.targetScrollView == nil {
+                self.findScrollView()
+            }
+            guard let sv = self.targetScrollView else { return event }
+            
+            let mouseInWindow = event.locationInWindow
+            let mouseInSV = sv.convert(mouseInWindow, from: nil)
+            
+            // Verifica se o cursor está sobre os limites do espectrograma
+            if sv.bounds.contains(mouseInSV) {
+                let deltaY = event.scrollingDeltaY
+                let deltaX = event.scrollingDeltaX
+                
+                // Prioriza deltaX se tiver valor (Shift+Scroll ou Trackpad horizontal)
+                // Caso contrário converte o deltaY da rodinha para horizontal
+                var horizontalDelta: CGFloat = 0.0
+                if abs(deltaX) > 0.001 {
+                    horizontalDelta = deltaX
+                } else if abs(deltaY) > 0.001 {
+                    horizontalDelta = deltaY
+                }
+                
+                if abs(horizontalDelta) > 0.001 {
+                    let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1.0 : 22.0
+                    let shift = -horizontalDelta * factor
+                    
+                    let clipView = sv.contentView
+                    var newOrigin = clipView.bounds.origin
+                    let docWidth = sv.documentView?.frame.width ?? 0
+                    let maxOffsetX = max(0, docWidth - clipView.bounds.width)
+                    
+                    if maxOffsetX > 0 {
+                        newOrigin.x = max(0, min(maxOffsetX, newOrigin.x + shift))
+                        clipView.scroll(to: newOrigin)
+                        sv.reflectScrolledClipView(clipView)
+                        
+                        DispatchQueue.main.async {
+                            self.onUserScrolled?()
+                        }
+                        return nil // Evento consumido
+                    }
+                }
+            }
+            return event
+        }
+    }
+    
+    func removeMonitor() {
+        if let m = monitor {
+            NSEvent.removeMonitor(m)
+            monitor = nil
+        }
+    }
+    
+    deinit {
+        removeMonitor()
+    }
+}
+
+// ==========================================
+// 8. ESPECTROGRAMA & SEÇÕES COM SALTO QUANTIZADO (TEMPO 1)
+// ==========================================
+struct SpectrogramWaveformView: View {
+    @ObservedObject var state: PlaybackState
+    @State private var lastUserScrollTime: Date = .distantPast
+    
+    var body: some View {
+        GeometryReader { geo in
+            let totalAvailableWidth = geo.size.width - 40
+            let blockWidths = calculateBlockWidths(totalWidth: totalAvailableWidth)
+            let playheadX = calculatePlayheadX(blockWidths: blockWidths)
+            
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: true) {
+                    ZStack(alignment: .leading) {
+                        // Hook de Rolagem com Rodinha do Mouse e Trackpad
+                        HorizontalScrollWheelHook(
+                            onUserScrolled: {
+                                lastUserScrollTime = Date()
+                            },
+                            resetTrigger: state.scrollToStartTrigger
+                        )
+                        .frame(width: 1, height: 1)
+                        
+                        // Blocos de Seções com Onda Real
+                        HStack(spacing: 4) {
+                            if state.currentCues.isEmpty {
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                                    Text("Loading audio tracks and cue sections...")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.gray)
+                                }
+                                .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
+                            } else {
+                                ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
+                                    let isPlayingSection = idx == state.currentCueIdx
+                                    let isQueued = idx == state.queuedCueIdx
+                                    let isLoopThis = state.loopActive && (state.loopCueIdx == idx || (state.loopCueIdx == nil && isPlayingSection))
+                                    let width = blockWidths.indices.contains(idx) ? blockWidths[idx] : 90
+                                    
+                                    WaveformSectionBlock(
+                                        state: state,
+                                        index: idx,
+                                        section: section,
+                                        isPlaying: isPlayingSection,
+                                        isQueued: isQueued,
+                                        isLoopActive: isLoopThis,
+                                        width: width,
+                                        onSelect: {
+                                            lastUserScrollTime = .distantPast
+                                            withAnimation(.easeInOut(duration: 0.25)) {
+                                                proxy.scrollTo(idx, anchor: .center)
+                                            }
+                                            // SALTO QUANTIZADO NO TEMPO 1 DO PRÓXIMO COMPASSO
+                                            if state.isPlaying {
+                                                // Enquanto toca: programa o salto para cair exatamente no tempo 1 do próximo compasso
+                                                state.triggerCue(idx: idx, quantize: true)
+                                            } else {
+                                                // Quando parado: busca para o início exato da seção
+                                                state.seekToSeconds(section.time)
+                                                state.triggerCue(idx: idx, quantize: false)
+                                            }
+                                        },
+                                        onLoopToggle: {
+                                            state.toggleLoop(cueIdx: idx)
+                                        }
+                                    )
+                                    .id(idx)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Playhead Vermelho Alinhado com Precisão
+                        if state.totalSeconds > 0 && !state.currentCues.isEmpty {
+                            Rectangle()
+                                .fill(Color.red)
+                                .frame(width: 2.5)
+                                .shadow(color: Color.red.opacity(0.8), radius: 6)
+                                .offset(x: playheadX)
+                                .animation(.linear(duration: 0.06), value: playheadX)
+                        }
+                    }
+                    .frame(height: 195)
+                }
+                .onChange(of: state.scrollToStartTrigger) { _, _ in
+                    lastUserScrollTime = .distantPast
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(0, anchor: .leading)
+                    }
+                }
+                .onChange(of: state.currentSong?.id) { _, _ in
+                    lastUserScrollTime = .distantPast
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(0, anchor: .leading)
+                    }
+                }
+                .onChange(of: state.isPlaying) { _, playing in
+                    if playing {
+                        lastUserScrollTime = .distantPast
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(state.currentCueIdx, anchor: .center)
+                        }
+                    }
+                }
+                .onChange(of: state.currentCueIdx) { _, targetIdx in
+                    // Se o usuário rolou recentemente para inspecionar, não interrompe a visão dele
+                    if Date().timeIntervalSince(lastUserScrollTime) > 3.5 {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            proxy.scrollTo(targetIdx, anchor: .center)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(height: 195)
+        .padding(.vertical, 16)
+        .background(Color(red: 0.05, green: 0.06, blue: 0.08))
+        .overlay(
+            Group {
+                if let msg = state.undoNotificationMessage {
+                    VStack {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .foregroundColor(.cyan)
+                                .font(.system(size: 13, weight: .bold))
+                            Text(msg)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color(red: 0.10, green: 0.12, blue: 0.18).opacity(0.96))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.cyan.opacity(0.4), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.7), radius: 10, y: 4)
+                        .padding(.top, 8)
+                        
+                        Spacer()
+                    }
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.95)), removal: .opacity))
+                    .animation(.easeInOut(duration: 0.2), value: state.undoNotificationMessage)
+                }
+            }
+        )
+    }
+    
+    private func calculateBlockWidths(totalWidth: CGFloat) -> [CGFloat] {
+        guard !state.currentCues.isEmpty, state.totalSeconds > 0 else { return [] }
+        let count = state.currentCues.count
+        let totalSpacing = CGFloat(max(0, count - 1)) * 4.0
+        let availableWidth = max(CGFloat(count * 85), totalWidth - totalSpacing)
+        
+        var rawWidths: [CGFloat] = []
+        for i in 0..<count {
+            let curTime = state.currentCues[i].time
+            let nextTime = (i + 1 < count) ? state.currentCues[i + 1].time : state.totalSeconds
+            let duration = max(2.0, nextTime - curTime)
+            let proportion = CGFloat(duration / state.totalSeconds)
+            rawWidths.append(max(85.0, availableWidth * proportion))
+        }
+        
+        let sumRaw = rawWidths.reduce(0, +)
+        if sumRaw > 0 && sumRaw < availableWidth {
+            let scale = availableWidth / sumRaw
+            return rawWidths.map { $0 * scale }
+        }
+        return rawWidths
+    }
+    
+    private func calculatePlayheadX(blockWidths: [CGFloat]) -> CGFloat {
+        guard !state.currentCues.isEmpty, state.totalSeconds > 0, !blockWidths.isEmpty else { return 20 }
+        
+        let curSec = state.currentSeconds
+        var activeIdx = 0
+        for i in stride(from: state.currentCues.count - 1, through: 0, by: -1) {
+            if curSec >= state.currentCues[i].time {
+                activeIdx = i
+                break
+            }
+        }
+        
+        guard activeIdx < state.currentCues.count else { return 20 }
+        
+        let startT = state.currentCues[activeIdx].time
+        let endT = (activeIdx + 1 < state.currentCues.count) ? state.currentCues[activeIdx + 1].time : state.totalSeconds
+        let duration = max(0.1, endT - startT)
+        let fraction = max(0.0, min(1.0, (curSec - startT) / duration))
+        
+        var xAccum: CGFloat = 20.0
+        for i in 0..<activeIdx {
+            if i < blockWidths.count {
+                xAccum += blockWidths[i] + 4.0
+            }
+        }
+        
+        let currentWidth = activeIdx < blockWidths.count ? blockWidths[activeIdx] : 90
+        xAccum += CGFloat(fraction) * currentWidth
+        return xAccum
+    }
+}
+
+// ==========================================
+// DETECTOR DE CLIQUE COM BOTÃO DIREITO PARA MAC (SEM MENU DE CONTEXTO DO SISTEMA)
+// ==========================================
+struct RightClickModifier: ViewModifier {
+    let action: () -> Void
+    
+    func body(content: Content) -> some View {
+        content.overlay(
+            RightClickRepresentable(action: action)
+        )
+    }
+}
+
+struct RightClickRepresentable: NSViewRepresentable {
+    let action: () -> Void
+    
+    func makeNSView(context: Context) -> RightClickNSView {
+        let view = RightClickNSView()
+        view.action = action
+        return view
+    }
+    
+    func updateNSView(_ nsView: RightClickNSView, context: Context) {
+        nsView.action = action
+    }
+    
+    class RightClickNSView: NSView {
+        var action: (() -> Void)?
+        
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            if let event = NSApp.currentEvent {
+                if event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+                    return self
+                }
+            }
+            return nil
+        }
+        
+        override func rightMouseDown(with event: NSEvent) {
+            action?()
+        }
+        
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                action?()
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+    }
+}
+
+// Bloco de Seção com Nome Completo, Feedback de Quantização e Onda Real do Canal R
+struct WaveformSectionBlock: View {
+    @ObservedObject var state: PlaybackState
+    let index: Int
+    let section: CueSection
+    let isPlaying: Bool
+    let isQueued: Bool
+    let isLoopActive: Bool
+    let width: CGFloat
+    let onSelect: () -> Void
+    let onLoopToggle: () -> Void
+    
+    let cueTypes = ["Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
+    
+    var body: some View {
+        Button(action: onSelect) {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(blockBgColor)
+                
+                // Silhueta de Onda Real do Canal R com Divisões de Compassos (sem margem lateral)
+                RealWaveformPeaksView(
+                    waveform: section.waveform,
+                    color: waveformColor,
+                    durationBars: state.calculateDurationBars(for: index)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                
+                // Rodapé: Métrica de Compasso (4/4, 6/8...) posicionada de forma limpa e visível
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text(state.timeSignature)
+                            .font(.system(size: 9, weight: .black, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.55))
+                            .cornerRadius(4)
+                            .padding(.leading, 6)
+                            .padding(.bottom, 6)
+                        Spacer()
+                    }
+                }
+                
+                // Header: Playback Circular Badge ("C", "V1", "Pc", "B", etc.) + Botão de Loop
+                HStack(alignment: .center) {
+                    Circle()
+                        .fill(badgeColor)
+                        .frame(width: 22, height: 22)
+                        .overlay(
+                            Text(section.shortBadgeName)
+                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .foregroundColor(.white)
+                        )
+                        .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
+                        .help(section.cleanFullName)
+                    
+                    Spacer()
+                    
+                    Button(action: onLoopToggle) {
+                        Image(systemName: "repeat")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(isLoopActive ? Color.cyan : Color.white.opacity(0.85))
+                            .padding(5)
+                            .background(isLoopActive ? Color.cyan.opacity(0.35) : Color.black.opacity(0.55))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(6)
+            }
+            .frame(width: width, height: 175)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(borderColor, lineWidth: isPlaying || isQueued ? 2.5 : 1)
+            )
+            .shadow(color: isPlaying ? Color.green.opacity(0.3) : (isQueued ? Color.yellow.opacity(0.4) : Color.clear), radius: 10)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .modifier(RightClickModifier(action: {
+            state.quickEditingCueIdx = index
+        }))
+        .popover(
+            isPresented: Binding(
+                get: { state.quickEditingCueIdx == index },
+                set: { if !$0 { state.quickEditingCueIdx = nil } }
+            ),
+            arrowEdge: .top
+        ) {
+            QuickSectionEditPopoverView(state: state, cueIndex: index)
+        }
+    }
+    
+    private var blockBgColor: Color {
+        if isPlaying { return Color(red: 0.10, green: 0.22, blue: 0.16) }
+        if isQueued { return Color(red: 0.28, green: 0.20, blue: 0.08) }
+        return Color(red: 0.10, green: 0.12, blue: 0.16)
+    }
+    
+    private var borderColor: Color {
+        if isPlaying { return Color(red: 0.19, green: 0.82, blue: 0.60) }
+        if isQueued { return Color(red: 0.98, green: 0.75, blue: 0.15) }
+        return Color.white.opacity(0.12)
+    }
+    
+    private var waveformColor: Color {
+        if isPlaying { return Color(red: 0.35, green: 0.85, blue: 0.95) }
+        if isQueued { return Color(red: 0.95, green: 0.80, blue: 0.30) }
+        return Color(red: 0.25, green: 0.65, blue: 0.92)
+    }
+    
+    private var badgeColor: Color {
+        let upper = section.name.uppercased()
+        if upper.contains("COUNT") || upper.contains("CONTAGEM") { return Color(red: 0.45, green: 0.52, blue: 0.60) }
+        if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") { return Color(red: 0.98, green: 0.44, blue: 0.52) }
+        if upper.contains("PRE") || upper.contains("PRÉ") { return Color.yellow }
+        if upper.contains("CHORUS") || upper.contains("REFRÃO") { return Color.red }
+        if upper.contains("BRIDGE") || upper.contains("PONTE") { return Color.orange }
+        if upper.contains("INTRO") { return Color.cyan }
+        if upper.contains("VERSE") || upper.contains("VERSO") { return Color.purple }
+        if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return Color.teal }
+        if upper.contains("SOLO") { return Color.teal }
+        if upper.contains("TAG") { return Color.pink }
+        if upper.contains("OUTRO") || upper.contains("FINAL") { return Color.gray }
+        return Color.blue
+    }
+}
+
+// Forma de Onda Contínua e Espelhada (Estilo DAW / MultiTracks Playback como na imagem 3 de referência)
+struct ContinuousWaveformShape: Shape {
+    let peaks: [Double]
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard peaks.count > 1 else { return path }
+        
+        let midY = rect.midY
+        // Amplitude moderada da onda (respiro apenas no topo e no fundo; sem margens nas laterais)
+        let maxHeight = rect.height * 0.30
+        let step = rect.width / CGFloat(peaks.count - 1)
+        
+        // Linha superior
+        let firstY = midY - CGFloat(peaks[0]) * maxHeight
+        path.move(to: CGPoint(x: 0, y: firstY))
+        
+        for i in 1..<peaks.count {
+            let x = CGFloat(i) * step
+            let y = midY - CGFloat(peaks[i]) * maxHeight
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        
+        // Linha inferior espelhada
+        for i in (0..<peaks.count).reversed() {
+            let x = CGFloat(i) * step
+            let y = midY + CGFloat(peaks[i]) * maxHeight
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        
+        path.closeSubpath()
+        return path
+    }
+}
+
+// Renderização dos Picos Reais do Canal R com Linhas de Compasso Estilo DAW
+struct RealWaveformPeaksView: View {
+    let waveform: [Double]?
+    let color: Color
+    let durationBars: Double
+    
+    var body: some View {
+        let peaks: [Double] = {
+            if let w = waveform, !w.isEmpty { return w }
+            return [0.03, 0.05, 0.15, 0.35, 0.65, 0.8, 0.9, 0.75, 0.6, 0.85, 0.95, 0.7, 0.4, 0.2, 0.08, 0.03]
+        }()
+        
+        GeometryReader { geo in
+            ZStack {
+                // Divisões verticais dos compassos da seção
+                if durationBars > 0.5 {
+                    let total = durationBars
+                    let numLines = Int(floor(total - 0.001))
+                    if numLines >= 1 {
+                        ForEach(1...numLines, id: \.self) { b in
+                            let xPos = (CGFloat(b) / CGFloat(total)) * geo.size.width
+                            Rectangle()
+                                .fill(Color.white.opacity(0.12))
+                                .frame(width: 1)
+                                .position(x: xPos, y: geo.size.height / 2)
+                        }
+                    }
+                }
+                
+                // Linha de centro discreta
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                    .frame(height: 1)
+                
+                // Silhueta Contínua Sólida da Forma de Onda do Canal R (Estilo DAW / Playback)
+                ContinuousWaveformShape(peaks: peaks)
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                color.opacity(0.95),
+                                color.opacity(0.70)
+                            ]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+        }
+    }
+}
+
+// ==========================================
+// 8. FADER ESTILO PLAYBACK (CONSOLE CHANNEL STRIP)
+// ==========================================
+struct ChannelHeaderView: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let accentColor: Color
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(accentColor.opacity(0.16))
+                    .frame(width: 28, height: 28)
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(accentColor)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundColor(.white)
+                Text(subtitle)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(Color.gray)
+            }
+        }
+        .frame(width: 115, alignment: .leading)
+    }
+}
+
+struct MuteButtonView: View {
+    let isMuted: Bool
+    let onToggle: () -> Void
+    
+    var body: some View {
+        Button(action: onToggle) {
+            Text("M")
+                .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                .foregroundColor(isMuted ? Color.white : Color.white.opacity(0.40))
+                .frame(width: 24, height: 24)
+                .background(isMuted ? Color(red: 0.90, green: 0.25, blue: 0.25) : Color.white.opacity(0.06))
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(isMuted ? Color.red : Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help("Mute channel")
+    }
+}
+
+struct FaderCapKnobView: View {
+    let accentColor: Color
+    let isMuted: Bool
+    
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3.5)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(white: 0.38), Color(white: 0.22), Color(white: 0.16)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: 16, height: 26)
+                .overlay(RoundedRectangle(cornerRadius: 3.5).stroke(Color.white.opacity(0.3), lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.6), radius: 2.5, x: 0, y: 1.5)
+            
+            Rectangle()
+                .fill(isMuted ? Color.gray : accentColor)
+                .frame(width: 2, height: 14)
+        }
+    }
+}
+
+struct FaderValueBadgeView: View {
+    let isMuted: Bool
+    let volume: Double
+    let dbText: String
+    
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(isMuted ? "MUTE" : "\(Int(volume * 100))%")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(isMuted ? Color.red.opacity(0.9) : Color.white)
+            Text(dbText)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundColor(isMuted ? Color.red.opacity(0.6) : Color.gray)
+        }
+        .frame(width: 48, alignment: .trailing)
+    }
+}
+
+struct PlaybackFaderView: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let accentColor: Color
+    @Binding var volume: Double     // 0.0 ... 1.5
+    @Binding var isMuted: Bool
+    let onMuteToggle: () -> Void
+    let onVolumeChange: () -> Void
+    
+    private var dbText: String {
+        if isMuted { return "MUTED" }
+        if volume <= 0.001 { return "-∞ dB" }
+        let db = 20.0 * log10(volume)
+        if abs(db) < 0.15 { return "0.0 dB" }
+        return String(format: "%+.1f dB", db)
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            ChannelHeaderView(title: title, subtitle: subtitle, icon: icon, accentColor: accentColor)
+            
+            MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
+            
+            GeometryReader { geo in
+                let trackWidth: CGFloat = max(40.0, geo.size.width)
+                let faderCapWidth: CGFloat = 16.0
+                let availableTravel: CGFloat = max(1.0, trackWidth - faderCapWidth)
+                let progress: CGFloat = CGFloat(max(0.0, min(1.5, volume)) / 1.5)
+                let capOffset: CGFloat = progress * availableTravel
+                let unityX: CGFloat = (1.0 / 1.5) * availableTravel + (faderCapWidth / 2)
+                
+                ZStack(alignment: .leading) {
+                    // Trilho
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.black.opacity(0.75))
+                            .frame(height: 8)
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                        
+                        Rectangle()
+                            .fill(Color.white.opacity(0.08))
+                            .frame(height: 1.5)
+                        
+                        Rectangle()
+                            .fill(Color.white.opacity(0.35))
+                            .frame(width: 1.5, height: 12)
+                            .offset(x: unityX - 0.75)
+                        
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isMuted ? Color.gray.opacity(0.3) : accentColor.opacity(0.85))
+                            .frame(width: max(0, capOffset + (faderCapWidth / 2)), height: 6)
+                            .padding(.leading, 1)
+                    }
+                    
+                    // Knob
+                    FaderCapKnobView(accentColor: accentColor, isMuted: isMuted)
+                        .offset(x: capOffset)
+                }
+                .frame(height: geo.size.height)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { val in
+                            let touchX = val.location.x - (faderCapWidth / 2)
+                            let newProg = max(0.0, min(1.0, Double(touchX / availableTravel)))
+                            self.volume = round((newProg * 1.5) * 100) / 100.0
+                            onVolumeChange()
+                        }
+                        .onEnded { _ in
+                            onVolumeChange()
+                        }
+                )
+                .simultaneousGesture(
+                    TapGesture(count: 2).onEnded {
+                        self.volume = 1.0
+                        onVolumeChange()
+                    }
+                )
+            }
+            .frame(width: 140, height: 28)
+            
+            FaderValueBadgeView(isMuted: isMuted, volume: volume, dbText: dbText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.12).opacity(0.85)))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(isMuted ? Color.red.opacity(0.35) : Color.white.opacity(0.07), lineWidth: 1))
+    }
+}
+
+// ==========================================
+// 8. BOTTOM MIXER DOCK COM SELETOR DE SAÍDA PERSISTENTE
+// ==========================================
+struct BottomMixerDock: View {
+    @ObservedObject var state: PlaybackState
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Canal L: CLICK & GUIA
+            PlaybackFaderView(
+                title: "CLICK / CUE",
+                subtitle: "Ableton CLICK (L)",
+                icon: "headphones",
+                accentColor: Color.cyan,
+                volume: $state.clickVol,
+                isMuted: $state.clickMute,
+                onMuteToggle: { state.toggleClickMute() },
+                onVolumeChange: { state.sendVolumes() }
+            )
+            
+            // Canal R: VS INSTRUMENTOS
+            PlaybackFaderView(
+                title: "VS TRACKS",
+                subtitle: "Ableton VS (R)",
+                icon: "waveform",
+                accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
+                volume: $state.vsVol,
+                isMuted: $state.vsMute,
+                onMuteToggle: { state.toggleVsMute() },
+                onVolumeChange: { state.sendVolumes() }
+            )
+            
+            Spacer()
+            
+            // Seletor Minimalista de Saída de Áudio (Persistente)
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color.cyan)
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("OUTPUT DEVICE")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundColor(Color.gray)
+                    
+                    Picker("", selection: $state.selectedDeviceId) {
+                        ForEach(state.devices) { dev in
+                            Text(dev.name)
+                                .tag(dev.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(width: 175)
+                    .onChange(of: state.selectedDeviceId) { _, newId in
+                        state.setAudioDevice(id: newId, save: true)
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(white: 0.12).opacity(0.85))
+            .cornerRadius(9)
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+    }
+}
+
+// ==========================================
+// 9. MODAL PARA ADICIONAR MÚSICAS AO SETLIST
+// ==========================================
+struct AddSongSheetView: View {
+    @ObservedObject var state: PlaybackState
+    @Environment(\.presentationMode) var presentationMode
+    @State private var searchText = ""
+    
+    var availablePool: [SongItem] {
+        return state.librarySongs.isEmpty ? state.songs : state.librarySongs
+    }
+    
+    var filteredSongs: [SongItem] {
+        if searchText.isEmpty { return availablePool }
+        return availablePool.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.filename.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Add Song")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                
+                // Pasta atual clicável e discreta
+                Button(action: { state.selectTracksFolder() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10))
+                        Text(state.shortFolderName.isEmpty ? "Select Folder" : state.shortFolderName)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.06))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(state.tracksFolderPath.isEmpty ? "Select Tracks Folder" : "Folder: \(state.tracksFolderPath)")
+                
+                Spacer()
+                
+                // Botão Refresh discreto
+                Button(action: { state.refreshTracks() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(state.isScanningFolder ? Color.cyan : Color.white.opacity(0.6))
+                        .rotationEffect(Angle(degrees: state.isScanningFolder ? 360 : 0))
+                        .animation(state.isScanningFolder ? Animation.linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: state.isScanningFolder)
+                        .padding(5)
+                        .background(state.isScanningFolder ? Color.cyan.opacity(0.18) : Color.white.opacity(0.06))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(state.isScanningFolder)
+                .help("Refresh tracks from folder")
+                
+                Button("Close") {
+                    presentationMode.wrappedValue.dismiss()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(5)
+            }
+            
+            // Campo de busca nativo minimalista
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.gray)
+                    .font(.system(size: 11))
+                TextField("Search songs...", text: $searchText)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 12))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.06))
+            .cornerRadius(7)
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 1))
+            
+            if (state.isLoadingLibrary || state.isScanningFolder) && filteredSongs.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                    Text("Scanning tracks folder...")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
+                }
+                .frame(maxHeight: .infinity)
+            } else if filteredSongs.isEmpty {
+                VStack(spacing: 12) {
+                    Text("No tracks found in current folder.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
+                    HStack(spacing: 10) {
+                        Button("Select Folder") {
+                            state.selectTracksFolder()
+                        }
+                        .buttonStyle(BorderedButtonStyle())
+                        
+                        Button("Refresh Tracks") {
+                            state.refreshTracks()
+                        }
+                        .buttonStyle(BorderedButtonStyle())
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                List(filteredSongs) { song in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(song.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                            if let bpm = song.bpm {
+                                Text("\(formatBpm(bpm)) BPM")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        Spacer()
+                        Button("Add") {
+                            state.setlist.append(SetlistSong(song: song))
+                            state.saveSetlistState()
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                        .buttonStyle(BorderedProminentButtonStyle())
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 450, height: 420)
+        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+        .onAppear {
+            if state.librarySongs.isEmpty {
+                state.fetchAllLibrarySongs()
+            }
+        }
+    }
+}
+
+// ==========================================
+// 10. MODAL QR CODE NATIVO (COREIMAGE)
+// ==========================================
+struct QrCodeSheetView: View {
+    @ObservedObject var state: PlaybackState
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("📱 Mobile Remote Control")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text("Scan with your mobile camera to control playback:")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+            
+            if let qrImage = generateQRCodeImage(from: state.serverUrl) {
+                Image(nsImage: qrImage)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 190, height: 190)
+                    .padding(10)
+                    .background(Color.white)
+                    .cornerRadius(12)
+            }
+            
+            Text(state.serverUrl)
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                .foregroundColor(.green)
+                .padding(6)
+            
+            Text("💡 Ensure your smartphone is connected to the same Wi-Fi network as this Mac.")
+                .font(.caption)
+                .foregroundColor(.gray)
+            
+            Button("Done") {
+                presentationMode.wrappedValue.dismiss()
+            }
+            .buttonStyle(BorderedProminentButtonStyle())
+        }
+        .padding(24)
+        .frame(width: 390, height: 440)
+        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+    }
+    
+    private func generateQRCodeImage(from string: String) -> NSImage? {
+        guard let data = string.data(using: .utf8),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let ciImage = filter.outputImage else { return nil }
+        
+        let transform = CGAffineTransform(scaleX: 10, y: 10)
+        let scaled = ciImage.transformed(by: transform)
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
+    }
+}
+
+// ==========================================
+// 12. MINI POPOVER DE EDIÇÃO RÁPIDA DE SEÇÃO (RIGHT-CLICK EXCLUSIVO)
+// ==========================================
+
+// Ícone de Divisão / Corte com Linha Tracejada no Meio (Estilo Clip Cut / Video Editor)
+struct VideoCutSplitIcon: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3.5)
+                .stroke(Color.cyan, lineWidth: 1.6)
+                .frame(width: 19, height: 14)
+            
+            // Linha vertical tracejada no centro
+            Path { path in
+                path.move(to: CGPoint(x: 9.5, y: 1.5))
+                path.addLine(to: CGPoint(x: 9.5, y: 12.5))
+            }
+            .stroke(Color.cyan, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [2.5, 2.0]))
+            .frame(width: 19, height: 14)
+        }
+    }
+}
+
+struct QuickSectionEditPopoverView: View {
+    @ObservedObject var state: PlaybackState
+    let cueIndex: Int
+    
+    let cueTypes = [
+        "Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", 
+        "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", 
+        "Bridge", "Solo", "Tag", "Outro"
+    ]
+    
+    @State private var isCustom: Bool = false
+    @State private var customText: String = ""
+    
+    var body: some View {
+        if cueIndex >= 0 && cueIndex < state.currentCues.count {
+            let cue = state.currentCues[cueIndex]
+            let curDuration = state.calculateDurationBars(for: cueIndex)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                // Header com badge Playback + nome completo + compasso
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(hex: cue.color))
+                        .frame(width: 22, height: 22)
+                        .overlay(
+                            Text(cue.shortBadgeName)
+                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .foregroundColor(.white)
+                        )
+                    Text(cue.cleanFullName)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("• Bar \(formatBars(cue.bar))")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.gray)
+                    Spacer()
+                    if state.canUndo {
+                        Button(action: {
+                            state.undo()
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("Undo")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.cyan.opacity(0.12))
+                            .cornerRadius(4)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Undo last edit (⌘Z)")
+                    }
+                    Button(action: { state.quickEditingCueIdx = nil }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.gray)
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                
+                Divider().background(Color.white.opacity(0.12))
+                
+                // Section Type (com Interlude, Post Chorus e Personalizado)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Type")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.gray)
+                            .frame(width: 55, alignment: .leading)
+                        
+                        Picker("", selection: Binding(
+                            get: {
+                                if isCustom || !cueTypes.contains(cue.name) {
+                                    return "__custom__"
+                                }
+                                return cue.name
+                            },
+                            set: { newType in
+                                if newType == "__custom__" {
+                                    isCustom = true
+                                    if customText.isEmpty {
+                                        customText = cue.name
+                                    }
+                                } else {
+                                    isCustom = false
+                                    state.changeSectionType(at: cueIndex, newType: newType)
+                                }
+                            }
+                        )) {
+                            ForEach(cueTypes, id: \.self) { t in
+                                Text(t).tag(t)
+                            }
+                            Divider()
+                            Text("Custom (Personalizado)...").tag("__custom__")
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                    
+                    if isCustom || !cueTypes.contains(cue.name) {
+                        HStack(spacing: 6) {
+                            TextField("Custom name (e.g. Instrumental)", text: $customText, onCommit: {
+                                applyCustom()
+                            })
+                            .textFieldStyle(PlainTextFieldStyle())
+                            .font(.system(size: 11))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(6)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.cyan.opacity(0.6), lineWidth: 1))
+                            
+                            Button(action: applyCustom) {
+                                Text("Apply")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.black)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color.cyan)
+                                    .cornerRadius(5)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        .padding(.leading, 55)
+                    }
+                }
+                
+                // Duration in Bars with Stepper [-1] [-½] [ 8½ bars ] [+½] [+1]
+                HStack {
+                    Text("Duration")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.gray)
+                        .frame(width: 52, alignment: .leading)
+                    
+                    HStack(spacing: 3) {
+                        Button(action: {
+                            state.adjustSectionDuration(at: cueIndex, deltaBars: -1.0)
+                        }) {
+                            Text("-1")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white.opacity(0.85))
+                                .frame(width: 25, height: 24)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(curDuration <= 1.0)
+                        .help("Remove 1 whole bar (-1)")
+                        
+                        Button(action: {
+                            state.adjustSectionDuration(at: cueIndex, deltaBars: -0.5)
+                        }) {
+                            Text("-½")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.cyan)
+                                .frame(width: 25, height: 24)
+                                .background(Color.cyan.opacity(0.14))
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(curDuration <= 0.5)
+                        .help("Remove half bar (-½ comp / 2 tempos)")
+                        
+                        Text("\(formatBars(curDuration)) bars")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(minWidth: 54, alignment: .center)
+                        
+                        Button(action: {
+                            state.adjustSectionDuration(at: cueIndex, deltaBars: 0.5)
+                        }) {
+                            Text("+½")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.cyan)
+                                .frame(width: 25, height: 24)
+                                .background(Color.cyan.opacity(0.14))
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Add half bar (+½ comp / 2 tempos - compasso quebrado)")
+                        
+                        Button(action: {
+                            state.adjustSectionDuration(at: cueIndex, deltaBars: 1.0)
+                        }) {
+                            Text("+1")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white.opacity(0.85))
+                                .frame(width: 25, height: 24)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Add 1 whole bar (+1)")
+                    }
+                }
+                
+                Divider().background(Color.white.opacity(0.12))
+                
+                // Action Buttons
+                HStack(spacing: 12) {
+                    // Split Section Button (with Dashed Line)
+                    Button(action: {
+                        state.splitSection(at: cueIndex)
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.cyan.opacity(0.18))
+                                .frame(width: 36, height: 36)
+                            VideoCutSplitIcon()
+                        }
+                        .overlay(Circle().stroke(Color.cyan.opacity(0.35), lineWidth: 1.5))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Split section in two (Cut with dashed line)")
+                    
+                    // Delete Section Button
+                    if state.currentCues.count > 1 {
+                        Button(action: {
+                            state.deleteSection(at: cueIndex)
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.red.opacity(0.18))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "trash")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(Color(red: 1.0, green: 0.35, blue: 0.35))
+                            }
+                            .overlay(Circle().stroke(Color.red.opacity(0.35), lineWidth: 1.5))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Delete section")
+                    }
+                    
+                    Spacer()
+                    
+                    // Play Section Button (Ouvir Seção com Voz Guia Prévia)
+                    Button(action: {
+                        state.triggerCue(idx: cueIndex, quantize: false)
+                        if !state.isPlaying { state.playPause() }
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.green.opacity(0.18))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.green)
+                        }
+                        .overlay(Circle().stroke(Color.green.opacity(0.35), lineWidth: 1.5))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Play section from start")
+                }
+            }
+            .padding(16)
+            .frame(width: 260)
+            .background(Color(red: 0.12, green: 0.14, blue: 0.18))
+            .onAppear {
+                if !cueTypes.contains(cue.name) {
+                    isCustom = true
+                    customText = cue.name
+                }
+            }
+        } else {
+            EmptyView()
+        }
+    }
+    
+    private func applyCustom() {
+        let trimmed = customText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            state.changeSectionType(at: cueIndex, newType: trimmed)
+        }
+    }
+    
+    private func formatTime(_ sec: Double) -> String {
+        let m = Int(sec) / 60
+        let s = Int(sec) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// ==========================================
+// 13. MODAL EDITOR DE MÚSICA & CUES (IA & COMPASSOS)
+// ==========================================
+struct SongEditorSheetView: View {
+    @ObservedObject var state: PlaybackState
+    @Environment(\.presentationMode) var presentationMode
+    
+    @State private var localBpmText: String = ""
+    @State private var localTimeSignature: String = "4/4"
+    @State private var localCues: [CueSection] = []
+    @State private var localUndoStack: [[CueSection]] = []
+    
+    private func pushLocalUndo() {
+        localUndoStack.append(localCues)
+        if localUndoStack.count > 30 { localUndoStack.removeFirst() }
+    }
+    
+    private func undoLocal() {
+        guard let prev = localUndoStack.popLast() else { return }
+        localCues = prev
+    }
+    
+    let timeSignatureOptions = ["4/4", "2/4", "3/4", "6/8"]
+    let cueTypeOptions = [
+        "Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", 
+        "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", 
+        "Bridge", "Solo", "Tag", "Outro"
+    ]
+    @State private var customEditingIdx: Int? = nil
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header do Editor
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.cyan)
+                        Text("Song Editor & Cue Mapping")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    if let song = state.currentSong {
+                        Text(song.name)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                Spacer()
+                if !localUndoStack.isEmpty {
+                    Button(action: undoLocal) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("Desfazer")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.cyan.opacity(0.12))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Desfazer alteração local (⌘Z)")
+                }
+                Button(action: { presentationMode.wrappedValue.dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(20)
+            .background(Color(red: 0.12, green: 0.13, blue: 0.18))
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 20) {
+                    // 1. Painel de BPM, Compasso e Reprocessamento com IA
+                    HStack(spacing: 20) {
+                        // Edição de BPM
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("TEMPO (BPM)")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.gray)
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
+                                        let next = round(val - 1.0)
+                                        localBpmText = String(format: "%.1f", next)
+                                        recalculateCueTimes()
+                                    }
+                                }) {
+                                    Image(systemName: "minus")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .frame(width: 28, height: 28)
+                                        .background(Color.white.opacity(0.08))
+                                        .cornerRadius(6)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                
+                                TextField("BPM", text: $localBpmText)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .frame(width: 65, height: 28)
+                                    .multilineTextAlignment(.center)
+                                    .background(Color.black.opacity(0.3))
+                                    .cornerRadius(6)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                                    .onChange(of: localBpmText) { _, _ in
+                                        recalculateCueTimes()
+                                    }
+                                
+                                Button(action: {
+                                    if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
+                                        let next = round(val + 1.0)
+                                        localBpmText = String(format: "%.1f", next)
+                                        recalculateCueTimes()
+                                    }
+                                }) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .frame(width: 28, height: 28)
+                                        .background(Color.white.opacity(0.08))
+                                        .cornerRadius(6)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.white.opacity(0.03))
+                        .cornerRadius(10)
+                        
+                        // Edição do Tipo de Compasso
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("TIME SIGNATURE")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.gray)
+                            Picker("", selection: $localTimeSignature) {
+                                ForEach(timeSignatureOptions, id: \.self) { ts in
+                                    Text(ts).tag(ts)
+                                }
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                            .frame(width: 150)
+                            .onChange(of: localTimeSignature) { _, _ in
+                                recalculateCueTimes()
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.white.opacity(0.03))
+                        .cornerRadius(10)
+                        
+                        // Voz Guia na Troca (Lead-in)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("GUIDE LEAD-IN")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.gray)
+                            Picker("", selection: $state.guideLeadInBars) {
+                                Text("1 Bar").tag(1.0)
+                                Text("½ Bar").tag(0.5)
+                                Text("Off").tag(0.0)
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                            .frame(width: 140)
+                        }
+                        .padding(12)
+                        .background(Color.white.opacity(0.03))
+                        .cornerRadius(10)
+                        
+                        Spacer()
+                        
+                        // Botão Reprocessar com IA
+                        Button(action: {
+                            if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
+                                state.editorBpm = bpmVal
+                                state.editorTimeSignature = localTimeSignature
+                                state.reprocessWithAI()
+                            }
+                        }) {
+                            HStack(spacing: 8) {
+                                if state.isReprocessing {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .colorInvert()
+                                } else {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 13, weight: .bold))
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("Reprocess with AI")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text("Analyzes Guide & Dynamics")
+                                        .font(.system(size: 9))
+                                        .opacity(0.8)
+                                }
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            .cornerRadius(10)
+                            .shadow(color: Color.purple.opacity(0.4), radius: 6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(state.isReprocessing)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    
+                    // 2. Seções e Compassos da Música
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("SECTIONS & BARS (CUES)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(.gray)
+                            Spacer()
+                            Text("\(localCues.count) sections")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Cabeçalho das Colunas
+                        HStack(spacing: 12) {
+                            Text("SECTION TYPE")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.gray)
+                                .frame(width: 150, alignment: .leading)
+                            
+                            Text("BAR")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.gray)
+                                .frame(width: 145, alignment: .center)
+                            
+                            Text("TIME")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.gray)
+                                .frame(width: 80, alignment: .leading)
+                            
+                            Spacer()
+                            
+                            Text("ACTIONS")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.gray)
+                                .frame(width: 70, alignment: .trailing)
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Lista de Cues
+                        VStack(spacing: 6) {
+                            ForEach(Array(localCues.enumerated()), id: \.element.id) { idx, cue in
+                                HStack(spacing: 12) {
+                                    // Nome / Tipo de Cue com Badge Colorido (com Interlude, Post Chorus e Custom)
+                                    HStack(spacing: 6) {
+                                        Circle()
+                                            .fill(Color(hex: cue.color))
+                                            .frame(width: 10, height: 10)
+                                        
+                                        if customEditingIdx == idx || !cueTypeOptions.contains(cue.name) {
+                                            HStack(spacing: 4) {
+                                                TextField("Section", text: Binding(
+                                                    get: { cue.name },
+                                                    set: { newName in
+                                                        localCues[idx].name = newName
+                                                        localCues[idx].color = colorForCue(name: newName)
+                                                    }
+                                                ))
+                                                .textFieldStyle(PlainTextFieldStyle())
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 3)
+                                                .background(Color.white.opacity(0.08))
+                                                .cornerRadius(5)
+                                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.cyan.opacity(0.6), lineWidth: 1))
+                                                .frame(width: 95)
+                                                
+                                                Button(action: {
+                                                    if !cueTypeOptions.contains(cue.name) {
+                                                        localCues[idx].name = "Chorus"
+                                                        localCues[idx].color = colorForCue(name: "Chorus")
+                                                    }
+                                                    customEditingIdx = nil
+                                                }) {
+                                                    Image(systemName: "list.bullet")
+                                                        .font(.system(size: 9))
+                                                        .foregroundColor(.gray)
+                                                }
+                                                .buttonStyle(PlainButtonStyle())
+                                                .help("Switch to preset types picker")
+                                            }
+                                        } else {
+                                            Picker("", selection: Binding(
+                                                get: { cue.name },
+                                                set: { newName in
+                                                    pushLocalUndo()
+                                                    if newName == "__custom__" {
+                                                        customEditingIdx = idx
+                                                        localCues[idx].name = "Custom Section"
+                                                        localCues[idx].color = colorForCue(name: "Custom Section")
+                                                    } else {
+                                                        localCues[idx].name = newName
+                                                        localCues[idx].color = colorForCue(name: newName)
+                                                    }
+                                                }
+                                            )) {
+                                                ForEach(cueTypeOptions, id: \.self) { opt in
+                                                    Text(opt).tag(opt)
+                                                }
+                                                Divider()
+                                                Text("Custom (Personalizado)...").tag("__custom__")
+                                            }
+                                            .pickerStyle(MenuPickerStyle())
+                                            .frame(width: 120)
+                                        }
+                                    }
+                                    .frame(width: 150, alignment: .leading)
+                                    
+                                    // Compasso (Bar #) com Stepper de Inteiros e Meios Compassos
+                                    HStack(spacing: 3) {
+                                        Button(action: {
+                                            if localCues[idx].bar > 1.0 {
+                                                pushLocalUndo()
+                                                localCues[idx].bar = max(1.0, localCues[idx].bar - 1.0)
+                                                recalculateCueTimes()
+                                            }
+                                        }) {
+                                            Text("-1")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .frame(width: 20, height: 22)
+                                                .background(Color.white.opacity(0.08))
+                                                .cornerRadius(4)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .disabled(idx == 0)
+                                        .help("Remove 1 whole bar")
+                                        
+                                        Button(action: {
+                                            if localCues[idx].bar > 1.0 {
+                                                pushLocalUndo()
+                                                localCues[idx].bar = max(1.0, localCues[idx].bar - 0.5)
+                                                recalculateCueTimes()
+                                            }
+                                        }) {
+                                            Text("-½")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundColor(.cyan)
+                                                .frame(width: 20, height: 22)
+                                                .background(Color.cyan.opacity(0.12))
+                                                .cornerRadius(4)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .disabled(idx == 0)
+                                        .help("Remove half bar (-½ comp / 2 tempos)")
+                                        
+                                        Text("Bar \(formatBars(localCues[idx].bar))")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.white)
+                                            .frame(width: 58, alignment: .center)
+                                        
+                                        Button(action: {
+                                            pushLocalUndo()
+                                            localCues[idx].bar += 0.5
+                                            recalculateCueTimes()
+                                        }) {
+                                            Text("+½")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundColor(.cyan)
+                                                .frame(width: 20, height: 22)
+                                                .background(Color.cyan.opacity(0.12))
+                                                .cornerRadius(4)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .disabled(idx == 0)
+                                        .help("Add half bar (+½ comp / 2 tempos - compasso quebrado)")
+                                        
+                                        Button(action: {
+                                            pushLocalUndo()
+                                            localCues[idx].bar += 1.0
+                                            recalculateCueTimes()
+                                        }) {
+                                            Text("+1")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .frame(width: 20, height: 22)
+                                                .background(Color.white.opacity(0.08))
+                                                .cornerRadius(4)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .disabled(idx == 0)
+                                        .help("Add 1 whole bar")
+                                    }
+                                    .frame(width: 145, alignment: .center)
+                                    
+                                    // Tempo Calculado (MM:SS)
+                                    Text(formatTime(localCues[idx].time))
+                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .frame(width: 80, alignment: .leading)
+                                    
+                                    Spacer()
+                                    
+                                    // Ações: Ouvir / Remover
+                                    HStack(spacing: 8) {
+                                        Button(action: {
+                                            state.triggerCue(idx: idx, quantize: false)
+                                            if !state.isPlaying { state.playPause() }
+                                        }) {
+                                            Image(systemName: "play.circle.fill")
+                                                .font(.system(size: 16))
+                                                .foregroundColor(.green)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .help("Play from this section with voice guide lead-in")
+                                        
+                                        Button(action: {
+                                            if localCues.count > 1 && idx > 0 {
+                                                pushLocalUndo()
+                                                localCues.remove(at: idx)
+                                                recalculateCueTimes()
+                                            }
+                                        }) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(idx > 0 ? Color.red.opacity(0.8) : Color.clear)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .disabled(idx == 0)
+                                        .help("Delete section")
+                                    }
+                                    .frame(width: 70, alignment: .trailing)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.04))
+                                .cornerRadius(8)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Botão Adicionar Seção
+                        Button(action: {
+                            pushLocalUndo()
+                            let lastBar = localCues.last?.bar ?? 1.0
+                            let newBar = lastBar + 8.0
+                            let secPerBar = calculateSecPerBar()
+                            let newTime = Double(newBar - 1.0) * secPerBar
+                            let nextName = getNextDefaultName()
+                            let newCue = CueSection(
+                                id: "cue_\(UUID().uuidString.prefix(8))",
+                                name: nextName,
+                                time: round(newTime * 100) / 100,
+                                bar: newBar,
+                                color: colorForCue(name: nextName),
+                                waveform: nil
+                            )
+                            localCues.append(newCue)
+                            recalculateCueTimes()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Add New Section")
+                            }
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.cyan)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.cyan.opacity(0.08))
+                            .cornerRadius(8)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .padding(.horizontal, 20)
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(.bottom, 20)
+            }
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            // Footer: Cancelar e Salvar
+            HStack {
+                Button("Cancel") {
+                    presentationMode.wrappedValue.dismiss()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.gray)
+                
+                Spacer()
+                
+                Button(action: {
+                    if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
+                        state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues)
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark")
+                        Text("Save Changes")
+                    }
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .background(Color.blue)
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(16)
+            .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+        }
+        .frame(width: 760, height: 600)
+        .background(Color(red: 0.08, green: 0.09, blue: 0.13))
+        .onAppear {
+            localBpmText = formatBpm(state.bpm)
+            localTimeSignature = state.timeSignature
+            localCues = state.currentCues
+            localUndoStack.removeAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SongEditorUndo"))) { _ in
+            undoLocal()
+        }
+        .onChange(of: state.currentCues.count) { _, _ in
+            localCues = state.currentCues
+        }
+    }
+    
+    private func calculateSecPerBar() -> Double {
+        guard let bpm = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), bpm > 20 else { return 2.0 }
+        let beatsPerBar: Double = {
+            let parts = localTimeSignature.split(separator: "/")
+            if let first = parts.first, let num = Double(first) { return num }
+            return 4.0
+        }()
+        let secPerBeat = 60.0 / bpm
+        return secPerBeat * beatsPerBar
+    }
+    
+    private func recalculateCueTimes() {
+        let secPerBar = calculateSecPerBar()
+        for i in 0..<localCues.count {
+            if i == 0 {
+                localCues[i].bar = 1.0
+                localCues[i].time = 0.0
+            } else {
+                let bar = max(localCues[i - 1].bar + 0.5, localCues[i].bar)
+                localCues[i].bar = bar
+                localCues[i].time = round(Double(bar - 1.0) * secPerBar * 100) / 100
+            }
+        }
+        localCues.sort { $0.bar < $1.bar }
+    }
+    
+    private func getNextDefaultName() -> String {
+        let count = localCues.count
+        if count == 1 { return "Verse 1" }
+        if count == 2 { return "Chorus" }
+        if count == 3 { return "Verse 2" }
+        if count == 4 { return "Chorus" }
+        if count == 5 { return "Bridge" }
+        if count == 6 { return "Chorus" }
+        return "Outro"
+    }
+    
+    private func formatTime(_ sec: Double) -> String {
+        let m = Int(sec) / 60
+        let s = Int(sec) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// ==========================================
+// 11. INICIALIZAÇÃO NATIVA APPKIT
+// ==========================================
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow!
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
+        
+        let contentView = PlaybackAppView()
+        
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 650),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.center()
+        window.title = "VS Control"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(red: 0.07, green: 0.08, blue: 0.11, alpha: 1.0)
+        window.contentView = NSHostingView(rootView: contentView)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        
+        // 1. App Menu (VS Control com Atalho Cmd+Q)
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu(title: "VS Control")
+        
+        let aboutItem = NSMenuItem(title: "About VS Control", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(NSMenuItem.separator())
+        
+        let hideItem = NSMenuItem(title: "Hide VS Control", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(hideItem)
+        
+        let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        
+        let showAllItem = NSMenuItem(title: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(showAllItem)
+        appMenu.addItem(NSMenuItem.separator())
+        
+        let quitItem = NSMenuItem(title: "Quit VS Control", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(quitItem)
+        appMenuItem.submenu = appMenu
+        
+        // 2. Window Menu (Cmd+W para fechar janela, Cmd+M para minimizar)
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        let closeItem = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(closeItem)
+        let miniItem = NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(miniItem)
+        windowMenuItem.submenu = windowMenu
+        
+        NSApp.mainMenu = mainMenu
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>VS Control</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="macos-theme">
+  <div class="window-container">
+    
+    <!-- Barra Superior Nativa macOS (Draggable) -->
+    <header class="window-titlebar">
+      <div class="titlebar-traffic-spacer"></div>
+      <button id="btn-toggle-sidebar" class="btn-sidebar-toggle" title="Ocultar/Exibir Lista de Músicas (Cmd+B)">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+      </button>
+      <div class="titlebar-center">
+        <span class="window-title-app">VS Control</span>
+        <span class="window-title-song" id="titlebar-song-name">Nenhuma música carregada</span>
+      </div>
+      <div class="titlebar-actions">
+        <span class="ableton-sync-pill" id="ableton-sync-pill" title="Sincronização de BPM via OSC com o Ableton Live">
+          <span class="sync-pulse"></span>
+          <span>Ableton BPM Sync</span>
+        </span>
+        <button id="btn-qr-modal" class="btn-apple-pill" title="Conectar Celular Android via Wi-Fi">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 10h6v-6h-6zm-4-6h2v2h-2zm2 2h2v2h-2zm-2 2h2v2h-2zm4-4h2v2h-2zm2 2h2v2h-2z"/></svg>
+          <span>📱 Celular Android</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Conteúdo Principal: Sidebar + Main Stage -->
+    <div class="window-body">
+      
+      <!-- Sidebar Nativa Apple (Biblioteca de Músicas) -->
+      <aside class="apple-sidebar" id="apple-sidebar">
+        <div class="sidebar-search">
+          <div class="search-input-wrapper">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="song-search-input" placeholder="Buscar música ou BPM...">
+          </div>
+        </div>
+
+        <div class="sidebar-section-title">
+          <span>SUAS MÚSICAS (VS)</span>
+          <span class="count-badge" id="songs-count">0</span>
+        </div>
+
+        <div class="songs-list" id="songs-list">
+          <!-- Renderizado dinamicamente -->
+        </div>
+
+        <!-- Rodapé da Sidebar: Seletor de Saída de Áudio -->
+        <div class="sidebar-footer">
+          <div class="audio-route-card">
+            <div class="route-header">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+              <span>Saída de Áudio:</span>
+            </div>
+            <select id="device-select" class="apple-select" title="Selecione BlackHole para Ableton">
+              <option value="">Carregando saídas...</option>
+            </select>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Stage View -->
+      <main class="apple-stage">
+        
+        <!-- Header da Música Atual -->
+        <div class="stage-header">
+          <div class="stage-song-details">
+            <h1 id="song-title">Selecione uma música...</h1>
+            <div class="stage-badges">
+              <span class="apple-badge bpm-badge" id="bpm-val">-- BPM</span>
+              <span class="apple-badge sig-badge" id="sig-val">4/4</span>
+              <div class="key-pill">
+                <span class="key-label">TOM</span>
+                <select id="pad-key-select" class="key-select">
+                  <option value="C">C</option><option value="C#">C#</option><option value="D" selected>D</option>
+                  <option value="Eb">Eb</option><option value="E">E</option><option value="F">F</option>
+                  <option value="F#">F#</option><option value="G">G</option><option value="Ab">Ab</option>
+                  <option value="A">A</option><option value="Bb">Bb</option><option value="B">B</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Metrônomo Visual e Marcador de Compassos -->
+          <div class="stage-meter">
+            <div class="meter-bar-box">
+              <span class="meter-small-label">COMPASSO</span>
+              <span class="meter-bar-val" id="bar-number">001</span>
+            </div>
+            <div class="meter-beats" id="beat-dots">
+              <span class="dot active"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+            <div class="meter-clock" id="time-display">00:00 / 00:00</div>
+          </div>
+        </div>
+
+        <!-- Waveform Timeline Interativa -->
+        <div class="stage-timeline-card">
+          <div class="timeline-meta">
+            <span class="timeline-hint">Clique em qualquer seção ou use o teclado / celular para pular suavemente</span>
+            <span class="jump-alert" id="jump-status"></span>
+          </div>
+          <div class="timeline-bar" id="timeline-track">
+            <div class="timeline-fill" id="timeline-progress"></div>
+            <div class="timeline-head" id="timeline-playhead"></div>
+            <div class="cues-markers-layer" id="cues-overlay"></div>
+          </div>
+        </div>
+
+        <!-- Grade de Pads de Cues (Estilo Multitracks Playback) -->
+        <div class="cue-grid-wrapper">
+          <div class="cue-pads-grid" id="cue-pads-grid">
+            <div class="placeholder-msg">Carregando seções da faixa...</div>
+          </div>
+        </div>
+
+        <!-- Barra de Transporte e Faders Estilo Apple Logic Pro -->
+        <footer class="stage-dock">
+          
+          <!-- Faders L e R para Ableton -->
+          <div class="faders-dock">
+            
+            <div class="fader-unit">
+              <div class="fader-label-row">
+                <span class="fader-name">CLICK / GUIA (L)</span>
+                <span class="fader-dest">&rarr; Ableton In 1</span>
+              </div>
+              <div class="fader-track-row">
+                <input type="range" id="vol-click" min="0" max="1.5" step="0.05" value="1.0">
+                <span class="fader-val" id="click-val">100%</span>
+              </div>
+              <button id="btn-click-mute" class="apple-btn-mute">MUTE</button>
+            </div>
+
+            <div class="fader-unit">
+              <div class="fader-label-row">
+                <span class="fader-name">VS MIX (R)</span>
+                <span class="fader-dest">&rarr; Ableton In 2</span>
+              </div>
+              <div class="fader-track-row">
+                <input type="range" id="vol-vs" min="0" max="1.5" step="0.05" value="1.0">
+                <span class="fader-val" id="vs-val">100%</span>
+              </div>
+              <button id="btn-vs-mute" class="apple-btn-mute">MUTE</button>
+            </div>
+
+          </div>
+
+          <!-- Botoes de Transporte -->
+          <div class="transport-dock">
+            <button id="btn-stop" class="apple-transport-btn" title="Parar (Esc)">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>
+              <span>Stop</span>
+            </button>
+
+            <button id="btn-play-pause" class="apple-transport-btn btn-play-hero" title="Tocar / Pausar (Espaço)">
+              <svg id="icon-play" viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              <svg id="icon-pause" viewBox="0 0 24 24" width="26" height="26" fill="currentColor" style="display:none;"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>
+              <span id="play-text">Play</span>
+            </button>
+
+            <button id="btn-loop" class="apple-transport-btn btn-loop" title="Repetir Seção Atual (L)">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+              <span>Loop</span>
+            </button>
+
+            <button id="btn-pad" class="apple-transport-btn btn-pad" title="Pad de Sustentação Contínuo (P)">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+              <span>Pad</span>
+            </button>
+          </div>
+
+        </footer>
+
+      </main>
+
+    </div>
+
+    <!-- Modal QR Code Celular Android -->
+    <div class="modal" id="qr-modal">
+      <div class="modal-card">
+        <button class="modal-close" id="btn-close-modal">&times;</button>
+        <div class="modal-header">
+          <h2>📱 Controle via Celular Android</h2>
+          <p>Aponte a câmera do seu smartphone para o QR Code abaixo:</p>
+        </div>
+        <div class="qr-container" id="qr-container">
+          <!-- SVG inserido dinamicamente -->
+        </div>
+        <div class="qr-info-box">
+          <span>Ou abra no Chrome do Android:</span>
+          <strong id="qr-url-text">http://...</strong>
+        </div>
+        <p class="qr-note">💡 O celular e o Mac devem estar conectados na mesma rede Wi-Fi.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
