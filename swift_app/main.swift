@@ -788,7 +788,32 @@ class PlaybackState: ObservableObject {
             "time_signature": timeSignature,
             "cues": cuesJson
         ]
-        sendAction("save_cues", body: body)
+        
+        guard let url = URL(string: "http://127.0.0.1:8080/api/save_cues") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let songData = json["song"] as? [String: Any],
+                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
+            
+            let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw)
+            guard let updatedCues = try? JSONDecoder().decode([CueSection].self, from: rawData ?? Data()) else { return }
+            
+            DispatchQueue.main.async {
+                guard let self = self, self.currentSong?.id == song.id else { return }
+                for (idx, updated) in updatedCues.enumerated() {
+                    if idx < self.currentCues.count && self.currentCues[idx].id == updated.id {
+                        self.currentCues[idx].waveform = updated.waveform
+                    }
+                }
+            }
+        }.resume()
+        
         self.isSongEditorPresented = false
     }
     
@@ -1032,7 +1057,31 @@ class PlaybackState: ObservableObject {
             "time_signature": timeSignature,
             "cues": cuesJson
         ]
-        sendAction("save_cues", body: body)
+        
+        guard let url = URL(string: "http://127.0.0.1:8080/api/save_cues") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let songData = json["song"] as? [String: Any],
+                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
+            
+            let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw)
+            guard let updatedCues = try? JSONDecoder().decode([CueSection].self, from: rawData ?? Data()) else { return }
+            
+            DispatchQueue.main.async {
+                guard let self = self, self.currentSong?.id == song.id else { return }
+                for (idx, updated) in updatedCues.enumerated() {
+                    if idx < self.currentCues.count && self.currentCues[idx].id == updated.id {
+                        self.currentCues[idx].waveform = updated.waveform
+                    }
+                }
+            }
+        }.resume()
     }
     
     var canUndo: Bool { !undoStack.isEmpty }

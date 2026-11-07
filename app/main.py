@@ -208,6 +208,26 @@ def load_song(req: LoadSongRequest):
         time_signature=ts
     )
 
+    # Re-amostragem das formas de onda para coincidir perfeitamente com o áudio carregado
+    if engine.audio_data is not None and song.get("cues"):
+        from app.song_library import resample_cues_waveforms
+        updated_cues = resample_cues_waveforms(song["path"], song["cues"], audio_data=engine.audio_data, sr=engine.sample_rate)
+        song["cues"] = updated_cues
+        engine.cues = updated_cues
+        cache_path = song["path"] + ".cues.json"
+        try:
+            payload = {
+                "version": 5,
+                "channel": "R",
+                "bpm": song.get("bpm"),
+                "time_signature": song.get("time_signature", "4/4"),
+                "cues": updated_cues
+            }
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
     # Sincroniza o BPM automaticamente no Ableton Live
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
@@ -321,7 +341,14 @@ class SaveCuesRequest(BaseModel):
 
 @app.post("/api/save_cues")
 def save_cues(req: SaveCuesRequest):
-    success = library.save_cues(req.song_id, req.cues, bpm=req.bpm, time_signature=req.time_signature)
+    song = library.get_song(req.song_id)
+    audio_data = None
+    sr = None
+    if song and engine.filepath and engine.filepath == song.get("path") and engine.audio_data is not None:
+        audio_data = engine.audio_data
+        sr = engine.sample_rate
+
+    success = library.save_cues(req.song_id, req.cues, bpm=req.bpm, time_signature=req.time_signature, audio_data=audio_data, sr=sr)
     song = library.get_song(req.song_id)
     if song:
         ts = parse_time_signature(req.time_signature or song.get("time_signature", "4/4"))
@@ -329,7 +356,7 @@ def save_cues(req: SaveCuesRequest):
             engine.bpm = req.bpm
             sync_tempo_to_ableton(req.bpm)
         engine.time_signature = ts
-        engine.cues = req.cues
+        engine.cues = song["cues"]
     return {"success": success, "song": song}
 
 class ReprocessRequest(BaseModel):

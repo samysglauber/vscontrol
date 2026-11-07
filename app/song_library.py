@@ -5,7 +5,9 @@ Varre o diretório /Users/samysglauber/Documents/Vs de forma inteligente e sob d
 
 import os
 import json
-from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio
+from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio, compute_real_waveform_peaks
+import soundfile as sf
+import numpy as np
 
 DEFAULT_VS_DIR = "/Users/samysglauber/Documents/Vs"
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "tracks_config.json")
@@ -28,6 +30,51 @@ def save_tracks_dir(path: str):
             json.dump({"tracks_folder": path}, f, indent=2)
     except Exception as e:
         print(f"Erro ao salvar tracks_config.json: {e}")
+
+def resample_cues_waveforms(filepath: str, cues: list[dict], audio_data: np.ndarray = None, sr: int = None) -> list[dict]:
+    """
+    Re-amostra as formas de onda reais do Canal R (instrumentos/VS) com precisão cirúrgica
+    para cada seção, usando os tempos atuais (start_time e end_time de cada bloco).
+    """
+    if not cues or not filepath:
+        return cues
+    
+    try:
+        if audio_data is None or sr is None:
+            if not os.path.exists(filepath):
+                return cues
+            audio_data, sr = sf.read(filepath)
+
+        total_frames = len(audio_data)
+        total_seconds = total_frames / sr
+
+        # Extrai canal R para cálculo da normalização global consistente
+        if audio_data.ndim > 1:
+            right = audio_data[:, 1]
+        else:
+            right = audio_data
+
+        step_r = max(1, len(right) // 2000)
+        global_r_max = float(np.max(np.abs(right[::step_r])))
+        if global_r_max < 0.01:
+            global_r_max = float(np.max(np.abs(right)))
+        if global_r_max < 0.01:
+            global_r_max = 1.0
+
+        for i in range(len(cues)):
+            start_t = max(0.0, float(cues[i].get("time", 0.0)))
+            end_t = float(cues[i + 1]["time"]) if (i + 1 < len(cues) and "time" in cues[i + 1]) else total_seconds
+            if end_t <= start_t:
+                end_t = start_t + 1.0
+            
+            cues[i]["waveform"] = compute_real_waveform_peaks(
+                audio_data, sr, start_t, end_t, n_peaks=64, global_r_max=global_r_max
+            )
+    except Exception as e:
+        print(f"Erro ao reamostrar waveforms: {e}")
+
+    return cues
+
 
 class SongLibrary:
     def __init__(self, directory: str | None = None):
@@ -178,15 +225,20 @@ class SongLibrary:
         s["time_signature"] = f"{ts[0]}/{ts[1]}"
         return s
 
-    def save_cues(self, song_id: str, cues: list[dict], bpm: float = None, time_signature: str = None) -> bool:
-        """Salva as alterações manuais do usuário (Cues, BPM, Compasso) de forma permanente."""
+    def save_cues(self, song_id: str, cues: list[dict], bpm: float = None, time_signature: str = None, audio_data: np.ndarray = None, sr: int = None) -> bool:
+        """Salva as alterações manuais do usuário (Cues, BPM, Compasso) e re-amostra o áudio em tempo real."""
         s = self.get_song(song_id)
         if s:
             if bpm is not None:
                 s["bpm"] = bpm
             if time_signature:
                 s["time_signature"] = time_signature
+
+            # 1. Re-amostragem em tempo real do Canal R para as novas coordenadas de cada bloco
+            cues = resample_cues_waveforms(s["path"], cues, audio_data=audio_data, sr=sr)
             s["cues"] = cues
+
+            # 2. Persistência em cache (.cues.json)
             cache_path = s["path"] + ".cues.json"
             payload = {
                 "version": 5,
