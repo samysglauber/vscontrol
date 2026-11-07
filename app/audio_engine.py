@@ -292,6 +292,17 @@ class LiveAudioEngine:
                     active_idx = i
                     break
 
+            # Se o usuário clicar na seção atualmente em reprodução:
+            # NÃO agenda repetição/loop. O loop só deve ser ativado pelos botões dedicados de loop (toggle_loop).
+            # Se houver algum salto para outra seção enfileirado, cancela o salto para continuar tocando naturalmente.
+            if cue_index == active_idx or cue_index == self.current_cue_idx:
+                if self.queued_cue_idx is not None or self.queued_jump is not None or self.guide_lead_in is not None:
+                    self.queued_cue_idx = None
+                    self.queued_jump = None
+                    self.guide_lead_in = None
+                    self._notify_event("cue_queued", {"queued_cue_idx": None})
+                return
+
             # Fim do trecho atual: início do próximo trecho ou fim total da música
             if active_idx + 1 < len(self.cues):
                 end_sec = self.cues[active_idx + 1]["time"]

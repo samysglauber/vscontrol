@@ -1876,7 +1876,15 @@ struct SpectrogramWaveformView: View {
                                             }
                                             // SALTO QUANTIZADO NO TEMPO 1 DO PRÓXIMO COMPASSO
                                             if state.isPlaying {
-                                                // Enquanto toca: programa o salto para cair exatamente no tempo 1 do próximo compasso
+                                                if idx == state.currentCueIdx {
+                                                    // Se clicar no trecho que já está tocando:
+                                                    // Não agenda repetição nem loop. Se havia outro trecho na fila, cancela a fila.
+                                                    if state.queuedCueIdx != nil {
+                                                        state.triggerCue(idx: idx, quantize: true)
+                                                    }
+                                                    return
+                                                }
+                                                // Enquanto toca outro trecho: programa o salto para cair exatamente no tempo 1 do próximo compasso
                                                 state.triggerCue(idx: idx, quantize: true)
                                             } else {
                                                 // Quando parado: busca para o início exato da seção
