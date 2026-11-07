@@ -381,9 +381,10 @@ class LiveAudioEngine:
                 self.loop_active = not self.loop_active
                 self.loop_cue_idx = self.current_cue_idx if self.loop_active else None
             
-            # Se desativou o loop e havia um lead-in de repetição ativo, cancela para seguir naturalmente
-            if not self.loop_active and self.guide_lead_in and self.guide_lead_in.get("is_loop"):
-                self.guide_lead_in = None
+            # Se desativou o loop ou alterou a seção de loop, cancela lead-in de repetição anterior
+            if self.guide_lead_in and self.guide_lead_in.get("is_loop"):
+                if not self.loop_active or self.loop_cue_idx != self.guide_lead_in.get("cue_idx"):
+                    self.guide_lead_in = None
 
             status = self.loop_active
             target_idx = self.loop_cue_idx
@@ -668,49 +669,63 @@ class LiveAudioEngine:
             # 3. Checa repetição infinita de seção (Loop Infinito) se não houver salto agendado
             elif self.loop_active:
                 target_loop_idx = self.loop_cue_idx if self.loop_cue_idx is not None else self.current_cue_idx
-                if len(self.cues) > target_loop_idx:
+                if 0 <= target_loop_idx < len(self.cues):
                     curr_cue = self.cues[target_loop_idx]
                     curr_start = int(curr_cue["time"] * self.sample_rate)
                     curr_end = int(self.cues[target_loop_idx + 1]["time"] * self.sample_rate) if target_loop_idx + 1 < len(self.cues) else self.total_frames
-                    sec_per_bar = self.get_sec_per_bar()
-                    lead_in_bars = self.guide_lead_in_bars if self.guide_lead_in_bars > 0 else 0.0
-                    lead_in_frames = int(min(lead_in_bars * sec_per_bar, curr_cue["time"]) * self.sample_rate)
-                    loop_at_frame = curr_end - lead_in_frames
-                    lead_in_start = curr_start - lead_in_frames
+                    
+                    # O loop SÓ é executado se a reprodução estiver efetivamente dentro desta seção!
+                    # Se estiver tocando outra seção (anterior ou posterior), continua tocando normalmente sem saltar.
+                    if curr_start <= self.pos_frame < curr_end:
+                        sec_per_bar = self.get_sec_per_bar()
+                        lead_in_bars = self.guide_lead_in_bars if self.guide_lead_in_bars > 0 else 0.0
+                        lead_in_frames = int(min(lead_in_bars * sec_per_bar, curr_cue["time"]) * self.sample_rate)
+                        loop_at_frame = curr_end - lead_in_frames
 
-                    if lead_in_frames > 512 and lead_in_start >= 0 and self.pos_frame + frames >= loop_at_frame:
-                        frames_before = max(0, loop_at_frame - self.pos_frame)
-                        frames_after = frames - frames_before
+                        frames_left = max(0, curr_end - self.pos_frame)
+                        eff_lead_in = min(lead_in_frames, frames_left)
+                        eff_start = curr_start - eff_lead_in
 
-                        l1 = self._read_slice(self.pos_frame, frames_before)[:, 0]
-                        l2 = self._read_slice(lead_in_start, frames_after)[:, 0]
-                        slice_l = np.concatenate((l1, l2)) if frames_before > 0 else l2
+                        if eff_lead_in > 512 and eff_start >= 0 and self.pos_frame + frames >= loop_at_frame:
+                            frames_before = max(0, loop_at_frame - self.pos_frame)
+                            frames_after = frames - frames_before
 
-                        slice_r = self._read_slice(self.pos_frame, frames)[:, 1]
+                            l1 = self._read_slice(self.pos_frame, frames_before)[:, 0]
+                            l2 = self._read_slice(eff_start, frames_after)[:, 0]
+                            slice_l = np.concatenate((l1, l2)) if frames_before > 0 else l2
 
-                        self.guide_lead_in = {
-                            "pos_frame": lead_in_start + frames_after,
-                            "end_frame": curr_start,
-                            "target_downbeat_frame": curr_start,
-                            "cue_idx": target_loop_idx,
-                            "is_loop": True
-                        }
-                        self.pos_frame += frames
-                    elif self.pos_frame + frames >= curr_end:
-                        # Repetição sem lead-in no final da seção com crossfade
-                        frames_before = max(0, curr_end - self.pos_frame)
-                        frames_after = frames - frames_before
+                            slice_r = self._read_slice(self.pos_frame, frames)[:, 1]
 
-                        out1 = self._read_slice(self.pos_frame, frames_before)
-                        self._schedule_crossfade(curr_end)
-                        out2 = self._read_slice(curr_start, frames_after)
-                        out2 = self._apply_crossfade(out2)
-                        self.pos_frame = curr_start + frames_after
+                            self.guide_lead_in = {
+                                "pos_frame": eff_start + frames_after,
+                                "end_frame": curr_start,
+                                "target_downbeat_frame": curr_start,
+                                "cue_idx": target_loop_idx,
+                                "is_loop": True
+                            }
+                            self.pos_frame += frames
+                        elif self.pos_frame + frames >= curr_end:
+                            # Repetição sem lead-in no final da seção com crossfade
+                            frames_before = max(0, curr_end - self.pos_frame)
+                            frames_after = frames - frames_before
 
-                        chunk_stereo = np.vstack((out1, out2)) if frames_before > 0 else out2
-                        slice_l = chunk_stereo[:, 0]
-                        slice_r = chunk_stereo[:, 1]
+                            out1 = self._read_slice(self.pos_frame, frames_before)
+                            self._schedule_crossfade(curr_end)
+                            out2 = self._read_slice(curr_start, frames_after)
+                            out2 = self._apply_crossfade(out2)
+                            self.pos_frame = curr_start + frames_after
+
+                            chunk_stereo = np.vstack((out1, out2)) if frames_before > 0 else out2
+                            slice_l = chunk_stereo[:, 0]
+                            slice_r = chunk_stereo[:, 1]
+                        else:
+                            chunk_stereo = self._read_slice(self.pos_frame, frames)
+                            chunk_stereo = self._apply_crossfade(chunk_stereo)
+                            slice_l = chunk_stereo[:, 0]
+                            slice_r = chunk_stereo[:, 1]
+                            self.pos_frame += frames
                     else:
+                        # Fora da seção em loop: toca normalmente a música no ponto atual
                         chunk_stereo = self._read_slice(self.pos_frame, frames)
                         chunk_stereo = self._apply_crossfade(chunk_stereo)
                         slice_l = chunk_stereo[:, 0]
