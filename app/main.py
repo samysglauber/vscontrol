@@ -208,6 +208,9 @@ def load_song(req: LoadSongRequest):
         time_signature=ts
     )
 
+    tot_dur = engine.total_frames / engine.sample_rate if (engine.total_frames and engine.sample_rate) else 0.0
+    song["total_duration"] = tot_dur
+
     # Re-amostragem e extração da forma de onda contínua global para coincidir perfeitamente com o áudio carregado
     if engine.audio_data is not None:
         from app.cue_detector import compute_full_waveform
@@ -385,6 +388,9 @@ def reprocess_song(req: ReprocessRequest):
         cues=song["cues"],
         time_signature=ts
     )
+
+    tot_dur = engine.total_frames / engine.sample_rate if (engine.total_frames and engine.sample_rate) else 0.0
+    song["total_duration"] = tot_dur
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
         

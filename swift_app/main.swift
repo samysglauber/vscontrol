@@ -249,8 +249,28 @@ class PlaybackState: ObservableObject {
     
     var displayFullWaveform: [Double] {
         if !fullWaveform.isEmpty { return fullWaveform }
-        let combined = currentCues.flatMap { $0.waveform ?? [] }
-        return combined.isEmpty ? [] : combined
+        guard !currentCues.isEmpty, totalSeconds > 0 else { return [] }
+        
+        let targetTotalPeaks = 1000
+        var result: [Double] = []
+        for (idx, cue) in currentCues.enumerated() {
+            let nextT = (idx + 1 < currentCues.count) ? currentCues[idx + 1].time : totalSeconds
+            let dur = max(0.01, nextT - cue.time)
+            let countForThisCue = max(1, Int(round((dur / totalSeconds) * Double(targetTotalPeaks))))
+            let cueWf = cue.waveform ?? []
+            if cueWf.isEmpty {
+                result.append(contentsOf: Array(repeating: 0.04, count: countForThisCue))
+            } else if cueWf.count == countForThisCue {
+                result.append(contentsOf: cueWf)
+            } else {
+                for p in 0..<countForThisCue {
+                    let t = Double(p) / Double(max(1, countForThisCue - 1))
+                    let srcIdx = min(cueWf.count - 1, Int(t * Double(cueWf.count - 1)))
+                    result.append(cueWf[srcIdx])
+                }
+            }
+        }
+        return result
     }
     
     @Published var isPlaying: Bool = false
@@ -348,19 +368,9 @@ class PlaybackState: ObservableObject {
             self.setlist = savedList.map { SetlistSong(song: $0.song, transitionType: $0.transitionType) }
             let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
             if let lastId = lastSongId, let target = self.setlist.first(where: { $0.song.id == lastId }) {
-                self.currentSong = target.song
-                if let fw = target.song.full_waveform, !fw.isEmpty {
-                    self.fullWaveform = fw
-                } else if let savedFw = UserDefaults.standard.array(forKey: "saved_waveform_\(target.song.id)") as? [Double] {
-                    self.fullWaveform = savedFw
-                }
+                self.loadSong(target.song)
             } else if let first = self.setlist.first {
-                self.currentSong = first.song
-                if let fw = first.song.full_waveform, !fw.isEmpty {
-                    self.fullWaveform = fw
-                } else if let savedFw = UserDefaults.standard.array(forKey: "saved_waveform_\(first.song.id)") as? [Double] {
-                    self.fullWaveform = savedFw
-                }
+                self.loadSong(first.song)
             }
         }
     }
@@ -760,9 +770,13 @@ class PlaybackState: ObservableObject {
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
             let parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
             let fullW = songData["full_waveform"] as? [Double] ?? []
+            let totDur = songData["total_duration"] as? Double ?? (songData["total_seconds"] as? Double ?? 0.0)
             
             DispatchQueue.main.async {
                 self?.currentCues = parsedCues
+                if totDur > 0 {
+                    self?.totalSeconds = totDur
+                }
                 if !fullW.isEmpty {
                     self?.fullWaveform = fullW
                     UserDefaults.standard.set(fullW, forKey: "saved_waveform_\(song.id)")
@@ -1943,7 +1957,19 @@ struct SpectrogramWaveformView: View {
                                     .frame(width: totalTrackWidth, height: 175)
                             }
                             
-                            // 4. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
+                            // 4. LINHAS DIVISÓRIAS VERTICAIS ENTRE SEÇÕES (Marcadores Exatos dos Trechos)
+                            ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
+                                if idx > 0 {
+                                    let xPos = CGFloat(section.time) * scale
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.85))
+                                        .frame(width: 2.0, height: 175)
+                                        .shadow(color: Color.black.opacity(0.85), radius: 2, x: 0, y: 0)
+                                        .position(x: xPos, y: 175 / 2)
+                                }
+                            }
+                            
+                            // 5. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
                             HStack(spacing: 0) {
                                 ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
                                     let isPlayingSection = idx == state.currentCueIdx
@@ -2199,7 +2225,7 @@ struct WaveformSectionBlock: View {
                         ForEach(1...numLines, id: \.self) { b in
                             let xPos = (CGFloat(b) / CGFloat(total)) * width
                             Rectangle()
-                                .fill(Color.white.opacity(0.12))
+                                .fill(Color.white.opacity(0.10))
                                 .frame(width: 1)
                                 .position(x: xPos, y: 175 / 2)
                         }
@@ -2207,69 +2233,79 @@ struct WaveformSectionBlock: View {
                 }
                 
                 // Rodapé: Métrica de Compasso (4/4, 6/8...) posicionada de forma limpa e visível
-                VStack {
-                    Spacer()
-                    HStack {
-                        Text(state.timeSignature)
-                            .font(.system(size: 9, weight: .black, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.85))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.60))
-                            .cornerRadius(4)
-                            .padding(.leading, 6)
-                            .padding(.bottom, 6)
+                if width >= 40 {
+                    VStack {
                         Spacer()
+                        HStack {
+                            Text(state.timeSignature)
+                                .font(.system(size: 8, weight: .black, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.85))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.60))
+                                .cornerRadius(4)
+                                .padding(.leading, 6)
+                                .padding(.bottom, 6)
+                            Spacer()
+                        }
                     }
                 }
                 
-                // Header: Playback Circular Badge ("C", "V1", "Pc", "B", etc.) + Botão de Loop
-                HStack(alignment: .center) {
-                    Circle()
-                        .fill(badgeColor)
-                        .frame(width: 22, height: 22)
-                        .overlay(
-                            Text(section.shortBadgeName)
-                                .font(.system(size: 10, weight: .black, design: .rounded))
-                                .foregroundColor(.white)
-                        )
-                        .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
-                        .help(section.cleanFullName)
-                    
-                    Spacer()
-                    
-                    Button(action: onLoopToggle) {
-                        Image(systemName: "repeat")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(isLoopActive ? Color.cyan : Color.white.opacity(0.85))
-                            .padding(5)
-                            .background(isLoopActive ? Color.cyan.opacity(0.35) : Color.black.opacity(0.55))
-                            .clipShape(Circle())
+                // Header: Playback Circular Badge ("Co", "I", "V1", etc.) + Botão de Loop
+                HStack(alignment: .center, spacing: 4) {
+                    if width >= 24 {
+                        let badgeSize: CGFloat = width < 42 ? 18 : 22
+                        Circle()
+                            .fill(badgeColor)
+                            .frame(width: badgeSize, height: badgeSize)
+                            .overlay(
+                                Text(section.shortBadgeName)
+                                    .font(.system(size: width < 42 ? 8 : 10, weight: .black, design: .rounded))
+                                    .foregroundColor(.white)
+                            )
+                            .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
+                            .help(section.cleanFullName)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    
+                    Spacer(minLength: 0)
+                    
+                    if width >= 44 {
+                        Button(action: onLoopToggle) {
+                            Image(systemName: "repeat")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(isLoopActive ? Color.cyan : Color.white.opacity(0.85))
+                                .padding(4)
+                                .background(isLoopActive ? Color.cyan.opacity(0.35) : Color.black.opacity(0.55))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                 }
-                .padding(6)
+                .padding(.horizontal, max(2, min(6, (width - 24) / 4)))
+                .padding(.top, 6)
             }
             .frame(width: width, height: 175)
-            // Divisória vertical no início da seção e borda de destaque quando ativa/enfileirada
+            .clipped()
+            // Borda de destaque quando ativa/enfileirada
             .overlay(
-                ZStack(alignment: .leading) {
-                    // Linha divisória vertical mais evidente entre seções
-                    Rectangle()
-                        .fill(isPlaying ? Color.green : (isQueued ? Color.orange : Color.white.opacity(0.65)))
-                        .frame(width: isPlaying || isQueued ? 2.5 : 2.0)
-                        .shadow(color: Color.black.opacity(0.8), radius: 2, x: 0, y: 0)
-                    
-                    if isPlaying || isQueued {
+                Group {
+                    if isPlaying {
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(borderColor, lineWidth: 2)
+                            .stroke(Color.green, lineWidth: 2.5)
                             .padding(2)
+                            .shadow(color: Color.green.opacity(0.6), radius: 6)
+                    } else if isQueued {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.orange, lineWidth: 2.5)
+                            .padding(2)
+                            .shadow(color: Color.orange.opacity(0.6), radius: 6)
                     }
                 }
             )
-            .shadow(color: isPlaying ? Color.green.opacity(0.35) : (isQueued ? Color.yellow.opacity(0.40) : Color.clear), radius: 8)
         }
         .buttonStyle(PlainButtonStyle())
+        .frame(width: width, height: 175)
+        .clipped()
         .modifier(RightClickModifier(action: {
             state.quickEditingCueIdx = index
         }))
