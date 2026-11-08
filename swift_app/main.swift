@@ -275,6 +275,11 @@ class PlaybackState: ObservableObject {
     @Published var isFadingOut: Bool = false
     @Published var abletonSynced: Bool = false
     @Published var scrollToStartTrigger: Int = 0
+    @Published var zoomLevel: Double = 0.35 {
+        didSet {
+            UserDefaults.standard.set(zoomLevel, forKey: "saved_timeline_zoom_level")
+        }
+    }
     
     func triggerScrollToStart() {
         DispatchQueue.main.async {
@@ -320,6 +325,9 @@ class PlaybackState: ObservableObject {
         }
         if let savedFolder = UserDefaults.standard.string(forKey: "saved_tracks_folder_path") {
             self.tracksFolderPath = savedFolder
+        }
+        if let savedZoom = UserDefaults.standard.object(forKey: "saved_timeline_zoom_level") as? Double {
+            self.zoomLevel = savedZoom
         }
         
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
@@ -1311,6 +1319,35 @@ struct PlaybackAppView: View {
                     return nil
                 }
                 
+                // Navegação pelos Blocos de Seções com as Setas do Teclado (Esquerda / Direita)
+                if event.keyCode == 123 { // Seta para Esquerda (←)
+                    if !state.currentCues.isEmpty {
+                        let curIdx = state.queuedCueIdx ?? state.currentCueIdx
+                        let prevIdx = max(0, curIdx - 1)
+                        if state.isPlaying {
+                            state.triggerCue(idx: prevIdx, quantize: true)
+                        } else {
+                            state.seekToSeconds(state.currentCues[prevIdx].time)
+                            state.triggerCue(idx: prevIdx, quantize: false)
+                        }
+                    }
+                    return nil
+                }
+                
+                if event.keyCode == 124 { // Seta para Direita (→)
+                    if !state.currentCues.isEmpty {
+                        let curIdx = state.queuedCueIdx ?? state.currentCueIdx
+                        let nextIdx = min(state.currentCues.count - 1, curIdx + 1)
+                        if state.isPlaying {
+                            state.triggerCue(idx: nextIdx, quantize: true)
+                        } else {
+                            state.seekToSeconds(state.currentCues[nextIdx].time)
+                            state.triggerCue(idx: nextIdx, quantize: false)
+                        }
+                    }
+                    return nil
+                }
+                
                 // Atalhos Numéricos (sem teclas modificadoras como Cmd/Opt/Ctrl)
                 if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
                     let char = event.charactersIgnoringModifiers ?? ""
@@ -1996,6 +2033,13 @@ struct SpectrogramWaveformView: View {
                         }
                     }
                 }
+                .onChange(of: state.queuedCueIdx) { _, targetIdx in
+                    if let idx = targetIdx {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(idx, anchor: .center)
+                        }
+                    }
+                }
             }
         }
         .frame(height: 195)
@@ -2039,10 +2083,16 @@ struct SpectrogramWaveformView: View {
             return (60.0 / b) * num
         }()
         
-        // Garante que 1 compasso tenha pelo menos 65 pontos de largura para ótima legibilidade
-        let minPxPerSec = CGFloat(65.0 / max(0.5, secPerBar))
-        let fitPxPerSec = totalAvailableWidth / CGFloat(state.totalSeconds)
-        return max(minPxPerSec, fitPxPerSec)
+        let fitPxPerSec = totalAvailableWidth / CGFloat(max(1.0, state.totalSeconds))
+        let comfortablePxPerSec = CGFloat(65.0 / max(0.5, secPerBar))
+        let maxPxPerSec = max(comfortablePxPerSec * 2.2, fitPxPerSec * 3.8)
+        
+        if state.zoomLevel <= 0.02 {
+            return fitPxPerSec
+        }
+        
+        let t = CGFloat(max(0.0, min(1.0, state.zoomLevel)))
+        return fitPxPerSec + (maxPxPerSec - fitPxPerSec) * t
     }
     
     private func calculateBlockWidths(scale: CGFloat, totalTrackWidth: CGFloat) -> [CGFloat] {
@@ -2204,10 +2254,11 @@ struct WaveformSectionBlock: View {
             // Divisória vertical no início da seção e borda de destaque quando ativa/enfileirada
             .overlay(
                 ZStack(alignment: .leading) {
-                    // Linha divisória vertical que coincide exatamente com o downbeat do áudio
+                    // Linha divisória vertical mais evidente entre seções
                     Rectangle()
-                        .fill(isPlaying ? Color.green : (isQueued ? Color.orange : Color.white.opacity(0.20)))
-                        .frame(width: isPlaying || isQueued ? 2 : 1)
+                        .fill(isPlaying ? Color.green : (isQueued ? Color.orange : Color.white.opacity(0.65)))
+                        .frame(width: isPlaying || isQueued ? 2.5 : 2.0)
+                        .shadow(color: Color.black.opacity(0.8), radius: 2, x: 0, y: 0)
                     
                     if isPlaying || isQueued {
                         RoundedRectangle(cornerRadius: 6)
@@ -2566,6 +2617,59 @@ struct BottomMixerDock: View {
             )
             
             Spacer()
+            
+            // Controle de Zoom da Timeline (Visão Geral 100% ou Zoom In)
+            HStack(spacing: 8) {
+                Image(systemName: "minus.magnifyingglass")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.gray.opacity(0.5) : Color.white.opacity(0.75))
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            state.zoomLevel = max(0.0, state.zoomLevel - 0.2)
+                        }
+                    }
+                    .help("Zoom Out")
+                
+                Slider(value: $state.zoomLevel, in: 0.0...1.0)
+                    .frame(width: 85)
+                    .accentColor(.cyan)
+                
+                Image(systemName: "plus.magnifyingglass")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.gray.opacity(0.5) : Color.cyan)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            state.zoomLevel = min(1.0, state.zoomLevel + 0.2)
+                        }
+                    }
+                    .help("Zoom In")
+                
+                // Botão Rápido: Alterna entre FIT (música toda visível) e ZOOM
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        if state.zoomLevel < 0.05 {
+                            state.zoomLevel = 0.35
+                        } else {
+                            state.zoomLevel = 0.0
+                        }
+                    }
+                }) {
+                    Text(state.zoomLevel < 0.05 ? "ZOOM" : "FIT")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.9))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.25) : Color.white.opacity(0.12))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(state.zoomLevel < 0.05 ? "Restaurar Zoom Normal" : "Ajustar Música Toda na Tela (Fit)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(white: 0.12).opacity(0.85))
+            .cornerRadius(9)
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.08), lineWidth: 1))
             
             // Seletor Minimalista de Saída de Áudio (Persistente)
             HStack(spacing: 8) {
