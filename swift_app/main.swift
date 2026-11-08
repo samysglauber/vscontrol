@@ -283,6 +283,7 @@ class PlaybackState: ObservableObject {
     
     @Published var currentCueIdx: Int = 0
     @Published var queuedCueIdx: Int? = nil
+    @Published var focusedCueIdx: Int? = nil
     @Published var loopActive: Bool = false
     @Published var loopCueIdx: Int? = nil
     @Published var padActive: Bool = false
@@ -752,6 +753,7 @@ class PlaybackState: ObservableObject {
         self.undoStack.removeAll()
         self.redoStack.removeAll()
         self.undoNotificationMessage = nil
+        self.focusedCueIdx = nil
         self.currentSong = song
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
@@ -1360,8 +1362,8 @@ struct PlaybackAppView: View {
                     }
                 }
                 
-                // Se algum modal estiver aberto, não processa atalhos globais de playback
-                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented {
+                // Se algum modal ou popover estiver aberto, não processa atalhos globais de playback
+                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented || state.quickEditingCueIdx != nil {
                     return event
                 }
                 if event.keyCode == 49 { // 49 = Barra de Espaço
@@ -1370,32 +1372,64 @@ struct PlaybackAppView: View {
                 }
                 
                 // Navegação pelos Blocos de Seções com as Setas do Teclado (Esquerda / Direita)
+                // Exibe o cursor de foco em branco translúcido sem alterar a reprodução de imediato
                 if event.keyCode == 123 { // Seta para Esquerda (←)
                     if !state.currentCues.isEmpty {
-                        let curIdx = state.queuedCueIdx ?? state.currentCueIdx
+                        let curIdx: Int = {
+                            if let f = state.focusedCueIdx { return f }
+                            if let q = state.queuedCueIdx { return q }
+                            return state.currentCueIdx
+                        }()
                         let prevIdx = max(0, curIdx - 1)
-                        if state.isPlaying {
-                            state.triggerCue(idx: prevIdx, quantize: true)
-                        } else {
-                            state.seekToSeconds(state.currentCues[prevIdx].time)
-                            state.triggerCue(idx: prevIdx, quantize: false)
-                        }
+                        state.focusedCueIdx = prevIdx
                     }
                     return nil
                 }
                 
                 if event.keyCode == 124 { // Seta para Direita (→)
                     if !state.currentCues.isEmpty {
-                        let curIdx = state.queuedCueIdx ?? state.currentCueIdx
+                        let curIdx: Int = {
+                            if let f = state.focusedCueIdx { return f }
+                            if let q = state.queuedCueIdx { return q }
+                            return state.currentCueIdx
+                        }()
                         let nextIdx = min(state.currentCues.count - 1, curIdx + 1)
-                        if state.isPlaying {
-                            state.triggerCue(idx: nextIdx, quantize: true)
-                        } else {
-                            state.seekToSeconds(state.currentCues[nextIdx].time)
-                            state.triggerCue(idx: nextIdx, quantize: false)
-                        }
+                        state.focusedCueIdx = nextIdx
                     }
                     return nil
+                }
+                
+                // Tecla Enter / Return: Confirma a seleção do bloco focado (fica laranja durante o playback)
+                if event.keyCode == 36 || event.keyCode == 76 { // 36 = Return, 76 = Enter (Keypad)
+                    if let targetIdx = state.focusedCueIdx {
+                        if state.isPlaying {
+                            if targetIdx == state.currentCueIdx {
+                                // Se confirmar o trecho que já está tocando, cancela qualquer salto pendente
+                                state.queuedCueIdx = nil
+                            } else {
+                                // Dispara o salto quantizado para o tempo 1 do próximo compasso (destaque laranja)
+                                state.triggerCue(idx: targetIdx, quantize: true)
+                            }
+                        } else {
+                            // Quando parado: busca para o início exato da seção
+                            state.seekToSeconds(state.currentCues[targetIdx].time)
+                            state.triggerCue(idx: targetIdx, quantize: false)
+                        }
+                        state.focusedCueIdx = nil
+                        return nil
+                    }
+                }
+                
+                // Tecla Escape: Cancela a pré-visualização de foco ou desfaz a fila
+                if event.keyCode == 53 { // 53 = Escape
+                    if state.focusedCueIdx != nil {
+                        state.focusedCueIdx = nil
+                        return nil
+                    }
+                    if state.queuedCueIdx != nil {
+                        state.queuedCueIdx = nil
+                        return nil
+                    }
                 }
                 
                 // Atalhos Numéricos (sem teclas modificadoras como Cmd/Opt/Ctrl)
@@ -1998,6 +2032,7 @@ struct SpectrogramWaveformView: View {
                                 ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
                                     let isPlayingSection = idx == state.currentCueIdx
                                     let isQueued = idx == state.queuedCueIdx
+                                    let isFocused = idx == state.focusedCueIdx
                                     let isLoopThis = state.loopActive && (state.loopCueIdx == idx || (state.loopCueIdx == nil && isPlayingSection))
                                     let width = idx < blockWidths.count ? blockWidths[idx] : 90
                                     
@@ -2007,9 +2042,11 @@ struct SpectrogramWaveformView: View {
                                         section: section,
                                         isPlaying: isPlayingSection,
                                         isQueued: isQueued,
+                                        isFocused: isFocused,
                                         isLoopActive: isLoopThis,
                                         width: width,
                                         onSelect: {
+                                            state.focusedCueIdx = nil
                                             lastUserScrollTime = .distantPast
                                             withAnimation(.easeInOut(duration: 0.25)) {
                                                 proxy.scrollTo(idx, anchor: .center)
@@ -2086,6 +2123,14 @@ struct SpectrogramWaveformView: View {
                 .onChange(of: state.queuedCueIdx) { _, targetIdx in
                     if let idx = targetIdx {
                         withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(idx, anchor: .center)
+                        }
+                    }
+                }
+                .onChange(of: state.focusedCueIdx) { _, targetIdx in
+                    if let idx = targetIdx {
+                        lastUserScrollTime = .distantPast
+                        withAnimation(.easeInOut(duration: 0.22)) {
                             proxy.scrollTo(idx, anchor: .center)
                         }
                     }
@@ -2225,6 +2270,7 @@ struct WaveformSectionBlock: View {
     let section: CueSection
     let isPlaying: Bool
     let isQueued: Bool
+    let isFocused: Bool
     let isLoopActive: Bool
     let width: CGFloat
     let onSelect: () -> Void
@@ -2319,7 +2365,7 @@ struct WaveformSectionBlock: View {
             }
             .frame(width: width, height: 175)
             .clipped()
-            // Borda de destaque quando ativa/enfileirada
+            // Borda de destaque quando ativa / enfileirada / focada com o teclado
             .overlay(
                 Group {
                     if isPlaying {
@@ -2327,11 +2373,37 @@ struct WaveformSectionBlock: View {
                             .stroke(Color.green, lineWidth: 2.5)
                             .padding(2)
                             .shadow(color: Color.green.opacity(0.6), radius: 6)
+                            .overlay(
+                                Group {
+                                    if isFocused {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
+                                            .padding(2)
+                                            .shadow(color: Color.white.opacity(0.8), radius: 4)
+                                    }
+                                }
+                            )
                     } else if isQueued {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.orange, lineWidth: 2.5)
                             .padding(2)
                             .shadow(color: Color.orange.opacity(0.6), radius: 6)
+                            .overlay(
+                                Group {
+                                    if isFocused {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
+                                            .padding(2)
+                                            .shadow(color: Color.white.opacity(0.8), radius: 4)
+                                    }
+                                }
+                            )
+                    } else if isFocused {
+                        // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.white.opacity(0.95), lineWidth: 2.2)
+                            .padding(2)
+                            .shadow(color: Color.white.opacity(0.7), radius: 6)
                     }
                 }
             )
@@ -2354,8 +2426,22 @@ struct WaveformSectionBlock: View {
     }
     
     private var blockBgColor: Color {
-        if isPlaying { return Color(red: 0.10, green: 0.35, blue: 0.20).opacity(0.35) }
-        if isQueued { return Color(red: 0.38, green: 0.25, blue: 0.08).opacity(0.40) }
+        if isPlaying {
+            if isFocused {
+                return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.55)
+            }
+            return Color(red: 0.10, green: 0.35, blue: 0.20).opacity(0.35)
+        }
+        if isQueued {
+            if isFocused {
+                return Color(red: 0.50, green: 0.35, blue: 0.10).opacity(0.55)
+            }
+            return Color(red: 0.38, green: 0.25, blue: 0.08).opacity(0.40)
+        }
+        if isFocused {
+            // Fundo de destaque branco translúcido elegante
+            return Color.white.opacity(0.24)
+        }
         return Color(red: 0.10, green: 0.12, blue: 0.16).opacity(0.20)
     }
     
