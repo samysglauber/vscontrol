@@ -1432,9 +1432,19 @@ struct PlaybackAppView: View {
                     }
                 }
                 
-                // Atalhos Numéricos (sem teclas modificadoras como Cmd/Opt/Ctrl)
+                // Atalhos Numéricos e Letras (sem teclas modificadoras como Cmd/Opt/Ctrl)
                 if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
                     let char = event.charactersIgnoringModifiers ?? ""
+                    
+                    // Tecla L: Alterna o modo Loop da seção focada ou da seção atual
+                    if char.lowercased() == "l" || event.keyCode == 37 {
+                        if let focusedIdx = state.focusedCueIdx {
+                            state.toggleLoop(cueIdx: focusedIdx)
+                        } else {
+                            state.toggleLoop()
+                        }
+                        return nil
+                    }
                     
                     // Tecla 0: Dispara o Fade Stop de 3 segundos
                     if char == "0" || event.keyCode == 29 || event.keyCode == 82 {
@@ -1572,7 +1582,7 @@ struct TopBarView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Loop current section")
+                .help("Loop current section (L)")
                 
                 // Botão AUTO (Auto-Advance do Setlist: sem on/off e sem o raio)
                 Button(action: { state.autoAdvance.toggle() }) {
@@ -2349,6 +2359,7 @@ struct WaveformSectionBlock: View {
                                 .clipShape(Circle())
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .help("Loop this section (L)")
                     }
                 }
                 .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))

@@ -411,7 +411,7 @@ async def websocket_endpoint(websocket: WebSocket):
             elif action == "trigger_cue":
                 engine.trigger_cue(msg.get("cue_idx", 0), quantize=msg.get("quantize", True))
             elif action == "toggle_loop":
-                engine.toggle_loop()
+                engine.toggle_loop(msg.get("cue_idx"))
             elif action == "set_guide_lead_in":
                 engine.set_guide_lead_in(msg.get("bars", 1.0))
             elif action == "set_pad":
