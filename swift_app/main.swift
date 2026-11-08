@@ -456,7 +456,12 @@ class PlaybackState: ObservableObject {
                     self.queuedCueIdx = nil
                 }
             } else if event == "cue_jumped" {
-                if let cIdx = eventData["current_cue_idx"] as? Int { self.currentCueIdx = cIdx }
+                if let cIdx = eventData["current_cue_idx"] as? Int {
+                    self.currentCueIdx = cIdx
+                    if self.focusedCueIdx == cIdx {
+                        self.focusedCueIdx = nil
+                    }
+                }
                 self.queuedCueIdx = nil
             } else if event == "loop_state" {
                 if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
@@ -1399,23 +1404,35 @@ struct PlaybackAppView: View {
                     return nil
                 }
                 
-                // Tecla Enter / Return: Confirma a seleção do bloco focado (fica laranja durante o playback)
+                // Tecla Enter / Return: Alterna a seleção do bloco (Laranja <-> Branco)
                 if event.keyCode == 36 || event.keyCode == 76 { // 36 = Return, 76 = Enter (Keypad)
-                    if let targetIdx = state.focusedCueIdx {
+                    let targetIdxOpt = state.focusedCueIdx ?? state.queuedCueIdx
+                    if let targetIdx = targetIdxOpt {
                         if state.isPlaying {
                             if targetIdx == state.currentCueIdx {
-                                // Se confirmar o trecho que já está tocando, cancela qualquer salto pendente
-                                state.queuedCueIdx = nil
-                            } else {
-                                // Dispara o salto quantizado para o tempo 1 do próximo compasso (destaque laranja)
+                                // Se estiver no trecho que já está tocando: cancela qualquer fila pendente
+                                if state.queuedCueIdx != nil {
+                                    state.triggerCue(idx: targetIdx, quantize: true)
+                                    state.queuedCueIdx = nil
+                                }
+                                state.focusedCueIdx = targetIdx
+                            } else if state.queuedCueIdx == targetIdx {
+                                // SEGUNDO ENTER: O bloco já estava laranja (enfileirado), remove a seleção e volta a ficar branco!
                                 state.triggerCue(idx: targetIdx, quantize: true)
+                                state.queuedCueIdx = nil
+                                state.focusedCueIdx = targetIdx
+                            } else {
+                                // PRIMEIRO ENTER: Agenda o salto quantizado no tempo 1 do próximo compasso (fica laranja)
+                                state.triggerCue(idx: targetIdx, quantize: true)
+                                state.queuedCueIdx = targetIdx
+                                state.focusedCueIdx = targetIdx
                             }
                         } else {
                             // Quando parado: busca para o início exato da seção
                             state.seekToSeconds(state.currentCues[targetIdx].time)
                             state.triggerCue(idx: targetIdx, quantize: false)
+                            state.focusedCueIdx = targetIdx
                         }
-                        state.focusedCueIdx = nil
                         return nil
                     }
                 }
@@ -2386,7 +2403,7 @@ struct WaveformSectionBlock: View {
                             .shadow(color: Color.green.opacity(0.6), radius: 6)
                             .overlay(
                                 Group {
-                                    if isFocused {
+                                    if isFocused && !isQueued {
                                         RoundedRectangle(cornerRadius: 6)
                                             .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
                                             .padding(2)
@@ -2395,20 +2412,11 @@ struct WaveformSectionBlock: View {
                                 }
                             )
                     } else if isQueued {
+                        // Bloco selecionado para salto: cor laranja evidente
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.orange, lineWidth: 2.5)
                             .padding(2)
-                            .shadow(color: Color.orange.opacity(0.6), radius: 6)
-                            .overlay(
-                                Group {
-                                    if isFocused {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
-                                            .padding(2)
-                                            .shadow(color: Color.white.opacity(0.8), radius: 4)
-                                    }
-                                }
-                            )
+                            .shadow(color: Color.orange.opacity(0.7), radius: 6)
                     } else if isFocused {
                         // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
                         RoundedRectangle(cornerRadius: 6)
@@ -2438,15 +2446,12 @@ struct WaveformSectionBlock: View {
     
     private var blockBgColor: Color {
         if isPlaying {
-            if isFocused {
+            if isFocused && !isQueued {
                 return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.55)
             }
             return Color(red: 0.10, green: 0.35, blue: 0.20).opacity(0.35)
         }
         if isQueued {
-            if isFocused {
-                return Color(red: 0.50, green: 0.35, blue: 0.10).opacity(0.55)
-            }
             return Color(red: 0.38, green: 0.25, blue: 0.08).opacity(0.40)
         }
         if isFocused {
