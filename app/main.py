@@ -208,20 +208,28 @@ def load_song(req: LoadSongRequest):
         time_signature=ts
     )
 
-    # Re-amostragem das formas de onda para coincidir perfeitamente com o áudio carregado
-    if engine.audio_data is not None and song.get("cues"):
-        from app.song_library import resample_cues_waveforms
-        updated_cues = resample_cues_waveforms(song["path"], song["cues"], audio_data=engine.audio_data, sr=engine.sample_rate)
-        song["cues"] = updated_cues
-        engine.cues = updated_cues
+    # Re-amostragem e extração da forma de onda contínua global para coincidir perfeitamente com o áudio carregado
+    if engine.audio_data is not None:
+        from app.cue_detector import compute_full_waveform
+        song["full_waveform"] = compute_full_waveform(engine.audio_data, engine.sample_rate, n_peaks=1200)
+
+        if song.get("cues"):
+            from app.song_library import resample_cues_waveforms
+            updated_cues = resample_cues_waveforms(song["path"], song["cues"], audio_data=engine.audio_data, sr=engine.sample_rate)
+            song["cues"] = updated_cues
+            engine.cues = updated_cues
+        else:
+            updated_cues = []
+
         cache_path = song["path"] + ".cues.json"
         try:
             payload = {
-                "version": 5,
+                "version": 6,
                 "channel": "R",
                 "bpm": song.get("bpm"),
                 "time_signature": song.get("time_signature", "4/4"),
-                "cues": updated_cues
+                "cues": updated_cues,
+                "full_waveform": song["full_waveform"]
             }
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)

@@ -116,6 +116,48 @@ def compute_real_waveform_peaks(audio_data: np.ndarray, sr: int, start_time: flo
     return peaks
 
 
+def compute_full_waveform(audio_data: np.ndarray, sr: int, n_peaks: int = 1200) -> list[float]:
+    """
+    Extrai a envoltória contínua da faixa completa do Canal R (instrumentos/VS)
+    para visualização em fundo único e contínuo, sem emendas ou cortes.
+    """
+    if audio_data is None or len(audio_data) == 0:
+        return [0.04] * n_peaks
+
+    if audio_data.ndim > 1:
+        channel_r = audio_data[:, 1]
+    else:
+        channel_r = audio_data
+
+    total_len = len(channel_r)
+    step_sub = max(1, total_len // 2000)
+    global_r_max = float(np.max(np.abs(channel_r[::step_sub])))
+    if global_r_max < 0.01:
+        global_r_max = float(np.max(np.abs(channel_r)))
+    if global_r_max < 0.01:
+        global_r_max = 1.0
+
+    step = max(1, total_len // n_peaks)
+    peaks = []
+    chunk = np.abs(channel_r)
+    for i in range(n_peaks):
+        s = i * step
+        e = min(total_len, s + step)
+        sub = chunk[s:e]
+        if len(sub) > 0:
+            rms_val = float(np.sqrt(np.mean(sub**2)))
+            peak_val = float(np.max(sub))
+            val = 0.30 * rms_val + 0.70 * peak_val
+        else:
+            val = 0.04
+        ratio = val / (global_r_max * 1.05)
+        scaled = np.tanh(ratio * 1.5) / np.tanh(1.5) * 0.95
+        norm_val = round(max(0.04, min(0.96, float(scaled))), 3)
+        peaks.append(norm_val)
+
+    return peaks
+
+
 def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4, 4), force_reprocess: bool = False) -> list[dict]:
     """
     Analisa a faixa esquerda (Click + Guia) e canal direito (VS) para localizar as 

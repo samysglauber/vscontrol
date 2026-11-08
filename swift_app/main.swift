@@ -157,6 +157,7 @@ struct SongItem: Identifiable, Codable, Hashable {
     var bpm: Double?
     var time_signature: String?
     var default_key: String?
+    var full_waveform: [Double]?
     
     var displayKey: String {
         return default_key ?? "D"
@@ -244,6 +245,13 @@ class PlaybackState: ObservableObject {
     
     @Published var currentSong: SongItem? = nil
     @Published var currentCues: [CueSection] = []
+    @Published var fullWaveform: [Double] = []
+    
+    var displayFullWaveform: [Double] {
+        if !fullWaveform.isEmpty { return fullWaveform }
+        let combined = currentCues.flatMap { $0.waveform ?? [] }
+        return combined.isEmpty ? [] : combined
+    }
     
     @Published var isPlaying: Bool = false
     @Published var currentSeconds: Double = 0.0
@@ -333,8 +341,18 @@ class PlaybackState: ObservableObject {
             let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
             if let lastId = lastSongId, let target = self.setlist.first(where: { $0.song.id == lastId }) {
                 self.currentSong = target.song
+                if let fw = target.song.full_waveform, !fw.isEmpty {
+                    self.fullWaveform = fw
+                } else if let savedFw = UserDefaults.standard.array(forKey: "saved_waveform_\(target.song.id)") as? [Double] {
+                    self.fullWaveform = savedFw
+                }
             } else if let first = self.setlist.first {
                 self.currentSong = first.song
+                if let fw = first.song.full_waveform, !fw.isEmpty {
+                    self.fullWaveform = fw
+                } else if let savedFw = UserDefaults.standard.array(forKey: "saved_waveform_\(first.song.id)") as? [Double] {
+                    self.fullWaveform = savedFw
+                }
             }
         }
     }
@@ -733,9 +751,14 @@ class PlaybackState: ObservableObject {
             
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
             let parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
+            let fullW = songData["full_waveform"] as? [Double] ?? []
             
             DispatchQueue.main.async {
                 self?.currentCues = parsedCues
+                if !fullW.isEmpty {
+                    self?.fullWaveform = fullW
+                    UserDefaults.standard.set(fullW, forKey: "saved_waveform_\(song.id)")
+                }
                 if let b = songData["bpm"] as? Double { self?.bpm = b }
                 if let ts = songData["time_signature"] as? String { self?.timeSignature = ts }
                 self?.abletonSynced = true
@@ -1828,8 +1851,10 @@ struct SpectrogramWaveformView: View {
     var body: some View {
         GeometryReader { geo in
             let totalAvailableWidth = geo.size.width - 40
-            let blockWidths = calculateBlockWidths(totalWidth: totalAvailableWidth)
-            let playheadX = calculatePlayheadX(blockWidths: blockWidths)
+            let scale = calculateScale(totalAvailableWidth: totalAvailableWidth)
+            let totalTrackWidth = max(totalAvailableWidth, CGFloat(max(1.0, state.totalSeconds)) * scale)
+            let blockWidths = calculateBlockWidths(scale: scale, totalTrackWidth: totalTrackWidth)
+            let playheadX = CGFloat(max(0.0, state.currentSeconds)) * scale
             
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: true) {
@@ -1843,23 +1868,51 @@ struct SpectrogramWaveformView: View {
                         )
                         .frame(width: 1, height: 1)
                         
-                        // Blocos de Seções com Onda Real
-                        HStack(spacing: 4) {
-                            if state.currentCues.isEmpty {
-                                VStack(spacing: 8) {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
-                                    Text("Loading audio tracks and cue sections...")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.gray)
-                                }
-                                .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
-                            } else {
+                        if state.currentCues.isEmpty {
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                                Text("Loading audio tracks and cue sections...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+                            .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
+                        } else {
+                            // 1. Fundo Geral Escuro da Timeline
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(red: 0.07, green: 0.08, blue: 0.11))
+                                .frame(width: totalTrackWidth, height: 175)
+                            
+                            // 2. Linha de Centro Discreta
+                            Rectangle()
+                                .fill(Color.white.opacity(0.06))
+                                .frame(width: totalTrackWidth, height: 1)
+                                .position(x: totalTrackWidth / 2, y: 175 / 2)
+                            
+                            // 3. ONDA REAL CONTÍNUA GLOBAL (Fundo Fixo Unificado de Toda a Música)
+                            let peaks = state.displayFullWaveform
+                            if !peaks.isEmpty {
+                                ContinuousWaveformShape(peaks: peaks)
+                                    .fill(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [
+                                                Color(red: 0.20, green: 0.65, blue: 0.98).opacity(0.92),
+                                                Color(red: 0.12, green: 0.42, blue: 0.85).opacity(0.68)
+                                            ]),
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: totalTrackWidth, height: 175)
+                            }
+                            
+                            // 4. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
+                            HStack(spacing: 0) {
                                 ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
                                     let isPlayingSection = idx == state.currentCueIdx
                                     let isQueued = idx == state.queuedCueIdx
                                     let isLoopThis = state.loopActive && (state.loopCueIdx == idx || (state.loopCueIdx == nil && isPlayingSection))
-                                    let width = blockWidths.indices.contains(idx) ? blockWidths[idx] : 90
+                                    let width = idx < blockWidths.count ? blockWidths[idx] : 90
                                     
                                     WaveformSectionBlock(
                                         state: state,
@@ -1899,20 +1952,21 @@ struct SpectrogramWaveformView: View {
                                     .id(idx)
                                 }
                             }
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Playhead Vermelho Alinhado com Precisão
-                        if state.totalSeconds > 0 && !state.currentCues.isEmpty {
-                            Rectangle()
-                                .fill(Color.red)
-                                .frame(width: 2.5)
-                                .shadow(color: Color.red.opacity(0.8), radius: 6)
-                                .offset(x: playheadX)
-                                .animation(.linear(duration: 0.06), value: playheadX)
+                            .frame(width: totalTrackWidth, height: 175)
+                            
+                            // 5. PLAYHEAD VERMELHO ALINHADO COM PRECISÃO
+                            if state.totalSeconds > 0 {
+                                Rectangle()
+                                    .fill(Color.red)
+                                    .frame(width: 2.5, height: 175)
+                                    .shadow(color: Color.red.opacity(0.85), radius: 6)
+                                    .offset(x: playheadX)
+                                    .animation(.linear(duration: 0.06), value: playheadX)
+                            }
                         }
                     }
                     .frame(height: 195)
+                    .padding(.horizontal, 20)
                 }
                 .onChange(of: state.scrollToStartTrigger) { _, _ in
                     lastUserScrollTime = .distantPast
@@ -1976,58 +2030,39 @@ struct SpectrogramWaveformView: View {
         )
     }
     
-    private func calculateBlockWidths(totalWidth: CGFloat) -> [CGFloat] {
+    private func calculateScale(totalAvailableWidth: CGFloat) -> CGFloat {
+        guard !state.currentCues.isEmpty, state.totalSeconds > 0 else { return 25.0 }
+        
+        let secPerBar: Double = {
+            let b = state.bpm > 30 ? state.bpm : 120.0
+            let num = Double(state.timeSignature.split(separator: "/").first ?? "4") ?? 4.0
+            return (60.0 / b) * num
+        }()
+        
+        // Garante que 1 compasso tenha pelo menos 65 pontos de largura para ótima legibilidade
+        let minPxPerSec = CGFloat(65.0 / max(0.5, secPerBar))
+        let fitPxPerSec = totalAvailableWidth / CGFloat(state.totalSeconds)
+        return max(minPxPerSec, fitPxPerSec)
+    }
+    
+    private func calculateBlockWidths(scale: CGFloat, totalTrackWidth: CGFloat) -> [CGFloat] {
         guard !state.currentCues.isEmpty, state.totalSeconds > 0 else { return [] }
         let count = state.currentCues.count
-        let totalSpacing = CGFloat(max(0, count - 1)) * 4.0
-        let availableWidth = max(CGFloat(count * 85), totalWidth - totalSpacing)
         
-        var rawWidths: [CGFloat] = []
+        var widths: [CGFloat] = []
         for i in 0..<count {
             let curTime = state.currentCues[i].time
             let nextTime = (i + 1 < count) ? state.currentCues[i + 1].time : state.totalSeconds
-            let duration = max(2.0, nextTime - curTime)
-            let proportion = CGFloat(duration / state.totalSeconds)
-            rawWidths.append(max(85.0, availableWidth * proportion))
+            let duration = max(0.01, nextTime - curTime)
+            widths.append(CGFloat(duration) * scale)
         }
         
-        let sumRaw = rawWidths.reduce(0, +)
-        if sumRaw > 0 && sumRaw < availableWidth {
-            let scale = availableWidth / sumRaw
-            return rawWidths.map { $0 * scale }
+        // Ajusta o último bloco para somar exatamente totalTrackWidth (evita desvios por arredondamento)
+        if !widths.isEmpty {
+            let sumExceptLast = widths.dropLast().reduce(0, +)
+            widths[widths.count - 1] = max(10, totalTrackWidth - sumExceptLast)
         }
-        return rawWidths
-    }
-    
-    private func calculatePlayheadX(blockWidths: [CGFloat]) -> CGFloat {
-        guard !state.currentCues.isEmpty, state.totalSeconds > 0, !blockWidths.isEmpty else { return 20 }
-        
-        let curSec = state.currentSeconds
-        var activeIdx = 0
-        for i in stride(from: state.currentCues.count - 1, through: 0, by: -1) {
-            if curSec >= state.currentCues[i].time {
-                activeIdx = i
-                break
-            }
-        }
-        
-        guard activeIdx < state.currentCues.count else { return 20 }
-        
-        let startT = state.currentCues[activeIdx].time
-        let endT = (activeIdx + 1 < state.currentCues.count) ? state.currentCues[activeIdx + 1].time : state.totalSeconds
-        let duration = max(0.1, endT - startT)
-        let fraction = max(0.0, min(1.0, (curSec - startT) / duration))
-        
-        var xAccum: CGFloat = 20.0
-        for i in 0..<activeIdx {
-            if i < blockWidths.count {
-                xAccum += blockWidths[i] + 4.0
-            }
-        }
-        
-        let currentWidth = activeIdx < blockWidths.count ? blockWidths[activeIdx] : 90
-        xAccum += CGFloat(fraction) * currentWidth
-        return xAccum
+        return widths
     }
 }
 
@@ -2083,7 +2118,7 @@ struct RightClickRepresentable: NSViewRepresentable {
     }
 }
 
-// Bloco de Seção com Nome Completo, Feedback de Quantização e Onda Real do Canal R
+// Bloco de Seção Sobreposto (Divisões, Métricas e Controles sobre a Onda Contínua)
 struct WaveformSectionBlock: View {
     @ObservedObject var state: PlaybackState
     let index: Int
@@ -2100,16 +2135,26 @@ struct WaveformSectionBlock: View {
     var body: some View {
         Button(action: onSelect) {
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 10)
+                // Fundo translúcido (permite ver a onda contínua que corre no fundo da timeline)
+                RoundedRectangle(cornerRadius: 6)
                     .fill(blockBgColor)
+                    .padding(2)
                 
-                // Silhueta de Onda Real do Canal R com Divisões de Compassos (sem margem lateral)
-                RealWaveformPeaksView(
-                    waveform: section.waveform,
-                    color: waveformColor,
-                    durationBars: state.calculateDurationBars(for: index)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Divisões verticais dos compassos da seção
+                let durationBars = state.calculateDurationBars(for: index)
+                if durationBars > 0.5 {
+                    let total = durationBars
+                    let numLines = Int(floor(total - 0.001))
+                    if numLines >= 1 {
+                        ForEach(1...numLines, id: \.self) { b in
+                            let xPos = (CGFloat(b) / CGFloat(total)) * width
+                            Rectangle()
+                                .fill(Color.white.opacity(0.12))
+                                .frame(width: 1)
+                                .position(x: xPos, y: 175 / 2)
+                        }
+                    }
+                }
                 
                 // Rodapé: Métrica de Compasso (4/4, 6/8...) posicionada de forma limpa e visível
                 VStack {
@@ -2120,7 +2165,7 @@ struct WaveformSectionBlock: View {
                             .foregroundColor(.white.opacity(0.85))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.55))
+                            .background(Color.black.opacity(0.60))
                             .cornerRadius(4)
                             .padding(.leading, 6)
                             .padding(.bottom, 6)
@@ -2156,11 +2201,22 @@ struct WaveformSectionBlock: View {
                 .padding(6)
             }
             .frame(width: width, height: 175)
+            // Divisória vertical no início da seção e borda de destaque quando ativa/enfileirada
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(borderColor, lineWidth: isPlaying || isQueued ? 2.5 : 1)
+                ZStack(alignment: .leading) {
+                    // Linha divisória vertical que coincide exatamente com o downbeat do áudio
+                    Rectangle()
+                        .fill(isPlaying ? Color.green : (isQueued ? Color.orange : Color.white.opacity(0.20)))
+                        .frame(width: isPlaying || isQueued ? 2 : 1)
+                    
+                    if isPlaying || isQueued {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(borderColor, lineWidth: 2)
+                            .padding(2)
+                    }
+                }
             )
-            .shadow(color: isPlaying ? Color.green.opacity(0.3) : (isQueued ? Color.yellow.opacity(0.4) : Color.clear), radius: 10)
+            .shadow(color: isPlaying ? Color.green.opacity(0.35) : (isQueued ? Color.yellow.opacity(0.40) : Color.clear), radius: 8)
         }
         .buttonStyle(PlainButtonStyle())
         .modifier(RightClickModifier(action: {
@@ -2178,21 +2234,15 @@ struct WaveformSectionBlock: View {
     }
     
     private var blockBgColor: Color {
-        if isPlaying { return Color(red: 0.10, green: 0.22, blue: 0.16) }
-        if isQueued { return Color(red: 0.28, green: 0.20, blue: 0.08) }
-        return Color(red: 0.10, green: 0.12, blue: 0.16)
+        if isPlaying { return Color(red: 0.10, green: 0.35, blue: 0.20).opacity(0.35) }
+        if isQueued { return Color(red: 0.38, green: 0.25, blue: 0.08).opacity(0.40) }
+        return Color(red: 0.10, green: 0.12, blue: 0.16).opacity(0.20)
     }
     
     private var borderColor: Color {
-        if isPlaying { return Color(red: 0.19, green: 0.82, blue: 0.60) }
+        if isPlaying { return Color(red: 0.19, green: 0.88, blue: 0.60) }
         if isQueued { return Color(red: 0.98, green: 0.75, blue: 0.15) }
-        return Color.white.opacity(0.12)
-    }
-    
-    private var waveformColor: Color {
-        if isPlaying { return Color(red: 0.35, green: 0.85, blue: 0.95) }
-        if isQueued { return Color(red: 0.95, green: 0.80, blue: 0.30) }
-        return Color(red: 0.25, green: 0.65, blue: 0.92)
+        return Color.white.opacity(0.15)
     }
     
     private var badgeColor: Color {

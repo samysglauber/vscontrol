@@ -5,7 +5,7 @@ Varre o diretório /Users/samysglauber/Documents/Vs de forma inteligente e sob d
 
 import os
 import json
-from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio, compute_real_waveform_peaks
+from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio, compute_real_waveform_peaks, compute_full_waveform
 import soundfile as sf
 import numpy as np
 
@@ -207,6 +207,8 @@ class SongLibrary:
                         if saved.get("time_signature"):
                             s["time_signature"] = saved["time_signature"]
                         s["cues"] = saved["cues"]
+                        if saved.get("full_waveform"):
+                            s["full_waveform"] = saved["full_waveform"]
                         return s
             except Exception:
                 pass
@@ -240,12 +242,16 @@ class SongLibrary:
 
             # 2. Persistência em cache (.cues.json)
             cache_path = s["path"] + ".cues.json"
+            if not s.get("full_waveform") and audio_data is not None and sr is not None:
+                s["full_waveform"] = compute_full_waveform(audio_data, sr, n_peaks=1200)
+
             payload = {
-                "version": 5,
+                "version": 6,
                 "channel": "R",
                 "bpm": s.get("bpm"),
                 "time_signature": s.get("time_signature", "4/4"),
-                "cues": cues
+                "cues": cues,
+                "full_waveform": s.get("full_waveform")
             }
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
