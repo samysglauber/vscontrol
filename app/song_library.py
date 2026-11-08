@@ -5,12 +5,86 @@ Varre o diretório /Users/samysglauber/Documents/Vs de forma inteligente e sob d
 
 import os
 import json
+import shutil
+import tempfile
 from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio, compute_real_waveform_peaks, compute_full_waveform
 import soundfile as sf
 import numpy as np
 
 DEFAULT_VS_DIR = "/Users/samysglauber/Documents/Vs"
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "tracks_config.json")
+
+def atomic_save_json(filepath: str, data: dict, backup: bool = True) -> bool:
+    """
+    Salva dados JSON de forma atômica e segura (POSIX rename).
+    Nunca trunca o arquivo original para 0 bytes se houver erro ou interrupção.
+    Cria backup automático (.cues.json.bak) para nunca perder edições manuais do usuário.
+    """
+    temp_path = None
+    try:
+        dir_name = os.path.dirname(filepath)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name, exist_ok=True)
+
+        # 1. Se já existe o arquivo com dados válidos, cria ou atualiza backup de segurança
+        if backup and os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+            bak_path = filepath + ".bak"
+            try:
+                shutil.copy2(filepath, bak_path)
+            except Exception as e:
+                print(f"Aviso ao criar backup de {filepath}: {e}")
+
+        # 2. Escreve em arquivo temporário no mesmo diretório
+        temp_fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix=".tmp_cues_", suffix=".json")
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+
+        # 3. Substituição atômica no sistema operacional
+        os.replace(temp_path, filepath)
+        return True
+    except Exception as e:
+        print(f"Erro em atomic_save_json para {filepath}: {e}")
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        return False
+
+def load_cues_with_backup(filepath: str) -> dict | None:
+    """
+    Carrega o arquivo .cues.json de forma resiliente. Se estiver corrompido ou vazio,
+    recupera automaticamente do backup (.bak) para proteger as edições do usuário.
+    """
+    cache_path = filepath if filepath.endswith(".cues.json") else filepath + ".cues.json"
+    bak_path = cache_path + ".bak"
+    
+    # 1. Tenta carregar o arquivo principal se tiver tamanho válido
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "cues" in data and len(data["cues"]) > 0:
+                    return data
+        except Exception as e:
+            print(f"Aviso: falha ao decodificar {cache_path}: {e}")
+
+    # 2. Se o principal falhou ou está zerado, recupera automaticamente do backup (.bak)
+    if os.path.exists(bak_path) and os.path.getsize(bak_path) > 0:
+        try:
+            with open(bak_path, "r", encoding="utf-8") as f:
+                bak_data = json.load(f)
+                if isinstance(bak_data, dict) and "cues" in bak_data and len(bak_data["cues"]) > 0:
+                    print(f"🛡️ Recuperando edições do backup seguro: {bak_path}")
+                    # Restaura o arquivo principal para consistência imediata
+                    atomic_save_json(cache_path, bak_data, backup=False)
+                    return bak_data
+        except Exception as e:
+            print(f"Aviso: falha ao ler backup {bak_path}: {e}")
+
+    return None
 
 def get_saved_tracks_dir() -> str:
     if os.path.exists(CONFIG_FILE):
@@ -195,23 +269,20 @@ class SongLibrary:
         if not s:
             return None
 
-        # Carrega cues direto do cache JSON se existir
+        # Carrega cues direto do cache JSON (ou do backup seguro se corrompido)
         cache_path = s["path"] + ".cues.json"
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    saved = json.load(f)
-                    if isinstance(saved, dict) and "cues" in saved and len(saved["cues"]) > 0:
-                        if saved.get("bpm"):
-                            s["bpm"] = saved["bpm"]
-                        if saved.get("time_signature"):
-                            s["time_signature"] = saved["time_signature"]
-                        s["cues"] = saved["cues"]
-                        if saved.get("full_waveform"):
-                            s["full_waveform"] = saved["full_waveform"]
-                        return s
-            except Exception:
-                pass
+        saved = load_cues_with_backup(cache_path)
+        if saved and "cues" in saved and len(saved["cues"]) > 0:
+            if saved.get("bpm"):
+                s["bpm"] = saved["bpm"]
+            if saved.get("time_signature"):
+                s["time_signature"] = saved["time_signature"]
+            s["cues"] = saved["cues"]
+            if saved.get("full_waveform"):
+                s["full_waveform"] = saved["full_waveform"]
+            if saved.get("user_edited"):
+                s["user_edited"] = True
+            return s
 
         bpm = s.get("bpm")
         if bpm is None:
@@ -239,8 +310,9 @@ class SongLibrary:
             # 1. Re-amostragem em tempo real do Canal R para as novas coordenadas de cada bloco
             cues = resample_cues_waveforms(s["path"], cues, audio_data=audio_data, sr=sr)
             s["cues"] = cues
+            s["user_edited"] = True
 
-            # 2. Persistência em cache (.cues.json)
+            # 2. Persistência atômica em cache (.cues.json) com backup de segurança (.bak)
             cache_path = s["path"] + ".cues.json"
             if not s.get("full_waveform") and audio_data is not None and sr is not None:
                 s["full_waveform"] = compute_full_waveform(audio_data, sr, n_peaks=1200)
@@ -250,18 +322,26 @@ class SongLibrary:
                 "channel": "R",
                 "bpm": s.get("bpm"),
                 "time_signature": s.get("time_signature", "4/4"),
+                "user_edited": True,
                 "cues": cues,
                 "full_waveform": s.get("full_waveform")
             }
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            return True
+            return atomic_save_json(cache_path, payload, backup=True)
         return False
 
     def reprocess_song(self, song_id: str, bpm: float = None, time_signature: str = None) -> dict | None:
         """Re-analisa o áudio com IA e DSP profundo para redefinir as cues e dinâmica."""
         s = self.get_song(song_id)
         if s:
+            # Salva backup explícito antes de reprocessar com IA para possibilitar reversão
+            cache_path = s["path"] + ".cues.json"
+            if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+                bak_before = cache_path + ".before_ai_reprocess.bak"
+                try:
+                    shutil.copy2(cache_path, bak_before)
+                except Exception:
+                    pass
+
             if bpm is not None:
                 s["bpm"] = bpm
             if time_signature:

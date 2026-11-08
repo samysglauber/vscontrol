@@ -211,33 +211,24 @@ def load_song(req: LoadSongRequest):
     tot_dur = engine.total_frames / engine.sample_rate if (engine.total_frames and engine.sample_rate) else 0.0
     song["total_duration"] = tot_dur
 
-    # Re-amostragem e extração da forma de onda contínua global para coincidir perfeitamente com o áudio carregado
-    if engine.audio_data is not None:
+    # Se a forma de onda contínua global ainda não estava calculada no cache, calcula e persiste com segurança:
+    if engine.audio_data is not None and not song.get("full_waveform"):
         from app.cue_detector import compute_full_waveform
+        from app.song_library import load_cues_with_backup, atomic_save_json
         song["full_waveform"] = compute_full_waveform(engine.audio_data, engine.sample_rate, n_peaks=1200)
 
-        if song.get("cues"):
-            from app.song_library import resample_cues_waveforms
-            updated_cues = resample_cues_waveforms(song["path"], song["cues"], audio_data=engine.audio_data, sr=engine.sample_rate)
-            song["cues"] = updated_cues
-            engine.cues = updated_cues
-        else:
-            updated_cues = []
-
         cache_path = song["path"] + ".cues.json"
-        try:
-            payload = {
-                "version": 6,
-                "channel": "R",
-                "bpm": song.get("bpm"),
-                "time_signature": song.get("time_signature", "4/4"),
-                "cues": updated_cues,
-                "full_waveform": song["full_waveform"]
-            }
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        cached = load_cues_with_backup(cache_path) or {}
+        cached["full_waveform"] = song["full_waveform"]
+        cached["version"] = 6
+        cached["channel"] = "R"
+        if "bpm" not in cached and song.get("bpm"):
+            cached["bpm"] = song.get("bpm")
+        if "time_signature" not in cached and song.get("time_signature"):
+            cached["time_signature"] = song.get("time_signature")
+        if "cues" not in cached or not cached["cues"]:
+            cached["cues"] = song.get("cues", [])
+        atomic_save_json(cache_path, cached, backup=True)
 
     # Sincroniza o BPM automaticamente no Ableton Live
     if song.get("bpm"):

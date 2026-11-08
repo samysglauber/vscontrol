@@ -504,6 +504,7 @@ class PlaybackState: ObservableObject {
         if let currentId = currentSong?.id {
             UserDefaults.standard.set(currentId, forKey: "saved_last_loaded_song_id")
         }
+        UserDefaults.standard.synchronize()
     }
     
     func toggleTransition(at index: Int) {
@@ -768,7 +769,17 @@ class PlaybackState: ObservableObject {
                   let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
             
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
-            let parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
+            var parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
+            if parsedCues.isEmpty {
+                if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
+                   let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
+                   !localCues.isEmpty {
+                    parsedCues = localCues
+                }
+            } else if let validData = cuesData {
+                UserDefaults.standard.set(validData, forKey: "saved_cues_\(song.id)")
+                UserDefaults.standard.synchronize()
+            }
             let fullW = songData["full_waveform"] as? [Double] ?? []
             let totDur = songData["total_duration"] as? Double ?? (songData["total_seconds"] as? Double ?? 0.0)
             
@@ -823,7 +834,25 @@ class PlaybackState: ObservableObject {
         self.timeSignature = timeSignature
         self.currentCues = cues
         
+        // 1. Salva imediatamente em UserDefaults local para garantir persistência contínua
         let encoder = JSONEncoder()
+        if let cuesData = try? encoder.encode(cues) {
+            UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
+            UserDefaults.standard.synchronize()
+        }
+        
+        // Atualiza a música no setlist se estiver presente
+        if let idx = self.setlist.firstIndex(where: { $0.song.id == song.id }) {
+            var updatedSong = self.setlist[idx].song
+            updatedSong.bpm = bpm
+            updatedSong.time_signature = timeSignature
+            self.setlist[idx] = SetlistSong(id: self.setlist[idx].id, song: updatedSong, transitionType: self.setlist[idx].transitionType)
+            self.saveSetlistState()
+        }
+        
+        // Fecha o editor imediatamente com resposta visual ágil
+        self.isSongEditorPresented = false
+        
         guard let cuesData = try? encoder.encode(cues),
               let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
         
@@ -1093,6 +1122,13 @@ class PlaybackState: ObservableObject {
     func saveCurrentCues() {
         guard let song = currentSong else { return }
         let encoder = JSONEncoder()
+        
+        // 1. Salva imediatamente em UserDefaults local para garantir que nunca se perca
+        if let cuesData = try? encoder.encode(currentCues) {
+            UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
+            UserDefaults.standard.synchronize()
+        }
+        
         guard let cuesData = try? encoder.encode(currentCues),
               let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
         
@@ -1957,19 +1993,7 @@ struct SpectrogramWaveformView: View {
                                     .frame(width: totalTrackWidth, height: 175)
                             }
                             
-                            // 4. LINHAS DIVISÓRIAS VERTICAIS ENTRE SEÇÕES (Marcadores Exatos dos Trechos)
-                            ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
-                                if idx > 0 {
-                                    let xPos = CGFloat(section.time) * scale
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.85))
-                                        .frame(width: 2.0, height: 175)
-                                        .shadow(color: Color.black.opacity(0.85), radius: 2, x: 0, y: 0)
-                                        .position(x: xPos, y: 175 / 2)
-                                }
-                            }
-                            
-                            // 5. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
+                            // 4. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
                             HStack(spacing: 0) {
                                 ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
                                     let isPlayingSection = idx == state.currentCueIdx
@@ -2281,8 +2305,17 @@ struct WaveformSectionBlock: View {
                         .buttonStyle(PlainButtonStyle())
                     }
                 }
-                .padding(.horizontal, max(2, min(6, (width - 24) / 4)))
+                .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))
+                .padding(.trailing, max(2, min(6, (width - 24) / 4)))
                 .padding(.top, 6)
+                
+                // Linha Divisória Vertical Evidente entre os Trechos (Borda esquerda exata do bloco)
+                if index > 0 {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.92))
+                        .frame(width: 2.5, height: 175)
+                        .shadow(color: Color.black.opacity(0.8), radius: 2, x: 0, y: 0)
+                }
             }
             .frame(width: width, height: 175)
             .clipped()

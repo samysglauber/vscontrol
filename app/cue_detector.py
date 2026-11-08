@@ -167,16 +167,11 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
     cache_path = filepath + ".cues.json"
     
     # 1. Carregamento ultra rápido do Cache (sem ler o arquivo de áudio se já existir)
-    if not force_reprocess and os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-                if isinstance(cached, dict) and "cues" in cached:
-                    cues = cached["cues"]
-                    if len(cues) > 0:
-                        return cues
-        except Exception:
-            pass
+    if not force_reprocess:
+        from app.song_library import load_cues_with_backup
+        cached = load_cues_with_backup(cache_path)
+        if cached and "cues" in cached and len(cached["cues"]) > 0:
+            return cached["cues"]
 
     # 2. Carrega o áudio apenas quando necessário
     data, sr = sf.read(filepath)
@@ -209,17 +204,17 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
                         end_t = old_cues[i+1]["time"] if i+1 < len(old_cues) else total_seconds
                         cue["waveform"] = compute_real_waveform_peaks(data, sr, cue["time"], end_t, n_peaks=64, global_r_max=global_r_max)
                     
-                    # Atualiza o cache para versão 5
+                    # Atualiza o cache para versão 6 com gravação atômica
                     try:
+                        from app.song_library import atomic_save_json
                         payload = {
-                            "version": 5,
+                            "version": 6,
                             "channel": "R",
                             "bpm": bpm,
                             "time_signature": f"{beats_per_bar}/{time_signature[1]}",
                             "cues": old_cues
                         }
-                        with open(cache_path, "w", encoding="utf-8") as fw:
-                            json.dump(payload, fw, indent=2, ensure_ascii=False)
+                        atomic_save_json(cache_path, payload, backup=True)
                     except Exception:
                         pass
                     return old_cues
@@ -372,15 +367,15 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
 
     # 8. Salva no cache com versão 5 (Canal R Calibrado sem platô)
     try:
+        from app.song_library import atomic_save_json
         payload = {
-            "version": 5,
+            "version": 6,
             "channel": "R",
             "bpm": bpm,
             "time_signature": f"{beats_per_bar}/{time_signature[1]}",
             "cues": cues
         }
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
+        atomic_save_json(cache_path, payload, backup=False)
     except Exception:
         pass
 
