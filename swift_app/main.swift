@@ -150,6 +150,27 @@ func colorForCue(name: String) -> String {
     return "#3b82f6"
 }
 
+func cleanSongTitleForSearch(_ name: String) -> String {
+    var s = name
+    for ext in [".mp3", ".wav", ".m4a", ".aif", ".aiff"] {
+        if s.lowercased().hasSuffix(ext) {
+            s = String(s.dropLast(ext.count))
+            break
+        }
+    }
+    if let match = s.range(of: #"^\d+\s*[-_]\s*"#, options: .regularExpression) {
+        s.removeSubrange(match)
+    }
+    if let match = s.range(of: #"[-_]\s*vs\b.*$"#, options: [.regularExpression, .caseInsensitive]) {
+        s.removeSubrange(match)
+    }
+    s = s.replacingOccurrences(of: #"\(\s*\d+\s*bpm\s*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
+    s = s.replacingOccurrences(of: #"\(\s*[A-Ga-g][#b]?m?\s*\)"#, with: "", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"\(com[^\)]*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
+    s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    return s.isEmpty ? name : s
+}
+
 struct SongItem: Identifiable, Codable, Hashable {
     let id: String
     let name: String
@@ -159,9 +180,119 @@ struct SongItem: Identifiable, Codable, Hashable {
     var time_signature: String?
     var default_key: String?
     var full_waveform: [Double]?
+    var has_cover: Bool?
+    var cover_url: String?
+    var search_query: String?
     
     var displayKey: String {
         return default_key ?? "D"
+    }
+}
+
+struct CoverSearchResult: Identifiable, Codable {
+    let id: String
+    let track_name: String
+    let artist_name: String
+    let collection_name: String
+    let artwork_url: String
+    let artwork_url_small: String
+    let year: String
+}
+
+class CoverImageCache {
+    static let shared = CoverImageCache()
+    private let cache = NSCache<NSString, NSImage>()
+    
+    func image(for song: SongItem) -> NSImage? {
+        let key = song.id as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        let dir = (song.path as NSString).deletingLastPathComponent
+        let coverPath = (dir as NSString).appendingPathComponent(".covers/\(song.id).jpg")
+        if FileManager.default.fileExists(atPath: coverPath),
+           let img = NSImage(contentsOfFile: coverPath) {
+            cache.setObject(img, forKey: key)
+            return img
+        }
+        return nil
+    }
+    
+    func remove(for songId: String) {
+        cache.removeObject(forKey: songId as NSString)
+    }
+    
+    func clearAll() {
+        cache.removeAllObjects()
+    }
+}
+
+struct SongCoverView: View {
+    let song: SongItem
+    let width: CGFloat
+    let height: CGFloat
+    let cornerRadius: CGFloat
+    var isSelected: Bool = false
+    var refreshId: Int = 0
+    
+    var body: some View {
+        ZStack {
+            if let img = CoverImageCache.shared.image(for: song) {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: width, height: height)
+                    .clipped()
+            } else if song.has_cover == true, let coverUrl = song.cover_url,
+                      let url = URL(string: "http://127.0.0.1:8080" + coverUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: width, height: height)
+                            .clipped()
+                    case .failure(_):
+                        fallbackGradient
+                    default:
+                        ZStack {
+                            fallbackGradient
+                            ProgressView().scaleEffect(0.6)
+                        }
+                    }
+                }
+            } else {
+                fallbackGradient
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: isSelected ? 2.5 : 1)
+        )
+        .shadow(color: isSelected ? Color.white.opacity(0.25) : Color.clear, radius: 8)
+        .id("\(song.id)_\(refreshId)")
+    }
+    
+    private var fallbackGradient: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.16, green: 0.18, blue: 0.23),
+                            Color(red: 0.09, green: 0.10, blue: 0.13)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Image(systemName: "music.note")
+                .font(.system(size: 22, weight: .light))
+                .foregroundColor(Color.white.opacity(0.25))
+        }
     }
 }
 
@@ -346,6 +477,16 @@ class PlaybackState: ObservableObject {
     @Published var isQrModalPresented: Bool = false
     @Published var isSongEditorPresented: Bool = false
     @Published var serverUrl: String = "http://localhost:8080"
+    
+    // Estado de Capas de Álbuns / Músicas
+    @Published var isCoverPickerPresented: Bool = false
+    @Published var coverPickerSong: SongItem? = nil
+    @Published var coverSearchResults: [CoverSearchResult] = []
+    @Published var isSearchingCovers: Bool = false
+    @Published var isSavingCover: Bool = false
+    @Published var coverSearchQuery: String = ""
+    @Published var coverPickerError: String? = nil
+    @Published var coverRefreshTrigger: Int = 0
     
     // Estado do Editor de Música
     @Published var editorBpm: Double = 120.0
@@ -1082,6 +1223,10 @@ class PlaybackState: ObservableObject {
                 }
                 if let b = songData["bpm"] as? Double { self?.bpm = b }
                 if let ts = songData["time_signature"] as? String { self?.timeSignature = ts }
+                if let hasC = songData["has_cover"] as? Bool {
+                    self?.currentSong?.has_cover = hasC
+                    self?.currentSong?.cover_url = songData["cover_url"] as? String
+                }
                 self?.abletonSynced = true
                 self?.sendAction("set_guide_lead_in", body: ["bars": self?.guideLeadInBars ?? 1.0])
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
@@ -1094,6 +1239,144 @@ class PlaybackState: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    // ==========================================
+    // CAPAS DE ÁLBUNS / MÚSICAS (APPLE MUSIC & LOCAL)
+    // ==========================================
+    func openCoverPicker(for song: SongItem) {
+        self.coverPickerSong = song
+        let cleanQuery = song.search_query ?? cleanSongTitleForSearch(song.name)
+        self.coverSearchQuery = cleanQuery
+        self.coverSearchResults = []
+        self.coverPickerError = nil
+        self.isCoverPickerPresented = true
+        self.searchCovers(query: cleanQuery)
+    }
+    
+    func searchCovers(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "http://127.0.0.1:8080/api/covers/search?q=\(encoded)") else { return }
+        
+        self.isSearchingCovers = true
+        self.coverPickerError = nil
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                self?.isSearchingCovers = false
+                if let error = error {
+                    self?.coverPickerError = "Falha ao buscar: \(error.localizedDescription)"
+                    return
+                }
+                guard let data = data,
+                      let results = try? JSONDecoder().decode([CoverSearchResult].self, from: data) else {
+                    self?.coverSearchResults = []
+                    return
+                }
+                self?.coverSearchResults = results
+            }
+        }.resume()
+    }
+    
+    func selectCover(song: SongItem, artworkUrl: String) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/select") else { return }
+        self.isSavingCover = true
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "song_id": song.id,
+            "artwork_url": artworkUrl
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                self?.isSavingCover = false
+                guard error == nil else { return }
+                
+                // Limpa cache de imagem para renderizar imediatamente
+                CoverImageCache.shared.remove(for: song.id)
+                self?.updateSongCoverState(songId: song.id, hasCover: true)
+                self?.isCoverPickerPresented = false
+            }
+        }.resume()
+    }
+    
+    func chooseCoverFromFile(song: SongItem) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.image, .jpeg, .png]
+        panel.message = "Escolha uma imagem de capa para \(song.name)"
+        panel.prompt = "Escolher Capa"
+        
+        if panel.runModal() == .OK, let fileUrl = panel.url {
+            guard let url = URL(string: "http://127.0.0.1:8080/api/covers/upload") else { return }
+            self.isSavingCover = true
+            
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = [
+                "song_id": song.id,
+                "file_path": fileUrl.path
+            ]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            
+            URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+                DispatchQueue.main.async {
+                    self?.isSavingCover = false
+                    guard error == nil else { return }
+                    
+                    CoverImageCache.shared.remove(for: song.id)
+                    self?.updateSongCoverState(songId: song.id, hasCover: true)
+                    self?.isCoverPickerPresented = false
+                }
+            }.resume()
+        }
+    }
+    
+    func removeCover(for song: SongItem) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/remove") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["song_id": song.id]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.async {
+                CoverImageCache.shared.remove(for: song.id)
+                self?.updateSongCoverState(songId: song.id, hasCover: false)
+            }
+        }.resume()
+    }
+    
+    func updateSongCoverState(songId: String, hasCover: Bool) {
+        let encodedId = songId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? songId
+        let coverUrl = hasCover ? "/api/covers?id=\(encodedId)" : nil
+        
+        for i in 0..<self.setlist.count {
+            if self.setlist[i].song.id == songId {
+                var s = self.setlist[i].song
+                s.has_cover = hasCover
+                s.cover_url = coverUrl
+                self.setlist[i] = SetlistSong(id: self.setlist[i].id, song: s, transitionType: self.setlist[i].transitionType)
+            }
+        }
+        
+        if self.currentSong?.id == songId {
+            self.currentSong?.has_cover = hasCover
+            self.currentSong?.cover_url = coverUrl
+        }
+        
+        self.coverRefreshTrigger += 1
+        self.saveSetlistState()
     }
     
     func openSongEditor(for song: SongItem? = nil) {
@@ -2056,111 +2339,104 @@ struct SetlistCarouselView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
                     ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
                         let isSelected = state.currentSong?.id == item.song.id
                         
-                        ZStack(alignment: .topTrailing) {
-                            // Card da Música (Arrastável quando isEditMode = true)
-                            Button(action: {
-                                if !state.isEditMode {
-                                    state.loadSong(item.song)
-                                }
-                            }) {
-                                ZStack(alignment: .topLeading) {
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(cardGradient(for: index))
-                                        .frame(width: 175, height: 75)
-                                    
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color.black.opacity(0.35))
-                                        .frame(width: 175, height: 75)
-                                    
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        HStack(alignment: .center, spacing: 5) {
-                                            if isSelected {
-                                                Image(systemName: "play.fill")
-                                                    .font(.system(size: 8, weight: .bold))
-                                                    .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
-                                            }
-                                            
-                                            Text(item.song.time_signature ?? "4/4")
-                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                .foregroundColor(.white.opacity(0.65))
-                                            
-                                            Spacer()
-                                            if let bpm = item.song.bpm {
-                                                Text("\(formatBpm(bpm)) BPM")
-                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                                    .foregroundColor(.white.opacity(0.8))
-                                            }
-                                        }
-                                        
-                                        Spacer()
-                                        
-                                        Text(item.song.name)
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundColor(.white)
-                                            .lineLimit(2)
-                                            .multilineTextAlignment(.leading)
-                                            .truncationMode(.tail)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ZStack(alignment: .topTrailing) {
+                                // Card da Música com Capa do Álbum
+                                Button(action: {
+                                    if !state.isEditMode {
+                                        state.loadSong(item.song)
                                     }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 9)
-                                    .frame(width: 175, height: 75)
-                                }
-                                .frame(width: 175, height: 75)
-                                .clipped()
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(isSelected ? Color.white : (state.isEditMode ? Color.yellow.opacity(0.4) : Color.white.opacity(0.12)), lineWidth: isSelected ? 2.5 : 1)
-                                )
-                                .shadow(color: isSelected ? Color.white.opacity(0.2) : Color.clear, radius: 8)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .frame(width: 175, height: 75)
-                            .contextMenu {
-                                Button(action: {
-                                    state.openSongEditor(for: item.song)
                                 }) {
-                                    Label("Edit Song", systemImage: "slider.horizontal.3")
-                                }
-                                
-                                Divider()
-                                
-                                Button(action: {
-                                    state.playSetlistSong(at: index)
-                                }) {
-                                    Label("Play Now", systemImage: "play.fill")
-                                }
-                                
-                                Button(role: .destructive, action: {
-                                    state.removeSetlistSong(at: index)
-                                }) {
-                                    Label("Remove from Setlist", systemImage: "trash")
-                                }
-                            }
-                            .onDrag {
-                                guard state.isEditMode else { return NSItemProvider() }
-                                state.draggedSetlistSong = item
-                                return NSItemProvider(object: item.id.uuidString as NSString)
-                            }
-                            .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
-                            
-                            // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
-                            if state.isEditMode {
-                                Button(action: { state.removeSetlistSong(at: index) }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(Color.red)
-                                        .background(Color.white.clipShape(Circle()))
-                                        .padding(4)
+                                    SongCoverView(
+                                        song: item.song,
+                                        width: 160,
+                                        height: 88,
+                                        cornerRadius: 10,
+                                        isSelected: isSelected,
+                                        refreshId: state.coverRefreshTrigger
+                                    )
                                 }
                                 .buttonStyle(PlainButtonStyle())
-                                .transition(.scale.combined(with: .opacity))
+                                .frame(width: 160, height: 88)
+                                .contextMenu {
+                                    Button(action: {
+                                        state.openCoverPicker(for: item.song)
+                                    }) {
+                                        Label("Buscar / Alterar Capa...", systemImage: "photo.badge.plus")
+                                    }
+                                    
+                                    if item.song.has_cover == true {
+                                        Button(role: .destructive, action: {
+                                            state.removeCover(for: item.song)
+                                        }) {
+                                            Label("Remover Capa", systemImage: "trash")
+                                        }
+                                    }
+                                    
+                                    Divider()
+                                    
+                                    Button(action: {
+                                        state.openSongEditor(for: item.song)
+                                    }) {
+                                        Label("Edit Song", systemImage: "slider.horizontal.3")
+                                    }
+                                    
+                                    Divider()
+                                    
+                                    Button(action: {
+                                        state.playSetlistSong(at: index)
+                                    }) {
+                                        Label("Play Now", systemImage: "play.fill")
+                                    }
+                                    
+                                    Button(role: .destructive, action: {
+                                        state.removeSetlistSong(at: index)
+                                    }) {
+                                        Label("Remove from Setlist", systemImage: "trash")
+                                    }
+                                }
+                                .onDrag {
+                                    guard state.isEditMode else { return NSItemProvider() }
+                                    state.draggedSetlistSong = item
+                                    return NSItemProvider(object: item.id.uuidString as NSString)
+                                }
+                                .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
+                                
+                                // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
+                                if state.isEditMode {
+                                    Button(action: { state.removeSetlistSong(at: index) }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 16))
+                                            .foregroundColor(Color.red)
+                                            .background(Color.white.clipShape(Circle()))
+                                            .padding(4)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .transition(.scale.combined(with: .opacity))
+                                }
                             }
+                            .frame(width: 160, height: 88)
+                            
+                            // Info da Música Embaixo (Nome + Tom, exatamente como no Playback)
+                            HStack(alignment: .center, spacing: 4) {
+                                if isSelected {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
+                                }
+                                
+                                Text("\(item.song.name) (\(item.song.displayKey))")
+                                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.85))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            .frame(width: 160, alignment: .leading)
                         }
-                        .frame(width: 175, height: 75)
                         
                         // Seta de Transição (Clica para alternar AUTO / STOP)
                         if index < state.setlist.count - 1 {
@@ -2168,40 +2444,50 @@ struct SetlistCarouselView: View {
                                 state.toggleTransition(at: index)
                             }) {
                                 Circle()
-                                    .fill(item.transitionType == "AUTO" ? Color.cyan.opacity(0.18) : Color.white.opacity(0.08))
-                                    .frame(width: 26, height: 26)
+                                    .fill(Color(red: 0.16, green: 0.16, blue: 0.18))
+                                    .frame(width: 24, height: 24)
                                     .overlay(
                                         Image(systemName: item.transitionType == "AUTO" ? "arrow.right" : "pause.fill")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundColor(item.transitionType == "AUTO" ? Color.cyan : Color.gray)
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(item.transitionType == "AUTO" ? .white : Color.gray)
+                                    )
+                                    .overlay(
+                                        Circle().stroke(Color.white.opacity(0.12), lineWidth: 1)
                                     )
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .offset(y: 32)
                             .help(item.transitionType == "AUTO" ? "Auto-transition to next track" : "Stop after this track")
                         }
                     }
                     
                     // Card "Add a Song" no mesmo formato e tamanho das músicas (adicionando ao lado)
                     Button(action: { state.isAddSongSheetPresented = true }) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.12, green: 0.12, blue: 0.13).opacity(0.85))
-                                .frame(width: 175, height: 75)
-                            
-                            VStack(spacing: 6) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 24, weight: .light))
-                                    .foregroundColor(.white)
-                                Text("Add a Song")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundColor(.white)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.85))
+                                    .frame(width: 160, height: 88)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.20), lineWidth: 1.2)
+                                    )
+                                
+                                VStack(spacing: 6) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 22, weight: .light))
+                                        .foregroundColor(.white)
+                                    Text("Add a Song")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
                             }
+                            .frame(width: 160, height: 88)
+                            
+                            Text("")
+                                .font(.system(size: 11))
+                                .frame(width: 160, height: 16)
                         }
-                        .frame(width: 175, height: 75)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.22), lineWidth: 1.2)
-                        )
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Add a song to setlist")
@@ -2211,17 +2497,283 @@ struct SetlistCarouselView: View {
             }
         }
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
-    }
-    
-    private func cardGradient(for index: Int) -> LinearGradient {
-        let colors: [Color]
-        switch index % 4 {
-        case 0: colors = [Color.red.opacity(0.8), Color.orange.opacity(0.8)]
-        case 1: colors = [Color.blue.opacity(0.8), Color.cyan.opacity(0.8)]
-        case 2: colors = [Color.purple.opacity(0.8), Color.pink.opacity(0.8)]
-        default: colors = [Color.green.opacity(0.8), Color.teal.opacity(0.8)]
+        .sheet(isPresented: $state.isCoverPickerPresented) {
+            CoverPickerSheetView(state: state)
         }
-        return LinearGradient(gradient: Gradient(colors: colors), startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+// ==========================================
+// 6.1 MODAL DE BUSCA DE CAPAS DE ÁLBUM (APPLE MUSIC & LOCAL)
+// ==========================================
+struct CoverPickerSheetView: View {
+    @ObservedObject var state: PlaybackState
+    @Environment(\.presentationMode) var presentationMode
+    @State private var queryText: String = ""
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.stack")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.cyan)
+                        Text("Buscar Capa do Álbum")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    if let song = state.coverPickerSong {
+                        Text(song.name)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
+                }
+                
+                Spacer()
+                
+                if let song = state.coverPickerSong {
+                    Button(action: { state.chooseCoverFromFile(song: song) }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Escolher do Mac...")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Escolher arquivo de imagem do computador")
+                    
+                    if song.has_cover == true {
+                        Button(action: {
+                            state.removeCover(for: song)
+                            presentationMode.wrappedValue.dismiss()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Remover")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundColor(.red.opacity(0.9))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(Color.red.opacity(0.12))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Remover capa atribuída")
+                    }
+                }
+                
+                Button(action: { presentationMode.wrappedValue.dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(18)
+            .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            // Search Bar
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                        .font(.system(size: 13))
+                    
+                    TextField("Digite o nome da música, artista ou álbum...", text: $queryText, onCommit: {
+                        state.searchCovers(query: queryText)
+                    })
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    
+                    if !queryText.isEmpty {
+                        Button(action: { queryText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.35))
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                
+                Button(action: {
+                    state.searchCovers(query: queryText)
+                }) {
+                    HStack(spacing: 6) {
+                        if state.isSearchingCovers {
+                            ProgressView().scaleEffect(0.7).colorInvert()
+                        } else {
+                            Image(systemName: "arrow.right.circle.fill")
+                        }
+                        Text("Buscar")
+                    }
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.cyan)
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(state.isSearchingCovers || queryText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(Color(red: 0.10, green: 0.10, blue: 0.12))
+            
+            Divider().background(Color.white.opacity(0.08))
+            
+            // Results Grid
+            ZStack {
+                if state.isSearchingCovers {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Buscando versões e capas na Apple Music...")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.gray)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if state.isSavingCover {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Otimizando e salvando capa (300x300 JPEG leve)...")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.cyan)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = state.coverPickerError {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 36))
+                            .foregroundColor(.orange)
+                        Text(error)
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.8))
+                        Button("Tentar Novamente") {
+                            state.searchCovers(query: queryText)
+                        }
+                        .foregroundColor(.cyan)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if state.coverSearchResults.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 40))
+                            .foregroundColor(.gray.opacity(0.4))
+                        Text("Nenhum resultado para esta busca.")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.gray)
+                        Text("Tente digitar o nome do artista ou versão (ex: 'Bondade de Deus Isaias Saad')")
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray.opacity(0.8))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 165), spacing: 14)], spacing: 14) {
+                            ForEach(state.coverSearchResults) { item in
+                                CoverResultCard(item: item) {
+                                    if let song = state.coverPickerSong {
+                                        state.selectCover(song: song, artworkUrl: item.artwork_url)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+        }
+        .frame(width: 720, height: 520)
+        .onAppear {
+            queryText = state.coverSearchQuery
+        }
+    }
+}
+
+struct CoverResultCard: View {
+    let item: CoverSearchResult
+    let onSelect: () -> Void
+    @State private var isHovered: Bool = false
+    
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack {
+                    if let url = URL(string: item.artwork_url_small) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 140, height: 140)
+                                    .clipped()
+                            case .failure(_):
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .overlay(Image(systemName: "photo").foregroundColor(.gray))
+                            default:
+                                ProgressView().scaleEffect(0.7)
+                            }
+                        }
+                    }
+                }
+                .frame(width: 140, height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isHovered ? Color.cyan : Color.white.opacity(0.12), lineWidth: isHovered ? 2 : 1)
+                )
+                .shadow(color: isHovered ? Color.cyan.opacity(0.35) : Color.clear, radius: 6)
+                
+                Text(item.track_name)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                
+                Text(item.artist_name)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.cyan)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                
+                if !item.year.isEmpty {
+                    Text(item.year)
+                        .font(.system(size: 9))
+                        .foregroundColor(.gray)
+                }
+            }
+            .frame(width: 140)
+            .padding(6)
+            .background(isHovered ? Color.white.opacity(0.06) : Color.clear)
+            .cornerRadius(10)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -3990,8 +4542,48 @@ struct SongEditorSheetView: View {
             
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 20) {
-                    // 1. Painel de BPM, Compasso e Reprocessamento com IA
-                    HStack(spacing: 20) {
+                    // 1. Painel de BPM, Compasso, Capa e Reprocessamento com IA
+                    HStack(spacing: 16) {
+                        // Capa da Música
+                        if let song = state.currentSong {
+                            HStack(spacing: 10) {
+                                SongCoverView(
+                                    song: song,
+                                    width: 52,
+                                    height: 52,
+                                    cornerRadius: 8,
+                                    isSelected: false,
+                                    refreshId: state.coverRefreshTrigger
+                                )
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("COVER")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.gray)
+                                    
+                                    Button(action: {
+                                        state.openCoverPicker(for: song)
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "photo")
+                                                .font(.system(size: 10, weight: .bold))
+                                            Text(song.has_cover == true ? "Alterar..." : "Buscar...")
+                                                .font(.system(size: 11, weight: .semibold))
+                                        }
+                                        .foregroundColor(.cyan)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.cyan.opacity(0.12))
+                                        .cornerRadius(6)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                }
+                            }
+                            .padding(10)
+                            .background(Color.white.opacity(0.03))
+                            .cornerRadius(10)
+                        }
+                        
                         // Edição de BPM
                         VStack(alignment: .leading, spacing: 6) {
                             Text("TEMPO (BPM)")
@@ -4429,6 +5021,9 @@ struct SongEditorSheetView: View {
         }
         .frame(width: 760, height: 600)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
+        .sheet(isPresented: $state.isCoverPickerPresented) {
+            CoverPickerSheetView(state: state)
+        }
         .onAppear {
             localBpmText = formatBpm(state.bpm)
             localTimeSignature = state.timeSignature

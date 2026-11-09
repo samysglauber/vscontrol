@@ -10,7 +10,7 @@ import socket
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from pydantic import BaseModel
 import qrcode
 
@@ -183,6 +183,79 @@ def get_song(song_id: str):
     if not song:
         return JSONResponse(status_code=404, content={"error": "Música não encontrada"})
     return song
+
+# ==========================
+# Endpoints de Capas de Álbuns / Músicas (iTunes & Local)
+# ==========================
+
+@app.get("/api/covers/search")
+def search_covers(q: str):
+    """Busca capas de álbuns na Apple iTunes Search API pelo título da música ou artista."""
+    import urllib.request
+    import urllib.parse
+    import json
+    if not q or not q.strip():
+        return []
+    clean_q = q.strip()
+    url = f"https://itunes.apple.com/search?term={urllib.parse.quote(clean_q)}&media=music&entity=song&limit=24"
+    req = urllib.request.Request(url, headers={"User-Agent": "VSControl/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=7) as res:
+            data = json.loads(res.read().decode("utf-8"))
+            results = []
+            for item in data.get("results", []):
+                small_art = item.get("artworkUrl100", "")
+                large_art = small_art.replace("/100x100bb.jpg", "/600x600bb.jpg")
+                results.append({
+                    "id": str(item.get("trackId")),
+                    "track_name": item.get("trackName", ""),
+                    "artist_name": item.get("artistName", ""),
+                    "collection_name": item.get("collectionName", ""),
+                    "artwork_url": large_art or small_art,
+                    "artwork_url_small": small_art,
+                    "year": item.get("releaseDate", "")[:4] if item.get("releaseDate") else ""
+                })
+            return results
+    except Exception as e:
+        print(f"Erro ao buscar capas no iTunes: {e}")
+        return []
+
+class SelectCoverRequest(BaseModel):
+    song_id: str
+    artwork_url: str
+
+@app.post("/api/covers/select")
+def select_cover(req: SelectCoverRequest):
+    """Baixa a capa selecionada pelo usuário e otimiza para 300x300 JPEG (~15-25 KB)."""
+    res = library.save_cover_from_url(req.song_id, req.artwork_url)
+    return res
+
+class UploadCoverRequest(BaseModel):
+    song_id: str
+    file_path: str
+
+@app.post("/api/covers/upload")
+def upload_cover(req: UploadCoverRequest):
+    """Importa e otimiza uma imagem do computador do usuário."""
+    res = library.save_cover_from_file(req.song_id, req.file_path)
+    return res
+
+class RemoveCoverRequest(BaseModel):
+    song_id: str
+
+@app.post("/api/covers/remove")
+def remove_cover(req: RemoveCoverRequest):
+    """Remove a capa atribuída a uma faixa."""
+    success = library.remove_cover(req.song_id)
+    return {"success": success}
+
+@app.api_route("/api/covers", methods=["GET", "HEAD"])
+def get_cover(id: str):
+    """Serve a capa JPEG diretamente do disco com cache HTTP inteligente."""
+    path = library.get_cover_path(id)
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return JSONResponse(status_code=404, content={"error": "Capa não encontrada"})
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 def parse_time_signature(ts_str: str) -> tuple[int, int]:
     try:

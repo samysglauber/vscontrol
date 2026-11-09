@@ -7,12 +7,25 @@ import os
 import json
 import shutil
 import tempfile
+import re
+import urllib.parse
 from app.cue_detector import extract_bpm_from_filename, detect_cues, detect_click_bpm_from_audio, compute_real_waveform_peaks, compute_full_waveform
 import soundfile as sf
 import numpy as np
 
 DEFAULT_VS_DIR = "/Users/samysglauber/Documents/Vs"
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "tracks_config.json")
+
+def clean_song_title_for_search(name: str) -> str:
+    """Extrai o título limpo da música para busca precisa na web (removendo tags, bpm e sufixos)."""
+    s = re.sub(r'\.(mp3|wav|m4a|aif|aiff)$', '', name, flags=re.IGNORECASE)
+    s = re.sub(r'^\d+\s*[-_]\s*', '', s)
+    s = re.sub(r'[-_]\s*vs\b.*$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\(\s*\d+\s*bpm\s*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\(\s*[A-Ga-g][#b]?m?\s*\)', '', s)
+    s = re.sub(r'\(com[^\)]*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'[-_]\s*$', '', s).strip()
+    return s or name
 
 def atomic_save_json(filepath: str, data: dict, backup: bool = True) -> bool:
     """
@@ -196,6 +209,7 @@ class SongLibrary:
 
         has_cached_cues = os.path.exists(full_path + ".cues.json")
         time_sig = "4/4"
+        has_cover = self.has_cover(entry)
         if has_cached_cues:
             try:
                 with open(full_path + ".cues.json", "r", encoding="utf-8") as f:
@@ -205,6 +219,10 @@ class SongLibrary:
                             bpm = cdata["bpm"]
                         if cdata.get("time_signature"):
                             time_sig = cdata["time_signature"]
+                        if not has_cover and cdata.get("cover_image"):
+                            cp = os.path.join(self.directory, cdata["cover_image"])
+                            if os.path.exists(cp) and os.path.getsize(cp) > 0:
+                                has_cover = True
             except Exception:
                 pass
 
@@ -216,7 +234,10 @@ class SongLibrary:
             "bpm": bpm,
             "time_signature": time_sig,
             "has_cached_cues": has_cached_cues,
-            "default_key": "D"
+            "default_key": "D",
+            "has_cover": has_cover,
+            "cover_url": f"/api/covers?id={urllib.parse.quote(entry)}" if has_cover else None,
+            "search_query": clean_song_title_for_search(clean_name)
         }
         self._songs_cache[entry] = item
         return item
@@ -263,6 +284,140 @@ class SongLibrary:
                     
         self._all_songs = songs_list
 
+    def get_cover_path(self, song_id: str) -> str:
+        """Retorna o caminho absoluto do arquivo de capa da música em .covers/."""
+        covers_dir = os.path.join(self.directory, ".covers")
+        return os.path.join(covers_dir, f"{song_id}.jpg")
+
+    def has_cover(self, song_id: str) -> bool:
+        """Verifica se a música possui uma capa salva em disco."""
+        p = self.get_cover_path(song_id)
+        return os.path.exists(p) and os.path.getsize(p) > 0
+
+    def save_cover_from_url(self, song_id: str, artwork_url: str) -> dict:
+        """Baixa a capa em alta resolução e comprime para 300x300 JPEG ultra-leve (~15-25 KB)."""
+        import urllib.request
+        import subprocess
+
+        covers_dir = os.path.join(self.directory, ".covers")
+        os.makedirs(covers_dir, exist_ok=True)
+        dst_path = self.get_cover_path(song_id)
+
+        # O iTunes permite substituir 100x100 por 600x600 para obter resolução Retina
+        highres_url = artwork_url.replace("/100x100bb.jpg", "/600x600bb.jpg").replace("/60x60bb.jpg", "/600x600bb.jpg")
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
+            tmp_raw = tmp_file.name
+
+        try:
+            req = urllib.request.Request(highres_url, headers={"User-Agent": "VSControl/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as response, open(tmp_raw, "wb") as f_out:
+                shutil.copyfileobj(response, f_out)
+
+            # Redimensionamento e compressão inteligente com o sips nativo do macOS
+            tmp_opt = tmp_raw + ".opt.jpg"
+            cmd = [
+                "sips",
+                "-z", "300", "300",
+                "-s", "format", "jpeg",
+                "-s", "formatOptions", "80",
+                tmp_raw,
+                "--out", tmp_opt
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0 and os.path.exists(tmp_opt):
+                os.replace(tmp_opt, dst_path)
+            else:
+                os.replace(tmp_raw, dst_path)
+
+            if song_id in self._songs_cache:
+                self._songs_cache[song_id]["has_cover"] = True
+                self._songs_cache[song_id]["cover_url"] = f"/api/covers?id={urllib.parse.quote(song_id)}"
+
+            # Registra no .cues.json se existir
+            song_full_path = os.path.join(self.directory, song_id)
+            cache_path = song_full_path + ".cues.json"
+            saved = load_cues_with_backup(cache_path) or {}
+            saved["cover_image"] = f".covers/{song_id}.jpg"
+            atomic_save_json(cache_path, saved, backup=False)
+
+            file_size = os.path.getsize(dst_path) if os.path.exists(dst_path) else 0
+            return {
+                "status": "ok",
+                "song_id": song_id,
+                "cover_path": dst_path,
+                "cover_url": f"/api/covers?id={urllib.parse.quote(song_id)}",
+                "size_bytes": file_size
+            }
+        finally:
+            if os.path.exists(tmp_raw):
+                try: os.remove(tmp_raw)
+                except Exception: pass
+            if os.path.exists(tmp_raw + ".opt.jpg"):
+                try: os.remove(tmp_raw + ".opt.jpg")
+                except Exception: pass
+
+    def save_cover_from_file(self, song_id: str, src_path: str) -> dict:
+        """Otimiza uma imagem local escolhida pelo usuário para 300x300 JPEG ultra-leve."""
+        import subprocess
+
+        if not os.path.exists(src_path):
+            return {"status": "error", "message": "Arquivo de imagem não encontrado"}
+
+        covers_dir = os.path.join(self.directory, ".covers")
+        os.makedirs(covers_dir, exist_ok=True)
+        dst_path = self.get_cover_path(song_id)
+
+        cmd = [
+            "sips",
+            "-z", "300", "300",
+            "-s", "format", "jpeg",
+            "-s", "formatOptions", "80",
+            src_path,
+            "--out", dst_path
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode != 0 or not os.path.exists(dst_path):
+            shutil.copy2(src_path, dst_path)
+
+        if song_id in self._songs_cache:
+            self._songs_cache[song_id]["has_cover"] = True
+            self._songs_cache[song_id]["cover_url"] = f"/api/covers?id={urllib.parse.quote(song_id)}"
+
+        song_full_path = os.path.join(self.directory, song_id)
+        cache_path = song_full_path + ".cues.json"
+        saved = load_cues_with_backup(cache_path) or {}
+        saved["cover_image"] = f".covers/{song_id}.jpg"
+        atomic_save_json(cache_path, saved, backup=False)
+
+        file_size = os.path.getsize(dst_path) if os.path.exists(dst_path) else 0
+        return {
+            "status": "ok",
+            "song_id": song_id,
+            "cover_path": dst_path,
+            "cover_url": f"/api/covers?id={urllib.parse.quote(song_id)}",
+            "size_bytes": file_size
+        }
+
+    def remove_cover(self, song_id: str) -> bool:
+        """Remove a capa associada à música."""
+        dst_path = self.get_cover_path(song_id)
+        if os.path.exists(dst_path):
+            try: os.remove(dst_path)
+            except Exception: pass
+
+        if song_id in self._songs_cache:
+            self._songs_cache[song_id]["has_cover"] = False
+            self._songs_cache[song_id]["cover_url"] = None
+
+        song_full_path = os.path.join(self.directory, song_id)
+        cache_path = song_full_path + ".cues.json"
+        saved = load_cues_with_backup(cache_path)
+        if saved and "cover_image" in saved:
+            del saved["cover_image"]
+            atomic_save_json(cache_path, saved, backup=False)
+        return True
+
     def get_song(self, song_id: str) -> dict | None:
         """Retorna os dados completos de uma música com suas Cues analisadas."""
         s = self._index_file(song_id)
@@ -272,6 +427,15 @@ class SongLibrary:
         # Carrega cues direto do cache JSON (ou do backup seguro se corrompido)
         cache_path = s["path"] + ".cues.json"
         saved = load_cues_with_backup(cache_path)
+        has_cover = self.has_cover(song_id)
+        if not has_cover and saved and saved.get("cover_image"):
+            cp = os.path.join(self.directory, saved["cover_image"])
+            if os.path.exists(cp) and os.path.getsize(cp) > 0:
+                has_cover = True
+        s["has_cover"] = has_cover
+        s["cover_url"] = f"/api/covers?id={urllib.parse.quote(song_id)}" if has_cover else None
+        s["search_query"] = clean_song_title_for_search(s.get("name", song_id))
+
         if saved and "cues" in saved and len(saved["cues"]) > 0:
             if saved.get("bpm"):
                 s["bpm"] = saved["bpm"]
