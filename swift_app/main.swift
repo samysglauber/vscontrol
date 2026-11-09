@@ -1540,43 +1540,55 @@ struct TopBarView: View {
             
             Spacer()
             
-            // Botões de Transporte (Restart, Play, Pad)
-            HStack(spacing: 16) {
+            // Botões de Transporte Padronizados (Quadrados com cantos levemente arredondados 36x36, cornerRadius 8)
+            HStack(spacing: 10) {
+                // 1. Botão Restart
                 Button(action: { state.restart() }) {
-                    Image(systemName: "backward.end.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(Color(red: 0.95, green: 0.55, blue: 0.4))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "backward.end.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(Color(red: 0.95, green: 0.55, blue: 0.4))
+                    }
+                    .frame(width: 36, height: 36)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
                 }
                 .buttonStyle(PlainButtonStyle())
+                .help("Restart song from beginning")
                 
+                // 2. Botão Play / Pause
                 Button(action: { state.playPause() }) {
                     ZStack {
-                        Circle()
-                            .fill(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.2) : Color.white.opacity(0.08))
-                            .frame(width: 46, height: 46)
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.25) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
                         Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                             .foregroundColor(Color(red: 0.19, green: 0.82, blue: 0.60))
                     }
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .keyboardShortcut(.space, modifiers: [])
+                .help("Play / Pause [Espaço]")
                 
-                // Botão FADE STOP (Fade Out Suave com atalho 0)
+                // 3. Botão FADE STOP
                 Button(action: { state.fadeStop(duration: 3.0) }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: state.isFadingOut ? "speaker.slash.fill" : "waveform.badge.minus")
-                            .font(.system(size: 12, weight: .bold))
-                        Text(state.isFadingOut ? "FADING..." : "FADE")
-                            .font(.system(size: 10, weight: .black, design: .monospaced))
-                    }
-                    .foregroundColor(state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white.opacity(0.85) : Color.white.opacity(0.35)))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 7)
-                    .background(
+                    ZStack {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(state.isFadingOut ? Color.orange.opacity(0.22) : Color.white.opacity(0.06))
-                    )
+                            .fill(state.isFadingOut ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: state.isFadingOut ? "speaker.slash.fill" : "waveform.badge.minus")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white.opacity(0.85) : Color.white.opacity(0.35)))
+                    }
+                    .frame(width: 36, height: 36)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(state.isFadingOut ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
@@ -1586,16 +1598,23 @@ struct TopBarView: View {
                 .disabled(!state.isPlaying && !state.isFadingOut)
                 .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
                 
-                // Botão Avançar Próxima Música (Setlist Skip)
+                // 4. Botão Avançar Próxima Música (Setlist Skip)
                 Button(action: { state.advanceToNextSetlistSong() }) {
-                    Image(systemName: "forward.end.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.75))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "forward.end.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.85))
+                    }
+                    .frame(width: 36, height: 36)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Advance to next setlist song")
                 
-                // Botão de Loop da Seção Atual
+                // 5. Botão Loop da Seção Atual
                 Button(action: { state.toggleLoop() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -1605,23 +1624,30 @@ struct TopBarView: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(state.loopActive ? Color.cyan : Color.white.opacity(0.65))
                     }
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(state.loopActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Loop current section (L)")
                 
-                // Botão AUTO (Auto-Advance do Setlist: sem on/off e sem o raio)
+                // 6. Botão AUTO (Auto-Advance do Setlist)
                 Button(action: { state.autoAdvance.toggle() }) {
-                    Text("AUTO")
-                        .font(.system(size: 11, weight: .black, design: .monospaced))
-                        .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.45))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.18) : Color.white.opacity(0.06))
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.45) : Color.white.opacity(0.12), lineWidth: 1)
-                        )
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Text("AUTO")
+                            .font(.system(size: 9, weight: .black, design: .monospaced))
+                            .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
+                    }
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Auto-Advance: automatically play next track when current song finishes")
@@ -1629,38 +1655,50 @@ struct TopBarView: View {
             
             Spacer()
             
-            // Área Direita: Botão EDIT (Setlist Reorder) e Botão Remote (QR)
+            // Área Direita: Botão Edit / Done e Botão Remote
             HStack(spacing: 10) {
-                // Botão EDIT / DONE do Setlist (Subiu para o cabeçalho)
-                Button(action: { state.isEditMode.toggle() }) {
+                // Botão Edit / Done do Setlist
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        state.isEditMode.toggle()
+                    }
+                }) {
                     HStack(spacing: 5) {
                         Image(systemName: state.isEditMode ? "checkmark" : "pencil")
-                        Text(state.isEditMode ? "DONE" : "EDIT")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(state.isEditMode ? "Done" : "Edit")
+                            .font(.system(size: 11, weight: .bold))
                     }
-                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.85))
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 6)
-                    .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.08))
+                    .frame(height: 36)
+                    .padding(.horizontal, 12)
+                    .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
                     .cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(state.isEditMode ? Color.yellow : Color.white.opacity(0.15), lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help("Reorder and remove songs from setlist")
+                .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
                 
                 // Botão Conectar Controle Remoto Mobile
                 Button(action: { state.isQrModalPresented = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "qrcode")
+                            .font(.system(size: 13, weight: .bold))
                         Text("Remote")
+                            .font(.system(size: 11, weight: .bold))
                     }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(Color.purple.opacity(0.95))
+                    .frame(height: 36)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.purple.opacity(0.3))
-                    .cornerRadius(14)
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.6), lineWidth: 1))
+                    .background(Color.purple.opacity(0.18))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.purple.opacity(0.45), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Connect smartphone remote control via QR Code")
