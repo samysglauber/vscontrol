@@ -373,6 +373,9 @@ class PlaybackState: ObservableObject {
             } else if let first = self.setlist.first {
                 self.loadSong(first.song)
             }
+        } else if let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id") {
+            let dummy = SongItem(id: lastSongId, name: lastSongId.replacingOccurrences(of: ".mp3", with: "").replacingOccurrences(of: ".wav", with: ""), filename: lastSongId, path: "/Users/samysglauber/Documents/Vs/\(lastSongId)", bpm: 120.0, time_signature: "4/4", default_key: "D", full_waveform: nil)
+            self.loadSong(dummy)
         }
     }
     
@@ -726,6 +729,11 @@ class PlaybackState: ObservableObject {
                 } else if let def = devs.first(where: { $0.is_default }) {
                     self?.selectedDeviceId = def.id
                     self?.selectedDeviceName = def.name
+                    self?.setAudioDevice(id: def.id, save: false)
+                } else if let first = devs.first {
+                    self?.selectedDeviceId = first.id
+                    self?.selectedDeviceName = first.name
+                    self?.setAudioDevice(id: first.id, save: false)
                 }
             }
         }.resume()

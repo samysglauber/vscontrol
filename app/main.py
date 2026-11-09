@@ -242,6 +242,23 @@ def load_song(req: LoadSongRequest):
 
 @app.post("/api/play")
 def play():
+    if engine.audio_data is None:
+        songs = library.get_all_songs()
+        if songs:
+            target = library.get_song(songs[0]["id"])
+            if target and "path" in target:
+                ts_str = target.get("time_signature", "4/4")
+                try:
+                    num, den = (int(x) for x in ts_str.split("/"))
+                    ts = (num, den)
+                except Exception:
+                    ts = (4, 4)
+                engine.load_song(
+                    filepath=target["path"],
+                    bpm=target.get("bpm", 120.0),
+                    cues=target.get("cues", []),
+                    time_signature=ts
+                )
     engine.play()
     return {"status": "playing"}
 

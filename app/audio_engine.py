@@ -122,22 +122,25 @@ class LiveAudioEngine:
     def set_output_device(self, device_id: int):
         """Troca o dispositivo de saída e salva a preferência em arquivo para persistência."""
         with self.lock:
-            was_playing = self.is_playing
-            self._stop_stream()
-            self.output_device = device_id
-
             try:
                 devices = sd.query_devices()
-                if 0 <= device_id < len(devices):
+                if 0 <= device_id < len(devices) and devices[device_id].get("max_output_channels", 0) > 0:
+                    was_playing = self.is_playing
+                    self._stop_stream()
+                    self.output_device = device_id
                     dev_name = devices[device_id].get("name", "")
                     config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
                     with open(config_path, "w", encoding="utf-8") as f:
                         json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
+                    if was_playing:
+                        self._start_stream()
+                    return True
+                else:
+                    print(f"Dispositivo {device_id} inválido para saída de áudio.")
+                    return False
             except Exception as e:
-                print(f"Erro ao salvar dispositivo: {e}")
-
-            if was_playing:
-                self._start_stream()
+                print(f"Erro ao configurar dispositivo {device_id}: {e}")
+                return False
 
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4)):
         """Carrega uma música na memória e prepara o grid de compassos."""
@@ -533,18 +536,60 @@ class LiveAudioEngine:
 
     def _start_stream(self):
         self._stop_stream()
+        
+        # 1. Valida se o dispositivo atual existe e possui canais de saída
+        target_device = self.output_device
+        try:
+            devs = sd.query_devices()
+            if target_device is not None:
+                if target_device < 0 or target_device >= len(devs) or devs[target_device].get("max_output_channels", 0) <= 0:
+                    target_device = None
+                    # Tenta encontrar pelo nome salvo
+                    config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
+                    if os.path.exists(config_path):
+                        with open(config_path, "r", encoding="utf-8") as f:
+                            saved_name = json.load(f).get("output_device_name")
+                            if saved_name:
+                                for i, d in enumerate(devs):
+                                    if d.get("max_output_channels", 0) > 0 and d["name"] == saved_name:
+                                        target_device = i
+                                        break
+        except Exception as e:
+            print(f"Erro ao consultar dispositivos de áudio: {e}")
+            target_device = None
+
+        # 2. Tenta abrir com o dispositivo alvo
         try:
             self.stream = sd.OutputStream(
                 samplerate=self.sample_rate,
                 channels=2,
                 dtype='float32',
-                device=self.output_device,
+                device=target_device,
                 callback=self._audio_callback,
                 blocksize=512
             )
             self.stream.start()
+            self.output_device = target_device
+            return
         except Exception as e:
-            print(f"Erro ao iniciar OutputStream: {e}")
+            print(f"Erro ao iniciar OutputStream com dispositivo {target_device}: {e}. Tentando fallback...")
+
+        # 3. Fallback automático para o dispositivo de saída padrão do sistema
+        try:
+            self.stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=2,
+                dtype='float32',
+                device=None,
+                callback=self._audio_callback,
+                blocksize=512
+            )
+            self.stream.start()
+            default_out = sd.default.device[1] if sd.default.device[1] >= 0 else None
+            self.output_device = default_out
+            print(f"Áudio iniciado com sucesso usando dispositivo padrão do sistema (ID: {default_out})")
+        except Exception as e2:
+            print(f"Falha ao iniciar áudio no dispositivo padrão: {e2}")
 
     def _stop_stream(self):
         if self.stream:
