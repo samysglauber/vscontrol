@@ -175,7 +175,11 @@ class SetlistQuery(BaseModel):
 
 @app.post("/api/songs/setlist")
 def setlist_songs(req: SetlistQuery):
-    return library.load_setlist_songs(req.ids)
+    songs = library.load_setlist_songs(req.ids)
+    for sid in req.ids:
+        if not library.has_cover(sid):
+            asyncio.create_task(asyncio.to_thread(library.auto_fetch_cover, sid))
+    return songs
 
 @app.get("/api/song/{song_id}")
 def get_song(song_id: str):
@@ -249,6 +253,17 @@ def remove_cover(req: RemoveCoverRequest):
     success = library.remove_cover(req.song_id)
     return {"success": success}
 
+class AutoCoverRequest(BaseModel):
+    song_id: str
+
+@app.post("/api/covers/auto")
+def auto_cover(req: AutoCoverRequest):
+    """Busca e define automaticamente a melhor capa da música no iTunes se ainda não tiver capa."""
+    res = library.auto_fetch_cover(req.song_id)
+    if not res:
+        return {"status": "not_found", "song_id": req.song_id}
+    return res
+
 @app.api_route("/api/covers", methods=["GET", "HEAD"])
 def get_cover(id: str):
     """Serve a capa JPEG diretamente do disco com cache HTTP inteligente."""
@@ -306,6 +321,10 @@ def load_song(req: LoadSongRequest):
     # Sincroniza o BPM automaticamente no Ableton Live
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
+
+    # Se a música não tiver capa, busca automaticamente em segundo plano
+    if not song.get("has_cover"):
+        asyncio.create_task(asyncio.to_thread(library.auto_fetch_cover, req.song_id))
 
     return {"status": "loaded", "song": song, "bpm_synced": bool(song.get("bpm"))}
 

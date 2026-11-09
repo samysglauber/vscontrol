@@ -274,6 +274,11 @@ struct SongCoverView: View {
         )
         .shadow(color: isSelected ? Color.white.opacity(0.25) : Color.clear, radius: 8)
         .id("\(song.id)_\(refreshId)")
+        .onAppear {
+            if song.has_cover != true {
+                PlaybackState.shared.autoFetchCover(for: song)
+            }
+        }
     }
     
     private var fallbackGradient: some View {
@@ -726,6 +731,7 @@ class PlaybackState: ObservableObject {
             
             if !restored.isEmpty {
                 self.setlist = restored
+                self.autoFetchCoversIfNeeded()
                 
                 let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
                 if let lastId = lastSongId,
@@ -921,6 +927,7 @@ class PlaybackState: ObservableObject {
         
         DispatchQueue.main.async {
             self.setlist = restoredSongs
+            self.autoFetchCoversIfNeeded()
             self.currentSetlistFilePath = url.path
             self.currentSetlistName = docName
             self.addRecentSetlistPath(url.path)
@@ -1353,6 +1360,34 @@ class PlaybackState: ObservableObject {
             DispatchQueue.main.async {
                 CoverImageCache.shared.remove(for: song.id)
                 self?.updateSongCoverState(songId: song.id, hasCover: false)
+            }
+        }.resume()
+    }
+    
+    func autoFetchCoversIfNeeded() {
+        for item in self.setlist {
+            if item.song.has_cover != true {
+                self.autoFetchCover(for: item.song)
+            }
+        }
+    }
+    
+    func autoFetchCover(for song: SongItem) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/auto") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["song_id": song.id]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+            guard error == nil, let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String, status == "ok" else { return }
+            
+            DispatchQueue.main.async {
+                CoverImageCache.shared.remove(for: song.id)
+                self?.updateSongCoverState(songId: song.id, hasCover: true)
             }
         }.resume()
     }
@@ -4062,6 +4097,7 @@ struct AddSongSheetView: View {
                         Button("Add") {
                             state.setlist.append(SetlistSong(song: song))
                             state.saveSetlistState()
+                            state.autoFetchCover(for: song)
                             presentationMode.wrappedValue.dismiss()
                         }
                         .buttonStyle(BorderedProminentButtonStyle())

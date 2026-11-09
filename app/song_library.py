@@ -339,6 +339,8 @@ class SongLibrary:
             cache_path = song_full_path + ".cues.json"
             saved = load_cues_with_backup(cache_path) or {}
             saved["cover_image"] = f".covers/{song_id}.jpg"
+            if "no_cover" in saved:
+                del saved["no_cover"]
             atomic_save_json(cache_path, saved, backup=False)
 
             file_size = os.path.getsize(dst_path) if os.path.exists(dst_path) else 0
@@ -388,6 +390,8 @@ class SongLibrary:
         cache_path = song_full_path + ".cues.json"
         saved = load_cues_with_backup(cache_path) or {}
         saved["cover_image"] = f".covers/{song_id}.jpg"
+        if "no_cover" in saved:
+            del saved["no_cover"]
         atomic_save_json(cache_path, saved, backup=False)
 
         file_size = os.path.getsize(dst_path) if os.path.exists(dst_path) else 0
@@ -400,7 +404,7 @@ class SongLibrary:
         }
 
     def remove_cover(self, song_id: str) -> bool:
-        """Remove a capa associada à música."""
+        """Remove a capa associada à música e marca no_cover para respeitar a decisão do usuário."""
         dst_path = self.get_cover_path(song_id)
         if os.path.exists(dst_path):
             try: os.remove(dst_path)
@@ -412,11 +416,51 @@ class SongLibrary:
 
         song_full_path = os.path.join(self.directory, song_id)
         cache_path = song_full_path + ".cues.json"
-        saved = load_cues_with_backup(cache_path)
-        if saved and "cover_image" in saved:
+        saved = load_cues_with_backup(cache_path) or {}
+        if "cover_image" in saved:
             del saved["cover_image"]
-            atomic_save_json(cache_path, saved, backup=False)
+        saved["no_cover"] = True
+        atomic_save_json(cache_path, saved, backup=False)
         return True
+
+    def auto_fetch_cover(self, song_id: str) -> dict | None:
+        """Busca e aplica automaticamente a melhor capa do iTunes se a música não tiver capa."""
+        if self.has_cover(song_id):
+            return {"status": "already_has_cover", "song_id": song_id}
+
+        song_full_path = os.path.join(self.directory, song_id)
+        cache_path = song_full_path + ".cues.json"
+        saved = load_cues_with_backup(cache_path)
+        if saved and saved.get("no_cover"):
+            return {"status": "no_cover_requested", "song_id": song_id}
+
+        s = self._index_file(song_id)
+        query = s.get("search_query") if s else clean_song_title_for_search(song_id)
+        if not query:
+            return None
+
+        import urllib.request
+        import urllib.parse
+        import json
+        url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&media=music&entity=song&limit=3"
+        req = urllib.request.Request(url, headers={"User-Agent": "VSControl/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=6) as res:
+                data = json.loads(res.read().decode("utf-8"))
+                results = data.get("results", [])
+                if not results:
+                    return {"status": "not_found", "song_id": song_id}
+
+                top_match = results[0]
+                art_url = top_match.get("artworkUrl100", "")
+                if not art_url:
+                    return {"status": "no_artwork_url", "song_id": song_id}
+
+                large_url = art_url.replace("/100x100bb.jpg", "/600x600bb.jpg")
+                return self.save_cover_from_url(song_id, large_url)
+        except Exception as e:
+            print(f"Aviso no auto_fetch_cover ({song_id}): {e}")
+            return None
 
     def get_song(self, song_id: str) -> dict | None:
         """Retorna os dados completos de uma música com suas Cues analisadas."""
