@@ -2339,22 +2339,20 @@ struct TopBarView: View {
                 
                 Spacer()
                 
-                // Área Direita: Botão Remote (QR)
+                // Área Direita: Botão Remote Celular (QR) sóbrio com mesmo padrão dos botões centrais
                 Button(action: { state.isQrModalPresented = true }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "qrcode")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Remote")
-                            .font(.system(size: 11, weight: .bold))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.isQrModalPresented ? Color.white.opacity(0.18) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "iphone")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(state.isQrModalPresented ? Color.white : Color.white.opacity(0.75))
                     }
-                    .foregroundColor(Color.purple.opacity(0.95))
-                    .frame(height: 36)
-                    .padding(.horizontal, 12)
-                    .background(Color.purple.opacity(0.18))
-                    .cornerRadius(8)
+                    .frame(width: 36, height: 36)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.purple.opacity(0.45), lineWidth: 1)
+                            .stroke(state.isQrModalPresented ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
