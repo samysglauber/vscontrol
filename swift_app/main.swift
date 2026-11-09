@@ -1852,24 +1852,7 @@ struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Linha 1: Barra de Título (Na mesma linha do semáforo de fechar/minimizar do macOS)
-            ZStack {
-                // Nome do Setlist Salvo Centralizado (Acima dos controles centrais)
-                HStack {
-                    Spacer()
-                    Text(state.currentSetlistName)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white.opacity(0.92))
-                        .lineLimit(1)
-                    Spacer()
-                }
-            }
-            .frame(height: 28)
-            .padding(.top, 4)
-            
-            // Linha 2: Métricas, Controles Centrais de Transporte e Remote
-            HStack(spacing: 20) {
+        HStack(spacing: 20) {
                 // Métricas (BPM com decimal e Compasso)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formatBpm(state.bpm))
@@ -2036,10 +2019,9 @@ struct TopBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Connect smartphone remote control via QR Code")
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
     
@@ -4421,6 +4403,7 @@ struct SongEditorSheetView: View {
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
     private var recentSetlistsSubmenu: NSMenu?
+    private var cancellables = Set<AnyCancellable>()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -4435,14 +4418,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         
         window.center()
-        updateWindowTitle()
-        window.titleVisibility = .hidden
+        window.title = PlaybackState.shared.currentSetlistName.isEmpty ? "VS Control" : PlaybackState.shared.currentSetlistName
+        window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        
+        setupTitleBinding()
+    }
+    
+    private func setupTitleBinding() {
+        PlaybackState.shared.$currentSetlistName
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newName in
+                self?.window?.title = newName.isEmpty ? "VS Control" : newName
+            }
+            .store(in: &cancellables)
     }
     
     private func setupMainMenu() {
@@ -4590,13 +4584,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     func updateWindowTitle() {
         let name = PlaybackState.shared.currentSetlistName
-        let display = name.isEmpty ? "VS Control" : "\(name) — VS Control"
-        window?.title = display
-        if let path = PlaybackState.shared.currentSetlistFilePath {
-            window?.representedURL = URL(fileURLWithPath: path)
-        } else {
-            window?.representedURL = nil
-        }
+        window?.title = name.isEmpty ? "VS Control" : name
     }
 }
 
