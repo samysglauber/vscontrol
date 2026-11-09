@@ -1629,22 +1629,42 @@ struct TopBarView: View {
             
             Spacer()
             
-            // Botão Conectar Controle Remoto Mobile
-            Button(action: { state.isQrModalPresented = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "qrcode")
-                    Text("Remote")
+            // Área Direita: Botão EDIT (Setlist Reorder) e Botão Remote (QR)
+            HStack(spacing: 10) {
+                // Botão EDIT / DONE do Setlist (Subiu para o cabeçalho)
+                Button(action: { state.isEditMode.toggle() }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: state.isEditMode ? "checkmark" : "pencil")
+                        Text(state.isEditMode ? "DONE" : "EDIT")
+                    }
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.85))
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.08))
+                    .cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(state.isEditMode ? Color.yellow : Color.white.opacity(0.15), lineWidth: 1))
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.purple.opacity(0.3))
-                .cornerRadius(14)
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.6), lineWidth: 1))
+                .buttonStyle(PlainButtonStyle())
+                .help("Reorder and remove songs from setlist")
+                
+                // Botão Conectar Controle Remoto Mobile
+                Button(action: { state.isQrModalPresented = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "qrcode")
+                        Text("Remote")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.purple.opacity(0.3))
+                    .cornerRadius(14)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.6), lineWidth: 1))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Connect smartphone remote control via QR Code")
             }
-            .buttonStyle(PlainButtonStyle())
-            .help("Connect smartphone remote control via QR Code")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -1665,56 +1685,21 @@ struct SetlistCarouselView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            if state.isEditMode {
                 HStack(spacing: 6) {
-                    Text("LIVE SETLIST")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(.gray)
-                    if state.isEditMode {
-                        Text("(Edit Mode: Drag to reorder)")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.yellow)
-                    }
+                    Image(systemName: "hand.draw.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.yellow)
+                    Text("Edit Mode: Drag cards to reorder or tap ✕ to remove")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.yellow)
+                    Spacer()
                 }
-                Spacer()
-                HStack(spacing: 8) {
-                    // Botão EDIT do Setlist (Ao lado do Adicionar Música)
-                    Button(action: { state.isEditMode.toggle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: state.isEditMode ? "checkmark" : "pencil")
-                            Text(state.isEditMode ? "DONE" : "EDIT")
-                        }
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.85))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.08))
-                        .cornerRadius(7)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(state.isEditMode ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Reorder and remove songs from setlist")
-                    
-                    // Botão Adicionar Música
-                    Button(action: { state.isAddSongSheetPresented = true }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                            Text("Add Song")
-                        }
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color(red: 0.23, green: 0.51, blue: 0.96))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color(red: 0.23, green: 0.51, blue: 0.96).opacity(0.12))
-                        .cornerRadius(7)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.23, green: 0.51, blue: 0.96).opacity(0.3), lineWidth: 1))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -1841,9 +1826,34 @@ struct SetlistCarouselView: View {
                             .help(item.transitionType == "AUTO" ? "Auto-transition to next track" : "Stop after this track")
                         }
                     }
+                    
+                    // Card "Add a Song" no mesmo formato e tamanho das músicas (adicionando ao lado)
+                    Button(action: { state.isAddSongSheetPresented = true }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(red: 0.12, green: 0.13, blue: 0.18).opacity(0.85))
+                                .frame(width: 175, height: 75)
+                            
+                            VStack(spacing: 6) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 24, weight: .light))
+                                    .foregroundColor(.white)
+                                Text("Add a Song")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .frame(width: 175, height: 75)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.22), lineWidth: 1.2)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Add a song to setlist")
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 12)
+                .padding(.vertical, 10)
             }
         }
         .background(Color(red: 0.08, green: 0.09, blue: 0.13))
@@ -2052,8 +2062,8 @@ struct SpectrogramWaveformView: View {
                                     .fill(
                                         LinearGradient(
                                             gradient: Gradient(colors: [
-                                                Color(red: 0.20, green: 0.65, blue: 0.98).opacity(0.92),
-                                                Color(red: 0.12, green: 0.42, blue: 0.85).opacity(0.68)
+                                                Color.white.opacity(0.85),
+                                                Color(red: 0.82, green: 0.86, blue: 0.92).opacity(0.65)
                                             ]),
                                             startPoint: .top,
                                             endPoint: .bottom
@@ -2316,8 +2326,8 @@ struct WaveformSectionBlock: View {
     var body: some View {
         Button(action: onSelect) {
             ZStack(alignment: .topLeading) {
-                // Fundo translúcido (permite ver a onda contínua que corre no fundo da timeline)
-                RoundedRectangle(cornerRadius: 6)
+                // Fundo translúcido com a cor de leve de cada parte (conforme foto de referência MultiTracks)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(blockBgColor)
                     .padding(2)
                 
@@ -2330,7 +2340,7 @@ struct WaveformSectionBlock: View {
                         ForEach(1...numLines, id: \.self) { b in
                             let xPos = (CGFloat(b) / CGFloat(total)) * width
                             Rectangle()
-                                .fill(Color.white.opacity(0.10))
+                                .fill(Color.white.opacity(0.12))
                                 .frame(width: 1)
                                 .position(x: xPos, y: 175 / 2)
                         }
@@ -2349,7 +2359,7 @@ struct WaveformSectionBlock: View {
                                 .padding(.vertical, 2)
                                 .background(Color.black.opacity(0.60))
                                 .cornerRadius(4)
-                                .padding(.leading, 6)
+                                .padding(.leading, 8)
                                 .padding(.bottom, 6)
                             Spacer()
                         }
@@ -2361,7 +2371,8 @@ struct WaveformSectionBlock: View {
                     if width >= 24 {
                         let badgeSize: CGFloat = width < 42 ? 18 : 22
                         Circle()
-                            .fill(badgeColor)
+                            .fill(Color.black.opacity(0.55))
+                            .overlay(Circle().stroke(badgeColor, lineWidth: 1.6))
                             .frame(width: badgeSize, height: badgeSize)
                             .overlay(
                                 Text(section.shortBadgeName)
@@ -2394,25 +2405,24 @@ struct WaveformSectionBlock: View {
                 // Linha Divisória Vertical Evidente entre os Trechos (Borda esquerda exata do bloco)
                 if index > 0 {
                     Rectangle()
-                        .fill(Color.white.opacity(0.92))
-                        .frame(width: 2.5, height: 175)
-                        .shadow(color: Color.black.opacity(0.8), radius: 2, x: 0, y: 0)
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 1.5, height: 175)
                 }
             }
             .frame(width: width, height: 175)
             .clipped()
-            // Borda de destaque quando ativa / enfileirada / focada com o teclado
+            // Borda de destaque quando ativa / enfileirada / focada com o teclado ou borda colorida da seção
             .overlay(
                 Group {
                     if isPlaying {
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.green, lineWidth: 2.5)
                             .padding(2)
                             .shadow(color: Color.green.opacity(0.6), radius: 6)
                             .overlay(
                                 Group {
                                     if isFocused && !isQueued {
-                                        RoundedRectangle(cornerRadius: 6)
+                                        RoundedRectangle(cornerRadius: 8)
                                             .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
                                             .padding(2)
                                             .shadow(color: Color.white.opacity(0.8), radius: 4)
@@ -2421,16 +2431,21 @@ struct WaveformSectionBlock: View {
                             )
                     } else if isQueued {
                         // Bloco selecionado para salto: cor laranja evidente
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.orange, lineWidth: 2.5)
                             .padding(2)
                             .shadow(color: Color.orange.opacity(0.7), radius: 6)
                     } else if isFocused {
                         // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.white.opacity(0.95), lineWidth: 2.2)
                             .padding(2)
                             .shadow(color: Color.white.opacity(0.7), radius: 6)
+                    } else {
+                        // Borda sutil com a cor da seção (estilo MultiTracks Playback como na foto de referência)
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(badgeColor.opacity(0.40), lineWidth: 1.2)
+                            .padding(2)
                     }
                 }
             )
@@ -2455,40 +2470,41 @@ struct WaveformSectionBlock: View {
     private var blockBgColor: Color {
         if isPlaying {
             if isFocused && !isQueued {
-                return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.55)
+                return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.65)
             }
-            return Color(red: 0.10, green: 0.35, blue: 0.20).opacity(0.35)
+            return Color(red: 0.10, green: 0.40, blue: 0.22).opacity(0.45)
         }
         if isQueued {
-            return Color(red: 0.38, green: 0.25, blue: 0.08).opacity(0.40)
+            return Color(red: 0.85, green: 0.45, blue: 0.08).opacity(0.45)
         }
         if isFocused {
             // Fundo de destaque branco translúcido elegante
             return Color.white.opacity(0.24)
         }
-        return Color(red: 0.10, green: 0.12, blue: 0.16).opacity(0.20)
+        // Cor de leve no fundo de acordo com cada parte (estilo MultiTracks Playback)
+        return badgeColor.opacity(0.16)
     }
     
     private var borderColor: Color {
         if isPlaying { return Color(red: 0.19, green: 0.88, blue: 0.60) }
         if isQueued { return Color(red: 0.98, green: 0.75, blue: 0.15) }
-        return Color.white.opacity(0.15)
+        return badgeColor.opacity(0.40)
     }
     
     private var badgeColor: Color {
         let upper = section.name.uppercased()
-        if upper.contains("COUNT") || upper.contains("CONTAGEM") { return Color(red: 0.45, green: 0.52, blue: 0.60) }
+        if upper.contains("COUNT") || upper.contains("CONTAGEM") { return Color(red: 0.48, green: 0.55, blue: 0.65) }
         if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") { return Color(red: 0.98, green: 0.44, blue: 0.52) }
-        if upper.contains("PRE") || upper.contains("PRÉ") { return Color.yellow }
-        if upper.contains("CHORUS") || upper.contains("REFRÃO") { return Color.red }
-        if upper.contains("BRIDGE") || upper.contains("PONTE") { return Color.orange }
-        if upper.contains("INTRO") { return Color.cyan }
-        if upper.contains("VERSE") || upper.contains("VERSO") { return Color.purple }
-        if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return Color.teal }
-        if upper.contains("SOLO") { return Color.teal }
-        if upper.contains("TAG") { return Color.pink }
-        if upper.contains("OUTRO") || upper.contains("FINAL") { return Color.gray }
-        return Color.blue
+        if upper.contains("PRE") || upper.contains("PRÉ") { return Color(red: 0.95, green: 0.78, blue: 0.18) }
+        if upper.contains("CHORUS") || upper.contains("REFRÃO") { return Color(red: 0.92, green: 0.32, blue: 0.28) }
+        if upper.contains("BRIDGE") || upper.contains("PONTE") { return Color(red: 0.95, green: 0.55, blue: 0.20) }
+        if upper.contains("INTRO") { return Color(red: 0.18, green: 0.72, blue: 0.92) }
+        if upper.contains("VERSE") || upper.contains("VERSO") { return Color(red: 0.55, green: 0.38, blue: 0.92) }
+        if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return Color(red: 0.16, green: 0.75, blue: 0.70) }
+        if upper.contains("SOLO") { return Color(red: 0.16, green: 0.75, blue: 0.70) }
+        if upper.contains("TAG") { return Color(red: 0.22, green: 0.78, blue: 0.45) }
+        if upper.contains("OUTRO") || upper.contains("FINAL") { return Color(red: 0.50, green: 0.55, blue: 0.62) }
+        return Color(red: 0.25, green: 0.55, blue: 0.95)
     }
 }
 
