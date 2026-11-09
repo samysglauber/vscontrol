@@ -3758,22 +3758,69 @@ struct FaderCapKnobView: View {
     
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 3.5)
+            // Corpo do Fader Cap Metálico Escovado com Curvatura Cilíndrica e Sombras 3D
+            RoundedRectangle(cornerRadius: 4.5)
                 .fill(
                     LinearGradient(
-                        colors: [Color(white: 0.38), Color(white: 0.22), Color(white: 0.16)],
+                        stops: [
+                            .init(color: Color(white: 0.20), location: 0.0),
+                            .init(color: Color(white: 0.38), location: 0.15),
+                            .init(color: Color(white: 0.44), location: 0.34),
+                            .init(color: Color(white: 0.28), location: 0.48),
+                            .init(color: Color(white: 0.28), location: 0.52),
+                            .init(color: Color(white: 0.44), location: 0.66),
+                            .init(color: Color(white: 0.38), location: 0.85),
+                            .init(color: Color(white: 0.20), location: 1.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: 18, height: 30)
+                .overlay(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.white.opacity(0.32), location: 0.0),
+                            .init(color: Color.clear, location: 0.22),
+                            .init(color: Color.clear, location: 0.78),
+                            .init(color: Color.black.opacity(0.40), location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4.5)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.08), Color.black.opacity(0.55)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.85), radius: 5, x: 0, y: 2.5)
+                .shadow(color: Color.black.opacity(0.50), radius: 2, x: 0, y: 1)
+            
+            // Rebaixo escuro central do entalhe
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.black.opacity(0.65))
+                .frame(width: 3.2, height: 22)
+            
+            // Linha indicadora central prateada/branca brilhante realista
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: isMuted ? [Color.red.opacity(0.85), Color.red.opacity(0.65)] : [Color.white, Color(white: 0.88)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                .frame(width: 16, height: 26)
-                .overlay(RoundedRectangle(cornerRadius: 3.5).stroke(Color.white.opacity(0.3), lineWidth: 1))
-                .shadow(color: Color.black.opacity(0.6), radius: 2.5, x: 0, y: 1.5)
-            
-            Rectangle()
-                .fill(isMuted ? Color.gray : accentColor)
-                .frame(width: 2, height: 14)
+                .frame(width: 1.8, height: 20)
         }
+        .frame(width: 18, height: 30)
     }
 }
 
@@ -3821,36 +3868,40 @@ struct PlaybackFaderView: View {
             
             GeometryReader { geo in
                 let trackWidth: CGFloat = max(40.0, geo.size.width)
-                let faderCapWidth: CGFloat = 16.0
+                let faderCapWidth: CGFloat = 18.0
                 let availableTravel: CGFloat = max(1.0, trackWidth - faderCapWidth)
                 let progress: CGFloat = CGFloat(max(0.0, min(1.5, volume)) / 1.5)
                 let capOffset: CGFloat = progress * availableTravel
                 let unityX: CGFloat = (1.0 / 1.5) * availableTravel + (faderCapWidth / 2)
                 
                 ZStack(alignment: .leading) {
-                    // Trilho
+                    // Fenda mecânica contínua profunda (Slot de fader de console de mixagem analógico)
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.black.opacity(0.75))
-                            .frame(height: 8)
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                        
+                        // Linha discreta de ganho unitário (0 dB / 100%) atrás da fenda
                         Rectangle()
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 1.5)
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 10)
+                            .offset(x: unityX - 0.5)
                         
-                        Rectangle()
-                            .fill(Color.white.opacity(0.35))
-                            .frame(width: 1.5, height: 12)
-                            .offset(x: unityX - 0.75)
-                        
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(isMuted ? Color.gray.opacity(0.3) : accentColor.opacity(0.85))
-                            .frame(width: max(0, capOffset + (faderCapWidth / 2)), height: 6)
-                            .padding(.leading, 1)
+                        // Fenda escura contínua com borda chanfrada realista
+                        Capsule()
+                            .fill(Color.black)
+                            .frame(height: 3.5)
+                            .overlay(
+                                Capsule()
+                                    .stroke(
+                                        LinearGradient(
+                                            colors: [Color.black, Color.white.opacity(0.14)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        ),
+                                        lineWidth: 0.8
+                                    )
+                            )
+                            .shadow(color: Color.black.opacity(0.9), radius: 1, y: 1)
                     }
                     
-                    // Knob
+                    // Knob do Fader com visual de hardware
                     FaderCapKnobView(accentColor: accentColor, isMuted: isMuted)
                         .offset(x: capOffset)
                 }
@@ -3875,7 +3926,7 @@ struct PlaybackFaderView: View {
                     }
                 )
             }
-            .frame(width: 140, height: 28)
+            .frame(width: 140, height: 32)
             
             FaderValueBadgeView(isMuted: isMuted, volume: volume, dbText: dbText)
         }
