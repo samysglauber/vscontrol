@@ -185,6 +185,20 @@ struct SavedSetlistSongItem: Codable {
     let transitionType: String
 }
 
+struct SetlistDocumentItem: Codable {
+    var song: SongItem
+    var transitionType: String
+    var cues: [CueSection]?
+}
+
+struct SetlistDocument: Codable {
+    var version: Int = 1
+    var name: String
+    var createdAt: Date? = nil
+    var updatedAt: Date? = nil
+    var items: [SetlistDocumentItem]
+}
+
 struct AudioDeviceItem: Identifiable, Codable {
     let id: Int
     let name: String
@@ -218,6 +232,21 @@ struct CueHistorySnapshot {
 // ==========================================
 
 class PlaybackState: ObservableObject {
+    static let shared = PlaybackState()
+    
+    @Published var currentSetlistName: String = "Untitled Setlist"
+    @Published var currentSetlistFilePath: String? = nil
+    
+    var defaultSetlistsFolder: URL {
+        let preferred = URL(fileURLWithPath: "/Users/samysglauber/Documents/AbletonTracks/Setlists")
+        if FileManager.default.fileExists(atPath: preferred.path) {
+            return preferred
+        }
+        let fallback = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("AbletonTracks/Setlists") ?? preferred
+        try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
+    }
+    
     @Published var songs: [SongItem] = []
     @Published var librarySongs: [SongItem] = []
     @Published var isLoadingLibrary: Bool = false
@@ -363,6 +392,16 @@ class PlaybackState: ObservableObject {
     }
     
     private func restoreInitialSetlistFromCache() {
+        // 1. Tenta abrir por padrão o último setlist aberto
+        if let lastPath = UserDefaults.standard.string(forKey: "last_opened_setlist_path"),
+           FileManager.default.fileExists(atPath: lastPath) {
+            let url = URL(fileURLWithPath: lastPath)
+            if self.loadSetlistFrom(url: url, isInitialRestore: true) {
+                return
+            }
+        }
+        
+        // 2. Fallback: carregar do cache local UserDefaults caso nenhum arquivo de setlist específico tenha sido aberto
         if let fullData = UserDefaults.standard.data(forKey: "saved_setlist_full_songs"),
            let savedList = try? JSONDecoder().decode([SavedSetlistSongItem].self, from: fullData),
            !savedList.isEmpty {
@@ -514,6 +553,11 @@ class PlaybackState: ObservableObject {
             UserDefaults.standard.set(currentId, forKey: "saved_last_loaded_song_id")
         }
         UserDefaults.standard.synchronize()
+        
+        // Auto-salvamento no arquivo de setlist ativo (se houver um arquivo aberto)
+        if let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
+            saveSetlistTo(url: URL(fileURLWithPath: filePath), notify: false)
+        }
     }
     
     func toggleTransition(at index: Int) {
@@ -558,6 +602,237 @@ class PlaybackState: ObservableObject {
         if let first = availableSongs.first {
             self.loadSong(first)
         }
+    }
+    
+    // ==========================================
+    // GERENCIAMENTO DE ARQUIVOS DE SETLIST (.vset / .json)
+    // ==========================================
+    
+    func newSetlist() {
+        if isPlaying {
+            playPause()
+        }
+        self.setlist = []
+        self.currentSong = nil
+        self.currentCues = []
+        self.fullWaveform = []
+        self.currentSetlistFilePath = nil
+        self.currentSetlistName = "Untitled Setlist"
+        UserDefaults.standard.removeObject(forKey: "last_opened_setlist_path")
+        UserDefaults.standard.synchronize()
+        showUndoFeedback("Novo Setlist criado. Adicione músicas pelo card '+ Add a Song'.")
+    }
+    
+    func saveSetlist(completion: (() -> Void)? = nil) {
+        if let path = currentSetlistFilePath, !path.isEmpty {
+            saveSetlistTo(url: URL(fileURLWithPath: path), notify: true, completion: completion)
+        } else {
+            saveSetlistAs(completion: completion)
+        }
+    }
+    
+    func saveSetlistAs(completion: (() -> Void)? = nil) {
+        let panel = NSSavePanel()
+        panel.title = "Save Setlist"
+        panel.message = "Escolha o nome e local para salvar este Setlist"
+        if let vsetType = UTType(filenameExtension: "vset") {
+            panel.allowedContentTypes = [vsetType, .json]
+        } else {
+            panel.allowedContentTypes = [.json]
+        }
+        panel.canCreateDirectories = true
+        let defaultName = (currentSetlistName.isEmpty || currentSetlistName == "Untitled Setlist") ? "Setlist 1.vset" : "\(currentSetlistName).vset"
+        panel.nameFieldStringValue = defaultName
+        panel.directoryURL = defaultSetlistsFolder
+        
+        if let win = NSApp.keyWindow ?? NSApp.windows.first {
+            panel.beginSheetModal(for: win) { response in
+                if response == .OK, let url = panel.url {
+                    self.saveSetlistTo(url: url, notify: true, completion: completion)
+                }
+            }
+        } else {
+            let response = panel.runModal()
+            if response == .OK, let url = panel.url {
+                self.saveSetlistTo(url: url, notify: true, completion: completion)
+            }
+        }
+    }
+    
+    func saveSetlistTo(url: URL, notify: Bool = true, completion: (() -> Void)? = nil) {
+        var docItems: [SetlistDocumentItem] = []
+        for item in setlist {
+            var cuesForThisSong: [CueSection]? = nil
+            if item.song.id == currentSong?.id && !currentCues.isEmpty {
+                cuesForThisSong = currentCues
+            } else if let cachedData = UserDefaults.standard.data(forKey: "saved_cues_\(item.song.id)"),
+                      let decoded = try? JSONDecoder().decode([CueSection].self, from: cachedData) {
+                cuesForThisSong = decoded
+            }
+            docItems.append(SetlistDocumentItem(song: item.song, transitionType: item.transitionType, cues: cuesForThisSong))
+        }
+        
+        let docName = url.deletingPathExtension().lastPathComponent
+        let doc = SetlistDocument(
+            version: 1,
+            name: docName,
+            createdAt: Date(),
+            updatedAt: Date(),
+            items: docItems
+        )
+        
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        
+        do {
+            let data = try encoder.encode(doc)
+            try data.write(to: url, options: .atomic)
+            
+            DispatchQueue.main.async {
+                self.currentSetlistFilePath = url.path
+                self.currentSetlistName = docName
+                self.addRecentSetlistPath(url.path)
+                UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
+                UserDefaults.standard.synchronize()
+                
+                if notify {
+                    self.showUndoFeedback("Setlist '\(docName)' salva com sucesso!")
+                }
+                completion?()
+            }
+        } catch {
+            if notify {
+                DispatchQueue.main.async {
+                    self.showUndoFeedback("Erro ao salvar Setlist: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    func openSetlistDialog(completion: (() -> Void)? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Open Setlist"
+        panel.message = "Selecione um arquivo de Setlist (.vset ou .json) para abrir"
+        if let vsetType = UTType(filenameExtension: "vset") {
+            panel.allowedContentTypes = [vsetType, .json]
+        } else {
+            panel.allowedContentTypes = [.json]
+        }
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.directoryURL = defaultSetlistsFolder
+        
+        if let win = NSApp.keyWindow ?? NSApp.windows.first {
+            panel.beginSheetModal(for: win) { response in
+                if response == .OK, let url = panel.url {
+                    self.loadSetlistFrom(url: url)
+                    completion?()
+                }
+            }
+        } else {
+            let response = panel.runModal()
+            if response == .OK, let url = panel.url {
+                self.loadSetlistFrom(url: url)
+                completion?()
+            }
+        }
+    }
+    
+    @discardableResult
+    func loadSetlistFrom(url: URL, isInitialRestore: Bool = false) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url) else {
+            if !isInitialRestore {
+                showUndoFeedback("Arquivo de setlist não encontrado.")
+            }
+            return false
+        }
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        var loadedItems: [SetlistDocumentItem] = []
+        var docName = url.deletingPathExtension().lastPathComponent
+        
+        if let doc = try? decoder.decode(SetlistDocument.self, from: data) {
+            loadedItems = doc.items
+            if !doc.name.isEmpty {
+                docName = doc.name
+            }
+        } else if let legacyItems = try? decoder.decode([SavedSetlistSongItem].self, from: data) {
+            loadedItems = legacyItems.map { SetlistDocumentItem(song: $0.song, transitionType: $0.transitionType, cues: nil) }
+        } else {
+            if !isInitialRestore {
+                showUndoFeedback("Formato de setlist inválido.")
+            }
+            return false
+        }
+        
+        if isPlaying {
+            playPause()
+        }
+        
+        var restoredSongs: [SetlistSong] = []
+        for it in loadedItems {
+            // Se o setlist trouxer cues, restaura no cache local
+            if let cues = it.cues, !cues.isEmpty,
+               let cuesData = try? JSONEncoder().encode(cues) {
+                UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(it.song.id)")
+            }
+            
+            // Prioriza músicas da biblioteca caso estejam carregadas
+            let songToUse: SongItem
+            if let found = librarySongs.first(where: { $0.id == it.song.id }) {
+                songToUse = found
+            } else {
+                songToUse = it.song
+            }
+            restoredSongs.append(SetlistSong(song: songToUse, transitionType: it.transitionType))
+        }
+        
+        self.setlist = restoredSongs
+        self.currentSetlistFilePath = url.path
+        self.currentSetlistName = docName
+        self.addRecentSetlistPath(url.path)
+        UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
+        UserDefaults.standard.synchronize()
+        
+        if let first = restoredSongs.first {
+            self.loadSong(first.song)
+        } else {
+            self.currentSong = nil
+            self.currentCues = []
+            self.fullWaveform = []
+        }
+        
+        if !isInitialRestore {
+            showUndoFeedback("Setlist '\(docName)' carregada!")
+        }
+        return true
+    }
+    
+    func getRecentSetlistPaths() -> [String] {
+        let list = UserDefaults.standard.stringArray(forKey: "recent_setlist_paths") ?? []
+        return list.filter { FileManager.default.fileExists(atPath: $0) }
+    }
+    
+    func addRecentSetlistPath(_ path: String) {
+        var list = UserDefaults.standard.stringArray(forKey: "recent_setlist_paths") ?? []
+        list.removeAll(where: { $0 == path })
+        list.insert(path, at: 0)
+        if list.count > 10 {
+            list = Array(list.prefix(10))
+        }
+        UserDefaults.standard.set(list, forKey: "recent_setlist_paths")
+        UserDefaults.standard.synchronize()
+    }
+    
+    func clearRecentSetlists() {
+        UserDefaults.standard.removeObject(forKey: "recent_setlist_paths")
+        UserDefaults.standard.synchronize()
+        showUndoFeedback("Histórico de setlists recentes limpo.")
     }
     
     func fetchSetlistSongs(retryCount: Int = 0) {
@@ -1335,7 +1610,7 @@ struct SetlistDropDelegate: DropDelegate {
 // ==========================================
 
 struct PlaybackAppView: View {
-    @StateObject var state = PlaybackState()
+    @ObservedObject var state: PlaybackState = PlaybackState.shared
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1724,26 +1999,48 @@ struct TopBarView: View {
             
             Spacer()
             
-            // Área Direita: Apenas Botão Remote (QR)
-            Button(action: { state.isQrModalPresented = true }) {
+            // Área Direita: Indicador de Setlist Atual + Botão Remote (QR)
+            HStack(spacing: 10) {
+                // Indicador / Badge do Setlist Atual
                 HStack(spacing: 6) {
-                    Image(systemName: "qrcode")
-                        .font(.system(size: 13, weight: .bold))
-                    Text("Remote")
+                    Image(systemName: "music.note.list")
                         .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(state.currentSetlistFilePath != nil ? Color.cyan : Color.gray)
+                    Text(state.currentSetlistName)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .lineLimit(1)
                 }
-                .foregroundColor(Color.purple.opacity(0.95))
+                .padding(.horizontal, 10)
                 .frame(height: 36)
-                .padding(.horizontal, 12)
-                .background(Color.purple.opacity(0.18))
+                .background(Color.white.opacity(0.06))
                 .cornerRadius(8)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.purple.opacity(0.45), lineWidth: 1)
+                        .stroke(state.currentSetlistFilePath != nil ? Color.cyan.opacity(0.3) : Color.white.opacity(0.12), lineWidth: 1)
                 )
+                .help(state.currentSetlistFilePath ?? "Setlist não salvo em arquivo (Use menu File -> Save Setlist)")
+                
+                Button(action: { state.isQrModalPresented = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Remote")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(Color.purple.opacity(0.95))
+                    .frame(height: 36)
+                    .padding(.horizontal, 12)
+                    .background(Color.purple.opacity(0.18))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.purple.opacity(0.45), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Connect smartphone remote control via QR Code")
             }
-            .buttonStyle(PlainButtonStyle())
-            .help("Connect smartphone remote control via QR Code")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -4125,8 +4422,9 @@ struct SongEditorSheetView: View {
 // 11. INICIALIZAÇÃO NATIVA APPKIT
 // ==========================================
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
+    private var recentSetlistsSubmenu: NSMenu?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -4141,7 +4439,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         
         window.center()
-        window.title = "VS Control"
+        updateWindowTitle()
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
@@ -4177,7 +4475,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu
         
-        // 2. Window Menu (Cmd+W para fechar janela, Cmd+M para minimizar)
+        // 2. File Menu (Setlists: New, Open, Open Recent, Save, Save As)
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        
+        // New Setlist (Cmd+N)
+        let newItem = NSMenuItem(title: "New Setlist", action: #selector(newSetlistAction), keyEquivalent: "n")
+        newItem.target = self
+        fileMenu.addItem(newItem)
+        
+        // Open Setlist (Cmd+O)
+        let openItem = NSMenuItem(title: "Open Setlist...", action: #selector(openSetlistAction), keyEquivalent: "o")
+        openItem.target = self
+        fileMenu.addItem(openItem)
+        
+        // Open Recent Submenu
+        let recentMenuItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        let recentMenu = NSMenu(title: "Open Recent")
+        recentMenu.delegate = self
+        recentMenuItem.submenu = recentMenu
+        fileMenu.addItem(recentMenuItem)
+        self.recentSetlistsSubmenu = recentMenu
+        rebuildRecentSetlistsMenu(recentMenu)
+        
+        fileMenu.addItem(NSMenuItem.separator())
+        
+        // Save Setlist (Cmd+S)
+        let saveItem = NSMenuItem(title: "Save Setlist", action: #selector(saveSetlistAction), keyEquivalent: "s")
+        saveItem.target = self
+        fileMenu.addItem(saveItem)
+        
+        // Save Setlist As... (Shift+Cmd+S)
+        let saveAsItem = NSMenuItem(title: "Save Setlist As...", action: #selector(saveSetlistAsAction), keyEquivalent: "S")
+        saveAsItem.keyEquivalentModifierMask = [.command, .shift]
+        saveAsItem.target = self
+        fileMenu.addItem(saveAsItem)
+        
+        fileMenuItem.submenu = fileMenu
+        
+        // 3. Window Menu (Cmd+W para fechar janela, Cmd+M para minimizar)
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
@@ -4188,6 +4525,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenuItem.submenu = windowMenu
         
         NSApp.mainMenu = mainMenu
+    }
+    
+    // NSMenuDelegate
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu == recentSetlistsSubmenu {
+            rebuildRecentSetlistsMenu(menu)
+        }
+    }
+    
+    private func rebuildRecentSetlistsMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let recents = PlaybackState.shared.getRecentSetlistPaths()
+        if recents.isEmpty {
+            let emptyItem = NSMenuItem(title: "No Recent Setlists", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+        } else {
+            for path in recents {
+                let url = URL(fileURLWithPath: path)
+                let displayName = url.deletingPathExtension().lastPathComponent
+                let item = NSMenuItem(title: displayName, action: #selector(openRecentItemAction(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = path
+                item.toolTip = path
+                menu.addItem(item)
+            }
+            menu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear Menu", action: #selector(clearRecentMenuAction), keyEquivalent: "")
+            clearItem.target = self
+            menu.addItem(clearItem)
+        }
+    }
+    
+    @objc func newSetlistAction() {
+        PlaybackState.shared.newSetlist()
+        updateWindowTitle()
+    }
+    
+    @objc func openSetlistAction() {
+        PlaybackState.shared.openSetlistDialog { [weak self] in
+            self?.updateWindowTitle()
+        }
+    }
+    
+    @objc func saveSetlistAction() {
+        PlaybackState.shared.saveSetlist { [weak self] in
+            self?.updateWindowTitle()
+        }
+    }
+    
+    @objc func saveSetlistAsAction() {
+        PlaybackState.shared.saveSetlistAs { [weak self] in
+            self?.updateWindowTitle()
+        }
+    }
+    
+    @objc func openRecentItemAction(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        PlaybackState.shared.loadSetlistFrom(url: URL(fileURLWithPath: path))
+        updateWindowTitle()
+    }
+    
+    @objc func clearRecentMenuAction() {
+        PlaybackState.shared.clearRecentSetlists()
+    }
+    
+    func updateWindowTitle() {
+        let name = PlaybackState.shared.currentSetlistName
+        let display = name.isEmpty ? "VS Control" : "\(name) — VS Control"
+        window?.title = display
+        if let path = PlaybackState.shared.currentSetlistFilePath {
+            window?.representedURL = URL(fileURLWithPath: path)
+        } else {
+            window?.representedURL = nil
+        }
     }
 }
 
