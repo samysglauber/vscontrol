@@ -3704,6 +3704,70 @@ struct RealWaveformPeaksView: View {
 // ==========================================
 // 8. FADER ESTILO PLAYBACK (CONSOLE CHANNEL STRIP)
 // ==========================================
+
+// MOUSE TRACKING DEDICADO DO FADER (IMPEDE ARRASTO DA JANELA MAC VIA mouseDownCanMoveWindow = false)
+struct FaderMouseTrackingView: NSViewRepresentable {
+    @Binding var volume: Double
+    let maxVolume: Double = 1.5
+    let capWidth: CGFloat = 18.0
+    let onVolumeChange: () -> Void
+    
+    func makeNSView(context: Context) -> FaderTrackingNSView {
+        let view = FaderTrackingNSView()
+        view.capWidth = capWidth
+        view.onChanged = { [self] newProg in
+            self.volume = round((newProg * self.maxVolume) * 100) / 100.0
+            self.onVolumeChange()
+        }
+        view.onDoubleClick = { [self] in
+            self.volume = 1.0
+            self.onVolumeChange()
+        }
+        return view
+    }
+    
+    func updateNSView(_ nsView: FaderTrackingNSView, context: Context) {
+        nsView.capWidth = capWidth
+        nsView.onChanged = { [self] newProg in
+            self.volume = round((newProg * self.maxVolume) * 100) / 100.0
+            self.onVolumeChange()
+        }
+        nsView.onDoubleClick = { [self] in
+            self.volume = 1.0
+            self.onVolumeChange()
+        }
+    }
+    
+    class FaderTrackingNSView: NSView {
+        var onChanged: ((Double) -> Void)?
+        var onDoubleClick: (() -> Void)?
+        var capWidth: CGFloat = 18.0
+        
+        override var mouseDownCanMoveWindow: Bool { false }
+        
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                onDoubleClick?()
+                return
+            }
+            updateFromLocation(event.locationInWindow)
+        }
+        
+        override func mouseDragged(with event: NSEvent) {
+            updateFromLocation(event.locationInWindow)
+        }
+        
+        private func updateFromLocation(_ locInWindow: NSPoint) {
+            let localPoint = convert(locInWindow, from: nil)
+            let w = bounds.width
+            let travel = max(1.0, w - capWidth)
+            let touchX = localPoint.x - (capWidth / 2)
+            let progress = max(0.0, min(1.0, Double(touchX / travel)))
+            onChanged?(progress)
+        }
+    }
+}
+
 struct ChannelHeaderView: View {
     let title: String
     let subtitle: String
@@ -3712,24 +3776,23 @@ struct ChannelHeaderView: View {
     
     var body: some View {
         HStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(accentColor.opacity(0.16))
-                    .frame(width: 28, height: 28)
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(accentColor)
-            }
-            VStack(alignment: .leading, spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(accentColor)
+                .frame(width: 26, height: 26)
+                .background(accentColor.opacity(0.12))
+                .clipShape(Circle())
+            
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                 Text(subtitle)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(Color.gray)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(Color.gray.opacity(0.85))
             }
         }
-        .frame(width: 115, alignment: .leading)
+        .frame(width: 95, alignment: .leading)
     }
 }
 
@@ -3739,16 +3802,24 @@ struct MuteButtonView: View {
     
     var body: some View {
         Button(action: onToggle) {
-            Text("M")
-                .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                .foregroundColor(isMuted ? Color.white : Color.white.opacity(0.40))
-                .frame(width: 24, height: 24)
-                .background(isMuted ? Color(red: 0.90, green: 0.25, blue: 0.25) : Color.white.opacity(0.06))
-                .cornerRadius(5)
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(isMuted ? Color.red : Color.white.opacity(0.12), lineWidth: 1))
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isMuted ? Color(red: 0.85, green: 0.20, blue: 0.20) : Color.white.opacity(0.06))
+                    .frame(width: 26, height: 26)
+                
+                Text("M")
+                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                    .foregroundColor(isMuted ? .white : Color.white.opacity(0.45))
+            }
+            .frame(width: 26, height: 26)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isMuted ? Color.red.opacity(0.8) : Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: isMuted ? Color.red.opacity(0.4) : Color.clear, radius: 4)
         }
         .buttonStyle(PlainButtonStyle())
-        .help("Mute channel")
+        .help(isMuted ? "Unmute channel" : "Mute channel")
     }
 }
 
@@ -3830,15 +3901,16 @@ struct FaderValueBadgeView: View {
     let dbText: String
     
     var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(isMuted ? "MUTE" : "\(Int(volume * 100))%")
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(isMuted ? "MUTED" : dbText)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(isMuted ? Color.red.opacity(0.9) : Color.white)
-            Text(dbText)
+                .foregroundColor(isMuted ? Color.red.opacity(0.95) : Color.white)
+            
+            Text(isMuted ? "--" : "\(Int(volume * 100))%")
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundColor(isMuted ? Color.red.opacity(0.6) : Color.gray)
         }
-        .frame(width: 48, alignment: .trailing)
+        .frame(width: 52, alignment: .trailing)
     }
 }
 
@@ -3851,6 +3923,22 @@ struct PlaybackFaderView: View {
     @Binding var isMuted: Bool
     let onMuteToggle: () -> Void
     let onVolumeChange: () -> Void
+    
+    private let trackWidth: CGFloat = 145.0
+    private let faderCapWidth: CGFloat = 18.0
+    
+    private var availableTravel: CGFloat {
+        max(1.0, trackWidth - faderCapWidth)
+    }
+    
+    private var capOffset: CGFloat {
+        let progress = CGFloat(max(0.0, min(1.5, volume)) / 1.5)
+        return progress * availableTravel
+    }
+    
+    private var unityX: CGFloat {
+        (1.0 / 1.5) * availableTravel + (faderCapWidth / 2)
+    }
     
     private var dbText: String {
         if isMuted { return "MUTED" }
@@ -3866,74 +3954,57 @@ struct PlaybackFaderView: View {
             
             MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
             
-            GeometryReader { geo in
-                let trackWidth: CGFloat = max(40.0, geo.size.width)
-                let faderCapWidth: CGFloat = 18.0
-                let availableTravel: CGFloat = max(1.0, trackWidth - faderCapWidth)
-                let progress: CGFloat = CGFloat(max(0.0, min(1.5, volume)) / 1.5)
-                let capOffset: CGFloat = progress * availableTravel
-                let unityX: CGFloat = (1.0 / 1.5) * availableTravel + (faderCapWidth / 2)
-                
+            // Fader Area com visual de console analógico e tracking sem arrasto da janela
+            ZStack(alignment: .leading) {
+                // Camada Visual (Fenda + Marcação de 0dB + Knob Metálico)
                 ZStack(alignment: .leading) {
-                    // Fenda mecânica contínua profunda (Slot de fader de console de mixagem analógico)
-                    ZStack(alignment: .leading) {
-                        // Linha discreta de ganho unitário (0 dB / 100%) atrás da fenda
-                        Rectangle()
-                            .fill(Color.white.opacity(0.18))
-                            .frame(width: 1, height: 10)
-                            .offset(x: unityX - 0.5)
-                        
-                        // Fenda escura contínua com borda chanfrada realista
-                        Capsule()
-                            .fill(Color.black)
-                            .frame(height: 3.5)
-                            .overlay(
-                                Capsule()
-                                    .stroke(
-                                        LinearGradient(
-                                            colors: [Color.black, Color.white.opacity(0.14)],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        ),
-                                        lineWidth: 0.8
-                                    )
-                            )
-                            .shadow(color: Color.black.opacity(0.9), radius: 1, y: 1)
-                    }
+                    // Linha discreta de ganho unitário (0 dB / 100%)
+                    Rectangle()
+                        .fill(Color.white.opacity(0.20))
+                        .frame(width: 1, height: 10)
+                        .offset(x: unityX - 0.5)
                     
-                    // Knob do Fader com visual de hardware
+                    // Fenda mecânica preta contínua chanfrada
+                    Capsule()
+                        .fill(Color.black)
+                        .frame(width: trackWidth, height: 3.5)
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [Color.black, Color.white.opacity(0.14)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 0.8
+                                )
+                        )
+                        .shadow(color: Color.black.opacity(0.95), radius: 1, y: 1)
+                    
+                    // Fader Cap Knob
                     FaderCapKnobView(accentColor: accentColor, isMuted: isMuted)
                         .offset(x: capOffset)
                 }
-                .frame(height: geo.size.height)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { val in
-                            let touchX = val.location.x - (faderCapWidth / 2)
-                            let newProg = max(0.0, min(1.0, Double(touchX / availableTravel)))
-                            self.volume = round((newProg * 1.5) * 100) / 100.0
-                            onVolumeChange()
-                        }
-                        .onEnded { _ in
-                            onVolumeChange()
-                        }
-                )
-                .simultaneousGesture(
-                    TapGesture(count: 2).onEnded {
-                        self.volume = 1.0
-                        onVolumeChange()
-                    }
-                )
+                .frame(width: trackWidth, height: 32)
+                
+                // Camada de Tracking de Mouse (NSView que desativa o arraste da janela do macOS)
+                FaderMouseTrackingView(volume: $volume, onVolumeChange: onVolumeChange)
+                    .frame(width: trackWidth, height: 32)
             }
-            .frame(width: 140, height: 32)
+            .frame(width: 145, height: 32)
             
             FaderValueBadgeView(isMuted: isMuted, volume: volume, dbText: dbText)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(white: 0.12).opacity(0.85)))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(isMuted ? Color.red.opacity(0.35) : Color.white.opacity(0.07), lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isMuted ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -3944,11 +4015,11 @@ struct BottomMixerDock: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             // Canal L: CLICK & GUIA
             PlaybackFaderView(
-                title: "CLICK / CUE",
-                subtitle: "Ableton CLICK (L)",
+                title: "CLICK",
+                subtitle: "Guide / Click (L)",
                 icon: "headphones",
                 accentColor: Color.cyan,
                 volume: $state.clickVol,
@@ -3960,7 +4031,7 @@ struct BottomMixerDock: View {
             // Canal R: VS INSTRUMENTOS
             PlaybackFaderView(
                 title: "VS TRACKS",
-                subtitle: "Ableton VS (R)",
+                subtitle: "Audio Out (R)",
                 icon: "waveform",
                 accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
                 volume: $state.vsVol,
@@ -3969,13 +4040,13 @@ struct BottomMixerDock: View {
                 onVolumeChange: { state.sendVolumes() }
             )
             
-            Spacer()
+            Spacer(minLength: 12)
             
-            // Controle de Zoom da Timeline (Visão Geral 100% ou Zoom In)
+            // Controle de Zoom da Timeline elegante e discreto
             HStack(spacing: 8) {
                 Image(systemName: "minus.magnifyingglass")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.gray.opacity(0.5) : Color.white.opacity(0.75))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.white.opacity(0.25) : Color.white.opacity(0.70))
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             state.zoomLevel = max(0.0, state.zoomLevel - 0.2)
@@ -3984,12 +4055,12 @@ struct BottomMixerDock: View {
                     .help("Zoom Out")
                 
                 Slider(value: $state.zoomLevel, in: 0.0...1.0)
-                    .frame(width: 85)
+                    .frame(width: 80)
                     .accentColor(.cyan)
                 
                 Image(systemName: "plus.magnifyingglass")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.gray.opacity(0.5) : Color.cyan)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.white.opacity(0.25) : Color.cyan)
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             state.zoomLevel = min(1.0, state.zoomLevel + 0.2)
@@ -3997,7 +4068,6 @@ struct BottomMixerDock: View {
                     }
                     .help("Zoom In")
                 
-                // Botão Rápido: Alterna entre FIT (música toda visível) e ZOOM
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         if state.zoomLevel < 0.05 {
@@ -4008,32 +4078,35 @@ struct BottomMixerDock: View {
                     }
                 }) {
                     Text(state.zoomLevel < 0.05 ? "ZOOM" : "FIT")
-                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.9))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.25) : Color.white.opacity(0.12))
-                        .cornerRadius(4)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.85))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
+                        .cornerRadius(5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(state.zoomLevel < 0.05 ? "Restaurar Zoom Normal" : "Ajustar Música Toda na Tela (Fit)")
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(white: 0.12).opacity(0.85))
-            .cornerRadius(9)
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.08), lineWidth: 1))
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
             
-            // Seletor Minimalista de Saída de Áudio (Persistente)
+            // Seletor de Saída de Áudio elegante e integrado
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Color.cyan)
                 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("OUTPUT DEVICE")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundColor(Color.gray)
+                    Text("OUTPUT")
+                        .font(.system(size: 8, weight: .black))
+                        .foregroundColor(Color.gray.opacity(0.75))
                     
                     Picker("", selection: $state.selectedDeviceId) {
                         ForEach(state.devices) { dev in
@@ -4043,21 +4116,26 @@ struct BottomMixerDock: View {
                     }
                     .labelsHidden()
                     .pickerStyle(MenuPickerStyle())
-                    .frame(width: 175)
+                    .frame(width: 160)
                     .onChange(of: state.selectedDeviceId) { _, newId in
                         state.setAudioDevice(id: newId, save: true)
                     }
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(white: 0.12).opacity(0.85))
-            .cornerRadius(9)
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.08), lineWidth: 1))
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(Color(red: 0.10, green: 0.10, blue: 0.11))
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.11, green: 0.11, blue: 0.13), Color(red: 0.08, green: 0.08, blue: 0.09)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 }
 
