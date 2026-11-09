@@ -2465,7 +2465,7 @@ struct SetlistCarouselView: View {
                             }
                             .frame(width: 160, height: 88)
                             
-                            // Info da Música Embaixo (Nome + Tom, exatamente como no Playback)
+                            // Info da Música Embaixo (Apenas o Nome da Música)
                             HStack(alignment: .center, spacing: 4) {
                                 if isSelected {
                                     Image(systemName: "play.fill")
@@ -2473,7 +2473,7 @@ struct SetlistCarouselView: View {
                                         .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
                                 }
                                 
-                                Text("\(item.song.name) (\(item.song.displayKey))")
+                                Text(item.song.name)
                                     .font(.system(size: 11, weight: isSelected ? .bold : .medium))
                                     .foregroundColor(isSelected ? .white : Color.white.opacity(0.85))
                                     .lineLimit(1)
