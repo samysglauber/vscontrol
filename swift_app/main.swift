@@ -1852,175 +1852,171 @@ struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        HStack(spacing: 20) {
-            // Métricas (BPM com decimal e Compasso)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(formatBpm(state.bpm))
-                    .font(.system(size: 18, weight: .black, design: .monospaced))
-                    .foregroundColor(.white)
-                Text(state.timeSignature)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.gray)
-            }
-            .frame(minWidth: 48, alignment: .leading)
-            
-            // Clock Principal (Sem contador duplicado)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(formatTime(state.currentSeconds))
-                    .font(.system(size: 26, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                Text("/ \(formatTime(state.totalSeconds))")
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(.gray)
-            }
-            
-            Spacer()
-            
-            // Botões de Transporte Padronizados (Quadrados com cantos levemente arredondados 36x36, cornerRadius 8)
-            HStack(spacing: 10) {
-                // 1. Botão Restart (Branco)
-                Button(action: { state.restart() }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "backward.end.fill")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .frame(width: 36, height: 36)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
+        VStack(spacing: 0) {
+            // Linha 1: Barra de Título (Na mesma linha do semáforo de fechar/minimizar do macOS)
+            ZStack {
+                // Nome do Setlist Salvo Centralizado (Acima dos controles centrais)
+                HStack {
+                    Spacer()
+                    Text(state.currentSetlistName)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white.opacity(0.92))
+                        .lineLimit(1)
+                    Spacer()
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help("Restart song from beginning")
-                
-                // 2. Botão Play / Pause
-                Button(action: { state.playPause() }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.25) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(Color(red: 0.19, green: 0.82, blue: 0.60))
-                    }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
+            }
+            .frame(height: 28)
+            .padding(.top, 4)
+            
+            // Linha 2: Métricas, Controles Centrais de Transporte e Remote
+            HStack(spacing: 20) {
+                // Métricas (BPM com decimal e Compasso)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(formatBpm(state.bpm))
+                        .font(.system(size: 18, weight: .black, design: .monospaced))
+                        .foregroundColor(.white)
+                    Text(state.timeSignature)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.gray)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .keyboardShortcut(.space, modifiers: [])
-                .help("Play / Pause [Espaço]")
+                .frame(minWidth: 48, alignment: .leading)
                 
-                // 3. Botão FADE STOP com Ícone de Curva DAW
-                Button(action: { state.fadeStop(duration: 3.0) }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.isFadingOut ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        FadeOutCurveIcon(
-                            color: state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white : Color.white.opacity(0.40)),
-                            isFading: state.isFadingOut
+                // Clock Principal (Sem contador duplicado)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(formatTime(state.currentSeconds))
+                        .font(.system(size: 26, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    Text("/ \(formatTime(state.totalSeconds))")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                // Botões de Transporte Padronizados (Quadrados com cantos levemente arredondados 36x36, cornerRadius 8)
+                HStack(spacing: 10) {
+                    // 1. Botão Restart (Branco)
+                    Button(action: { state.restart() }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: "backward.end.fill")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Restart song from beginning")
+                    
+                    // 2. Botão Play / Pause
+                    Button(action: { state.playPause() }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.25) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(Color(red: 0.19, green: 0.82, blue: 0.60))
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.isPlaying ? Color(red: 0.19, green: 0.82, blue: 0.60).opacity(0.55) : Color.white.opacity(0.12), lineWidth: 1)
                         )
                     }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.isFadingOut ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!state.isPlaying && !state.isFadingOut)
-                .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
-                
-                // 4. Botão Loop da Seção Atual
-                Button(action: { state.toggleLoop() }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.loopActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "repeat")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(state.loopActive ? Color.cyan : Color.white.opacity(0.65))
+                    .buttonStyle(PlainButtonStyle())
+                    .keyboardShortcut(.space, modifiers: [])
+                    .help("Play / Pause [Espaço]")
+                    
+                    // 3. Botão FADE STOP com Ícone de Curva DAW
+                    Button(action: { state.fadeStop(duration: 3.0) }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.isFadingOut ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            FadeOutCurveIcon(
+                                color: state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white : Color.white.opacity(0.40)),
+                                isFading: state.isFadingOut
+                            )
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.isFadingOut ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.loopActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Loop current section (L)")
-                
-                // 5. Botão AUTO (Auto-Advance do Setlist)
-                Button(action: { state.autoAdvance.toggle() }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Text("AUTO")
-                            .font(.system(size: 9, weight: .black, design: .monospaced))
-                            .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(!state.isPlaying && !state.isFadingOut)
+                    .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
+                    
+                    // 4. Botão Loop da Seção Atual
+                    Button(action: { state.toggleLoop() }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.loopActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: "repeat")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(state.loopActive ? Color.cyan : Color.white.opacity(0.65))
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.loopActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Auto-Advance: automatically play next track when current song finishes")
-                
-                // 6. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        state.isEditMode.toggle()
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Loop current section (L)")
+                    
+                    // 5. Botão AUTO (Auto-Advance do Setlist)
+                    Button(action: { state.autoAdvance.toggle() }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Text("AUTO")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
-                }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Text(state.isEditMode ? "DONE" : "EDIT")
-                            .font(.system(size: 9, weight: .black, design: .monospaced))
-                            .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Auto-Advance: automatically play next track when current song finishes")
+                    
+                    // 6. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            state.isEditMode.toggle()
+                        }
+                    }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Text(state.isEditMode ? "DONE" : "EDIT")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
+                    .buttonStyle(PlainButtonStyle())
+                    .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
-            }
-            
-            Spacer()
-            
-            // Área Direita: Indicador de Setlist Atual + Botão Remote (QR)
-            HStack(spacing: 10) {
-                // Indicador / Badge do Setlist Atual
-                HStack(spacing: 6) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(state.currentSetlistFilePath != nil ? Color.cyan : Color.gray)
-                    Text(state.currentSetlistName)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 36)
-                .background(Color.white.opacity(0.06))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(state.currentSetlistFilePath != nil ? Color.cyan.opacity(0.3) : Color.white.opacity(0.12), lineWidth: 1)
-                )
-                .help(state.currentSetlistFilePath ?? "Setlist não salvo em arquivo (Use menu File -> Save Setlist)")
                 
+                Spacer()
+                
+                // Área Direita: Botão Remote (QR)
                 Button(action: { state.isQrModalPresented = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "qrcode")
@@ -2041,9 +2037,9 @@ struct TopBarView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help("Connect smartphone remote control via QR Code")
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
     
@@ -4442,6 +4438,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateWindowTitle()
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
