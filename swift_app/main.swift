@@ -952,6 +952,10 @@ class PlaybackState: ObservableObject {
         if isFadingOut {
             isFadingOut = false
         }
+        if isPlaying {
+            // Cancelar salto enfileirado ao pausar
+            queuedCueIdx = nil
+        }
         let action = isPlaying ? "pause" : "play"
         sendAction(action)
     }
@@ -961,6 +965,7 @@ class PlaybackState: ObservableObject {
         guard index >= 0 && index < setlist.count else { return }
         let target = setlist[index].song
         if isFadingOut { isFadingOut = false }
+        queuedCueIdx = nil
         triggerScrollToStart()
         if currentSong?.id == target.id {
             restart()
@@ -975,17 +980,21 @@ class PlaybackState: ObservableObject {
     func fadeStop(duration: Double = 3.0) {
         guard isPlaying else { return }
         isFadingOut = true
+        queuedCueIdx = nil
         sendAction("fade_stop", body: ["duration": duration])
     }
     
     func restart() {
         if isFadingOut { isFadingOut = false }
+        queuedCueIdx = nil
+        focusedCueIdx = nil
         triggerScrollToStart()
         sendAction("seek", body: ["seconds": 0.0])
     }
     
     func seekToSeconds(_ sec: Double) {
         if isFadingOut { isFadingOut = false }
+        queuedCueIdx = nil
         sendAction("seek", body: ["seconds": sec])
     }
     
@@ -2377,6 +2386,31 @@ struct RightClickRepresentable: NSViewRepresentable {
     }
 }
 
+// Overlay Pulsante dedicado exclusivamente para o bloco agendado para salto quantizado (Laranja)
+struct QueuedJumpPulsingOverlay: View {
+    @State private var isPulsing: Bool = false
+    
+    var body: some View {
+        ZStack {
+            // Preenchimento laranja pulsante suave
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(red: 0.95, green: 0.50, blue: 0.10).opacity(isPulsing ? 0.38 : 0.14))
+                .padding(2)
+            
+            // Borda laranja pulsante evidente
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(isPulsing ? 1.0 : 0.55), lineWidth: isPulsing ? 2.8 : 1.8)
+                .padding(2)
+                .shadow(color: Color.orange.opacity(isPulsing ? 0.90 : 0.35), radius: isPulsing ? 8 : 3)
+        }
+        .onAppear {
+            withAnimation(Animation.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+        }
+    }
+}
+
 // Bloco de Seção Sobreposto (Divisões, Métricas e Controles sobre a Onda Contínua)
 struct WaveformSectionBlock: View {
     @ObservedObject var state: PlaybackState
@@ -2389,8 +2423,6 @@ struct WaveformSectionBlock: View {
     let width: CGFloat
     let onSelect: () -> Void
     let onLoopToggle: () -> Void
-    
-    @State private var isPulsing: Bool = false
     
     let cueTypes = ["Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
     
@@ -2501,11 +2533,8 @@ struct WaveformSectionBlock: View {
                                 }
                             )
                     } else if isQueued {
-                        // Bloco selecionado para salto: cor laranja evidente pulsando
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.orange.opacity(isPulsing ? 1.0 : 0.60), lineWidth: isPulsing ? 2.8 : 1.8)
-                            .padding(2)
-                            .shadow(color: Color.orange.opacity(isPulsing ? 0.90 : 0.40), radius: isPulsing ? 8 : 3)
+                        // APENAS o bloco em laranja (salto quantizado) fica pulsando
+                        QueuedJumpPulsingOverlay()
                     } else if isFocused {
                         // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
                         RoundedRectangle(cornerRadius: 8)
@@ -2513,7 +2542,7 @@ struct WaveformSectionBlock: View {
                             .padding(2)
                             .shadow(color: Color.white.opacity(0.7), radius: 6)
                     } else {
-                        // Borda sutil com a cor da seção (mais discreta e sutil)
+                        // Borda sutil estática com a cor da seção (sem pulsar)
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(badgeColor.opacity(0.28), lineWidth: 1.2)
                             .padding(2)
@@ -2524,24 +2553,6 @@ struct WaveformSectionBlock: View {
         .buttonStyle(PlainButtonStyle())
         .frame(width: width, height: 175)
         .clipped()
-        .onAppear {
-            if isQueued {
-                withAnimation(Animation.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
-                    isPulsing = true
-                }
-            }
-        }
-        .onChange(of: isQueued) { _, queued in
-            if queued {
-                withAnimation(Animation.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
-                    isPulsing = true
-                }
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isPulsing = false
-                }
-            }
-        }
         .modifier(RightClickModifier(action: {
             state.quickEditingCueIdx = index
         }))
@@ -2564,7 +2575,7 @@ struct WaveformSectionBlock: View {
             return Color(red: 0.10, green: 0.40, blue: 0.22).opacity(0.35)
         }
         if isQueued {
-            return Color(red: 0.95, green: 0.50, blue: 0.10).opacity(isPulsing ? 0.35 : 0.14)
+            return Color.clear // QueuedJumpPulsingOverlay gerencia o preenchimento e brilho laranja
         }
         if isFocused {
             // Fundo de destaque branco translúcido elegante
@@ -3462,20 +3473,20 @@ struct QuickSectionEditPopoverView: View {
                     .buttonStyle(PlainButtonStyle())
                     .help("Split section in two (Cut with dashed line)")
                     
-                    // Botão Unir Seção com o Bloco à Esquerda
+                    // Botão Unir Seção com o Bloco à Esquerda (Em Vermelho)
                     if state.currentCues.count > 1 {
                         Button(action: {
                             state.deleteSection(at: cueIndex)
                         }) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.orange.opacity(0.18))
+                                    .fill(Color.red.opacity(0.18))
                                     .frame(width: 36, height: 36)
                                 Image(systemName: "arrow.left.to.line.compact")
                                     .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(Color.orange)
+                                    .foregroundColor(Color(red: 1.0, green: 0.35, blue: 0.35))
                             }
-                            .overlay(Circle().stroke(Color.orange.opacity(0.35), lineWidth: 1.5))
+                            .overlay(Circle().stroke(Color.red.opacity(0.35), lineWidth: 1.5))
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help(cueIndex == 0 ? "Unir seção com a próxima" : "Unir com o bloco à esquerda")

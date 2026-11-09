@@ -194,8 +194,12 @@ class LiveAudioEngine:
             self.is_playing = False
             self.fade_stop_active = False
             self.xfade_tail = None
+            self.queued_cue_idx = None
+            self.queued_jump = None
+            self.guide_lead_in = None
             self._stop_stream()
         self._notify_event("play_state", {"is_playing": False})
+        self._notify_event("cue_queued", {"queued_cue_idx": None})
 
     def stop(self):
         """Para e volta ao início."""
@@ -210,6 +214,7 @@ class LiveAudioEngine:
             self.fade_stop_active = False
             self._stop_stream()
         self._notify_event("play_state", {"is_playing": False, "pos_frame": 0})
+        self._notify_event("cue_queued", {"queued_cue_idx": None})
 
     def fade_stop(self, duration_sec: float = 3.0):
         """Inicia um fade-out gradual e para a reprodução suavemente ao final."""
@@ -233,6 +238,7 @@ class LiveAudioEngine:
             self.fade_stop_active = False
             self._update_current_cue_idx()
         self._notify_event("seek", {"pos_frame": self.pos_frame, "seconds": seconds})
+        self._notify_event("cue_queued", {"queued_cue_idx": None})
 
     def get_sec_per_bar(self) -> float:
         """Calcula a duração em segundos de 1 compasso inteiro."""
