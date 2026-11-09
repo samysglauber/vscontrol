@@ -1633,6 +1633,7 @@ struct PlaybackAppView: View {
             BottomMixerDock(state: state)
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+        .edgesIgnoringSafeArea(.top)
         .sheet(isPresented: $state.isAddSongSheetPresented) {
             AddSongSheetView(state: state)
         }
@@ -1852,7 +1853,21 @@ struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        HStack(spacing: 20) {
+        VStack(spacing: 0) {
+            // Linha 1: Barra de Título Nativa Customizada (Alinhada perfeitamente na mesma linha horizontal dos botões de fechar/minimizar/expandir do macOS)
+            HStack {
+                Spacer()
+                Text(state.currentSetlistName.isEmpty ? "VS Control" : state.currentSetlistName)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 80)
+            .frame(height: 32)
+            
+            // Linha 2: Métricas, Controles Centrais de Transporte e Remote
+            HStack(spacing: 20) {
                 // Métricas (BPM com decimal e Compasso)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formatBpm(state.bpm))
@@ -2019,9 +2034,11 @@ struct TopBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Connect smartphone remote control via QR Code")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+            .padding(.bottom, 12)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
     
@@ -4419,7 +4436,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         window.center()
         window.title = PlaybackState.shared.currentSetlistName.isEmpty ? "VS Control" : PlaybackState.shared.currentSetlistName
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
