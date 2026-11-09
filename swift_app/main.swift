@@ -2260,6 +2260,12 @@ class HorizontalScrollNSView: NSView {
     var monitor: Any?
     var onUserScrolled: (() -> Void)?
     
+    // Drag-to-scroll com mouse sobre o espectrograma
+    var dragStartWindowX: CGFloat? = nil
+    var dragStartScrollX: CGFloat = 0.0
+    var isMouseDragging: Bool = false
+    var hasPushedCursor: Bool = false
+    
     func scrollToStart() {
         if targetScrollView == nil {
             findScrollView()
@@ -2298,7 +2304,7 @@ class HorizontalScrollNSView: NSView {
     
     func setupMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self = self, let window = self.window, event.window == window else {
                 return event
             }
@@ -2309,9 +2315,73 @@ class HorizontalScrollNSView: NSView {
             
             let mouseInWindow = event.locationInWindow
             let mouseInSV = sv.convert(mouseInWindow, from: nil)
+            let isInsideSV = sv.bounds.contains(mouseInSV)
             
-            // Verifica se o cursor está sobre os limites do espectrograma
-            if sv.bounds.contains(mouseInSV) {
+            // 1. Início de Clique / Arraste com o Mouse
+            if event.type == .leftMouseDown {
+                if isInsideSV {
+                    self.dragStartWindowX = mouseInWindow.x
+                    self.dragStartScrollX = sv.contentView.bounds.origin.x
+                    self.isMouseDragging = false
+                } else {
+                    self.dragStartWindowX = nil
+                    self.isMouseDragging = false
+                }
+                return event
+            }
+            
+            // 2. Arrastar o Mouse sobre o Espectrograma (Scroll Pan Fluido 1:1)
+            if event.type == .leftMouseDragged {
+                if let startX = self.dragStartWindowX {
+                    let deltaX = mouseInWindow.x - startX
+                    if self.isMouseDragging || abs(deltaX) > 4.0 {
+                        if !self.isMouseDragging {
+                            self.isMouseDragging = true
+                            NSCursor.closedHand.push()
+                            self.hasPushedCursor = true
+                        }
+                        let clipView = sv.contentView
+                        let docWidth = sv.documentView?.frame.width ?? 0
+                        let maxOffsetX = max(0, docWidth - clipView.bounds.width)
+                        
+                        if maxOffsetX > 0 {
+                            let targetX = max(0, min(maxOffsetX, self.dragStartScrollX - deltaX))
+                            var origin = clipView.bounds.origin
+                            origin.x = targetX
+                            clipView.scroll(to: origin)
+                            sv.reflectScrolledClipView(clipView)
+                            
+                            DispatchQueue.main.async {
+                                self.onUserScrolled?()
+                            }
+                        }
+                        return nil // Consome o evento para evitar seleção de texto ou arrasto padrão
+                    }
+                }
+                return event
+            }
+            
+            // 3. Fim do Clique / Arraste
+            if event.type == .leftMouseUp {
+                if self.hasPushedCursor {
+                    NSCursor.pop()
+                    self.hasPushedCursor = false
+                }
+                if self.isMouseDragging {
+                    self.isMouseDragging = false
+                    self.dragStartWindowX = nil
+                    DispatchQueue.main.async {
+                        self.onUserScrolled?()
+                    }
+                    return nil // Consome o mouseUp para não acionar o clique do bloco acidentalmente
+                }
+                self.dragStartWindowX = nil
+                self.isMouseDragging = false
+                return event
+            }
+            
+            // 4. Roda do Mouse e Trackpad
+            if event.type == .scrollWheel && isInsideSV {
                 let deltaY = event.scrollingDeltaY
                 let deltaX = event.scrollingDeltaX
                 
@@ -2350,6 +2420,10 @@ class HorizontalScrollNSView: NSView {
     }
     
     func removeMonitor() {
+        if hasPushedCursor {
+            NSCursor.pop()
+            hasPushedCursor = false
+        }
         if let m = monitor {
             NSEvent.removeMonitor(m)
             monitor = nil
@@ -2477,7 +2551,23 @@ struct SpectrogramWaveformView: View {
                             }
                             .frame(width: totalTrackWidth, height: 175)
                             
-                            // 5. PLAYHEAD VERMELHO ALINHADO COM PRECISÃO
+                            // 5. LINHAS DIVISÓRIAS VERTICAIS DE ALTO CONTRASTE ENTRE TODOS OS TRECHOS
+                            let dividerPositions = calculateDividerPositions(blockWidths: blockWidths)
+                            ForEach(Array(dividerPositions.enumerated()), id: \.offset) { _, xPos in
+                                ZStack {
+                                    // Borda / sombra escura para garantir contraste total mesmo sobre a onda de áudio branca
+                                    Rectangle()
+                                        .fill(Color.black.opacity(0.85))
+                                        .frame(width: 2.5, height: 175)
+                                    // Linha branca nítida no centro exato da divisão
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.95))
+                                        .frame(width: 1.2, height: 175)
+                                }
+                                .position(x: xPos, y: 175 / 2)
+                            }
+                            
+                            // 6. PLAYHEAD VERMELHO ALINHADO COM PRECISÃO
                             if state.totalSeconds > 0 {
                                 Rectangle()
                                     .fill(Color.red)
@@ -2606,6 +2696,18 @@ struct SpectrogramWaveformView: View {
             widths[widths.count - 1] = max(10, totalTrackWidth - sumExceptLast)
         }
         return widths
+    }
+    
+    private func calculateDividerPositions(blockWidths: [CGFloat]) -> [CGFloat] {
+        guard blockWidths.count > 1 else { return [] }
+        var positions: [CGFloat] = []
+        var runningSum: CGFloat = 0.0
+        // Cada divisor fica na soma exata das larguras dos blocos anteriores (fronteira exata)
+        for i in 0..<(blockWidths.count - 1) {
+            runningSum += blockWidths[i]
+            positions.append(runningSum)
+        }
+        return positions
     }
 }
 
@@ -2779,13 +2881,6 @@ struct WaveformSectionBlock: View {
                 .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))
                 .padding(.trailing, max(2, min(6, (width - 24) / 4)))
                 .padding(.top, 6)
-                
-                // Linha Divisória Vertical Evidente entre os Trechos (Borda esquerda exata do bloco)
-                if index > 0 {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 1.5, height: 175)
-                }
             }
             .frame(width: width, height: 175)
             .clipped()
