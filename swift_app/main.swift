@@ -138,9 +138,10 @@ func colorForCue(name: String) -> String {
     if upper.contains("COUNT") || upper.contains("CONTAGEM") { return "#64748b" }
     if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") { return "#fb7185" }
     if upper.contains("PRE") || upper.contains("PRÉ") { return "#eab308" }
-    if upper.contains("CHORUS") || upper.contains("REFRÃO") { return "#ef4444" }
+    if upper.contains("CHORUS") || upper.contains("REFRÃO") || upper.contains("CORO") { return "#ef4444" }
     if upper.contains("BRIDGE") || upper.contains("PONTE") { return "#f97316" }
     if upper.contains("INTRO") { return "#38bdf8" }
+    if upper.contains("INSTRUMENTAL") || upper.contains("INST") { return "#10b981" }
     if upper.contains("VERSE") || upper.contains("VERSO") { return "#a855f7" }
     if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return "#06b6d4" }
     if upper.contains("SOLO") { return "#06b6d4" }
@@ -628,25 +629,21 @@ class PlaybackState: ObservableObject {
         let panel = NSSavePanel()
         panel.title = "Save Setlist"
         panel.message = "Escolha o nome e local para salvar este Setlist"
+        panel.canCreateDirectories = true
+        panel.allowsOtherFileTypes = true
         if let vsetType = UTType(filenameExtension: "vset") {
             panel.allowedContentTypes = [vsetType, .json]
         } else {
             panel.allowedContentTypes = [.json]
         }
-        panel.canCreateDirectories = true
         let defaultName = (currentSetlistName.isEmpty || currentSetlistName == "Untitled Setlist") ? "Setlist 1.vset" : "\(currentSetlistName).vset"
         panel.nameFieldStringValue = defaultName
         panel.directoryURL = defaultSetlistsFolder
         
-        if let win = NSApp.keyWindow ?? NSApp.windows.first {
-            panel.beginSheetModal(for: win) { response in
-                if response == .OK, let url = panel.url {
-                    self.saveSetlistTo(url: url, notify: true, completion: completion)
-                }
-            }
-        } else {
-            let response = panel.runModal()
-            if response == .OK, let url = panel.url {
+        NSApp.activate(ignoringOtherApps: true)
+        let response = panel.runModal()
+        if response == .OK, let url = panel.url {
+            DispatchQueue.main.async {
                 self.saveSetlistTo(url: url, notify: true, completion: completion)
             }
         }
@@ -688,6 +685,7 @@ class PlaybackState: ObservableObject {
                 self.addRecentSetlistPath(url.path)
                 UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
                 UserDefaults.standard.synchronize()
+                self.saveSetlistState()
                 
                 if notify {
                     self.showUndoFeedback("Setlist '\(docName)' salva com sucesso!")
@@ -707,26 +705,21 @@ class PlaybackState: ObservableObject {
         let panel = NSOpenPanel()
         panel.title = "Open Setlist"
         panel.message = "Selecione um arquivo de Setlist (.vset ou .json) para abrir"
-        if let vsetType = UTType(filenameExtension: "vset") {
-            panel.allowedContentTypes = [vsetType, .json]
-        } else {
-            panel.allowedContentTypes = [.json]
-        }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        panel.allowsOtherFileTypes = true
+        if let vsetType = UTType(filenameExtension: "vset") {
+            panel.allowedContentTypes = [vsetType, .json, .data]
+        } else {
+            panel.allowedContentTypes = [.json, .data]
+        }
         panel.directoryURL = defaultSetlistsFolder
         
-        if let win = NSApp.keyWindow ?? NSApp.windows.first {
-            panel.beginSheetModal(for: win) { response in
-                if response == .OK, let url = panel.url {
-                    self.loadSetlistFrom(url: url)
-                    completion?()
-                }
-            }
-        } else {
-            let response = panel.runModal()
-            if response == .OK, let url = panel.url {
+        NSApp.activate(ignoringOtherApps: true)
+        let response = panel.runModal()
+        if response == .OK, let url = panel.url {
+            DispatchQueue.main.async {
                 self.loadSetlistFrom(url: url)
                 completion?()
             }
@@ -785,23 +778,28 @@ class PlaybackState: ObservableObject {
             restoredSongs.append(SetlistSong(song: songToUse, transitionType: it.transitionType))
         }
         
-        self.setlist = restoredSongs
-        self.currentSetlistFilePath = url.path
-        self.currentSetlistName = docName
-        self.addRecentSetlistPath(url.path)
-        UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
-        UserDefaults.standard.synchronize()
-        
-        if let first = restoredSongs.first {
-            self.loadSong(first.song)
-        } else {
-            self.currentSong = nil
-            self.currentCues = []
-            self.fullWaveform = []
-        }
-        
-        if !isInitialRestore {
-            showUndoFeedback("Setlist '\(docName)' carregada!")
+        DispatchQueue.main.async {
+            self.setlist = restoredSongs
+            self.currentSetlistFilePath = url.path
+            self.currentSetlistName = docName
+            self.addRecentSetlistPath(url.path)
+            UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
+            UserDefaults.standard.synchronize()
+            self.saveSetlistState()
+            
+            if let first = restoredSongs.first {
+                self.loadSong(first.song)
+            } else {
+                self.currentSong = nil
+                self.currentCues = []
+                self.fullWaveform = []
+            }
+            
+            self.fetchSetlistSongs()
+            
+            if !isInitialRestore {
+                self.showUndoFeedback("Setlist '\(docName)' carregada!")
+            }
         }
         return true
     }
@@ -2701,7 +2699,7 @@ struct WaveformSectionBlock: View {
     let onSelect: () -> Void
     let onLoopToggle: () -> Void
     
-    let cueTypes = ["Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
+    let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
     
     var body: some View {
         Button(action: onSelect) {
@@ -3529,8 +3527,8 @@ struct QuickSectionEditPopoverView: View {
     let cueIndex: Int
     
     let cueTypes = [
-        "Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", 
-        "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", 
+        "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
+        "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
         "Bridge", "Solo", "Tag", "Outro"
     ]
     
@@ -3842,8 +3840,8 @@ struct SongEditorSheetView: View {
     
     let timeSignatureOptions = ["4/4", "2/4", "3/4", "6/8"]
     let cueTypeOptions = [
-        "Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", 
-        "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", 
+        "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
+        "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
         "Bridge", "Solo", "Tag", "Outro"
     ]
     @State private var customEditingIdx: Int? = nil
@@ -4576,8 +4574,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     @objc func openRecentItemAction(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
-        PlaybackState.shared.loadSetlistFrom(url: URL(fileURLWithPath: path))
-        updateWindowTitle()
+        DispatchQueue.main.async {
+            PlaybackState.shared.loadSetlistFrom(url: URL(fileURLWithPath: path))
+            self.updateWindowTitle()
+        }
     }
     
     @objc func clearRecentMenuAction() {

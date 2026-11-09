@@ -24,5 +24,42 @@
     <false/>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>VS Control Setlist</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.samysglauber.vscontrol.setlist</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.samysglauber.vscontrol.setlist</string>
+            <key>UTTypeDescription</key>
+            <string>VS Control Setlist</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>vset</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

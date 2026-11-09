@@ -11,6 +11,158 @@ import json
 import numpy as np
 import soundfile as sf
 
+_vosk_models = {}
+
+def get_vosk_models():
+    """Carrega os modelos leves de voz PT e EN uma única vez (cached)."""
+    global _vosk_models
+    if "pt" not in _vosk_models or "en" not in _vosk_models:
+        try:
+            import vosk
+            vosk.SetLogLevel(-1)
+            if "pt" not in _vosk_models:
+                _vosk_models["pt"] = vosk.Model(lang="pt")
+            if "en" not in _vosk_models:
+                _vosk_models["en"] = vosk.Model(lang="en-us")
+        except Exception as e:
+            pass
+    return _vosk_models
+
+def classify_spoken_text(text: str) -> str | None:
+    if not text:
+        return None
+    t = text.lower().strip()
+    
+    # Pré-refrão / Pre-Chorus
+    if any(k in t for k in ["pré", "pre", "pre-chorus", "pré-refrão", "pre chorus"]):
+        return "Pre-Chorus"
+        
+    # Pós-refrão / Post-Chorus
+    if any(k in t for k in ["pós", "pos", "post", "post-chorus", "pos-refrão"]):
+        return "Post Chorus"
+        
+    # Refrão / Coro / Chorus
+    if any(k in t for k in ["refrão", "refrao", "chorus", "coro", "refra"]):
+        return "Chorus"
+        
+    # Ponte / Bridge
+    if any(k in t for k in ["ponte", "bridge"]):
+        return "Bridge"
+        
+    # Instrumental
+    if any(k in t for k in ["instrumental", "instru", "instrument"]):
+        return "Instrumental"
+        
+    # Interlúdio / Interlude
+    if any(k in t for k in ["interlúdio", "interludio", "interlude", "inter"]):
+        return "Interlude"
+        
+    # Solo
+    if any(k in t for k in ["solo"]):
+        return "Solo"
+        
+    # Tag
+    if any(k in t for k in ["tag"]):
+        return "Tag"
+        
+    # Final / Outro / Termina
+    if any(k in t for k in ["final", "outro", "termina", "fim", "ending", "corta"]):
+        return "Outro"
+        
+    # Verso / Verse com numeração específica
+    if any(k in t for k in ["verso um", "verso 1", "primeiro verso", "verse one", "verse 1"]):
+        return "Verse 1"
+    if any(k in t for k in ["verso dois", "verso 2", "segundo verso", "verse two", "verse 2"]):
+        return "Verse 2"
+    if any(k in t for k in ["verso três", "verso 3", "terceiro verso", "verse three", "verse 3"]):
+        return "Verse 3"
+    if any(k in t for k in ["verso quatro", "verso 4", "verse four", "verse 4"]):
+        return "Verse 4"
+        
+    # Verso sem número / Verse (ou berço fonético comum em áudios com ruído)
+    if any(k in t for k in ["verso", "verse", "berço", "berco"]):
+        return "Verse"
+        
+    return None
+
+def recognize_voice_burst(audio_left: np.ndarray, sr: int, start_sec: float, end_sec: float) -> str | None:
+    """
+    Reconhece o comando de voz falado pela voz guia na faixa esquerda (L)
+    usando modelos offline leves em Português e Inglês.
+    """
+    models = get_vosk_models()
+    if not models:
+        return None
+        
+    s_f = max(0, int((start_sec - 0.25) * sr))
+    e_f = min(len(audio_left), int((end_sec + 0.35) * sr))
+    if e_f <= s_f:
+        return None
+        
+    chunk = audio_left[s_f:e_f]
+    target_len = int(len(chunk) * 16000 / sr)
+    if target_len < 1600:
+        return None
+        
+    resampled = np.interp(np.linspace(0, len(chunk), target_len, endpoint=False), np.arange(len(chunk)), chunk)
+    int16_pcm = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    
+    import vosk
+    
+    # 1. Tenta reconhecer em Português primeiro (maioria dos VSs)
+    if "pt" in models:
+        try:
+            rec_pt = vosk.KaldiRecognizer(models["pt"], 16000)
+            rec_pt.AcceptWaveform(int16_pcm)
+            res = json.loads(rec_pt.FinalResult())
+            classified = classify_spoken_text(res.get("text", ""))
+            if classified:
+                return classified
+        except Exception:
+            pass
+            
+    # 2. Tenta reconhecer em Inglês
+    if "en" in models:
+        try:
+            rec_en = vosk.KaldiRecognizer(models["en"], 16000)
+            rec_en.AcceptWaveform(int16_pcm)
+            res = json.loads(rec_en.FinalResult())
+            classified = classify_spoken_text(res.get("text", ""))
+            if classified:
+                return classified
+        except Exception:
+            pass
+            
+    return None
+
+def color_for_name(name: str) -> str:
+    upper = name.upper()
+    if "COUNT" in upper or "CONTAGEM" in upper:
+        return "#64748b"
+    if "POST" in upper or "PÓS" in upper:
+        return "#fb7185"
+    if "PRE" in upper or "PRÉ" in upper:
+        return "#eab308"
+    if "CHORUS" in upper or "REFRÃO" in upper or "CORO" in upper:
+        return "#ef4444"
+    if "BRIDGE" in upper or "PONTE" in upper:
+        return "#f97316"
+    if "INTRO" in upper or "INTRODUÇÃO" in upper:
+        return "#38bdf8"
+    if "INSTRUMENTAL" in upper:
+        return "#10b981"
+    if "VERSE" in upper or "VERSO" in upper:
+        return "#a855f7"
+    if "INTERLUDE" in upper or "INTERLÚDIO" in upper:
+        return "#06b6d4"
+    if "SOLO" in upper:
+        return "#06b6d4"
+    if "TAG" in upper:
+        return "#ec4899"
+    if "OUTRO" in upper or "FINAL" in upper:
+        return "#64748b"
+    return "#3b82f6"
+
 def extract_bpm_from_filename(filename: str) -> float | None:
     """Extrai o BPM a partir do nome do arquivo."""
     match = re.search(r'\((\d+(?:[.,]\d+)?)\s*bpm\)', filename, re.IGNORECASE)
@@ -298,7 +450,9 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
             continue
             
         if target_time - last_cue_time >= min_section_duration and target_time < total_seconds - sec_per_bar:
-            candidate_bars.append((target_bar, target_time))
+            burst_start_time = burst[0][1]
+            burst_end_time = burst[-1][1] + sec_per_beat
+            candidate_bars.append((target_bar, target_time, burst_start_time, burst_end_time))
             last_cue_time = target_time
 
     if len(candidate_bars) == 0:
@@ -321,12 +475,24 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
         chorus_count = 0
         has_bridge = False
         
-        for i, (target_bar, target_time) in enumerate(candidate_bars):
+        for i, (target_bar, target_time, burst_start, burst_end) in enumerate(candidate_bars):
             sec_idx = i + 2  # 0 é Count-In, 1 é Intro
             sec_energy = all_section_energies[sec_idx] if sec_idx < len(all_section_energies) else med_energy
             is_last = (i == len(candidate_bars) - 1)
             
-            if is_last and target_time > total_seconds - (sec_per_bar * 8):
+            # Reconhecimento inteligente da fala da voz guia (Português e Inglês)
+            spoken = recognize_voice_burst(left, sr, burst_start, burst_end)
+            
+            if spoken:
+                name = spoken
+                color = color_for_name(name)
+                if "Chorus" in name:
+                    chorus_count += 1
+                elif "Bridge" in name:
+                    has_bridge = True
+                elif "Verse" in name:
+                    verse_count += 1
+            elif is_last and target_time > total_seconds - (sec_per_bar * 8):
                 name = "Outro"
                 color = "#64748b"
             elif sec_energy > med_energy * 1.28:
@@ -391,9 +557,10 @@ def default_cues(total_seconds: float, bpm: float, sec_per_bar: float) -> list[d
         ("Verse 1", max(7, int(bars * 0.12)), "#a855f7"),
         ("Verse 2", max(13, int(bars * 0.25)), "#a855f7"),
         ("Chorus", max(21, int(bars * 0.40)), "#ef4444"),
-        ("Bridge", max(29, int(bars * 0.65)), "#f97316"),
-        ("Chorus", max(37, int(bars * 0.80)), "#ef4444"),
-        ("Outro", max(41, int(bars * 0.92)), "#64748b"),
+        ("Instrumental", max(29, int(bars * 0.55)), "#10b981"),
+        ("Bridge", max(37, int(bars * 0.70)), "#f97316"),
+        ("Chorus", max(45, int(bars * 0.82)), "#ef4444"),
+        ("Outro", max(51, int(bars * 0.92)), "#64748b"),
     ]
     cues = []
     for i, (name, bar, color) in enumerate(sections):
