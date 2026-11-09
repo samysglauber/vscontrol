@@ -2174,6 +2174,19 @@ struct FadeOutCurveShape: Shape {
     }
 }
 
+struct WindowTitlebarDragView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowDragNSView { WindowDragNSView() }
+    func updateNSView(_ nsView: WindowDragNSView, context: Context) {}
+    
+    class WindowDragNSView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+}
+
 struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
@@ -2190,6 +2203,7 @@ struct TopBarView: View {
             }
             .padding(.horizontal, 80)
             .frame(height: 32)
+            .background(WindowTitlebarDragView())
             
             // Linha 2: Métricas, Controles Centrais de Transporte e Remote
             HStack(spacing: 20) {
@@ -2829,8 +2843,28 @@ class WaveformScrollController {
     var dragStartOriginX: CGFloat = 0
     var isDragging: Bool = false
     
+    func getScrollView() -> NSScrollView? {
+        if let sv = scrollView { return sv }
+        if let win = NSApp.keyWindow ?? NSApp.windows.first {
+            func findSV(in view: NSView) -> NSScrollView? {
+                if let sv = view as? NSScrollView { return sv }
+                for sub in view.subviews {
+                    if let found = findSV(in: sub) { return found }
+                }
+                return nil
+            }
+            if let root = win.contentView {
+                if let found = findSV(in: root) {
+                    self.scrollView = found
+                    return found
+                }
+            }
+        }
+        return nil
+    }
+    
     func onDragChanged(translationX: CGFloat) {
-        guard let sv = scrollView else { return }
+        guard let sv = getScrollView() else { return }
         if !isDragging {
             isDragging = true
             dragStartOriginX = sv.contentView.bounds.origin.x
@@ -2853,6 +2887,15 @@ class WaveformScrollController {
             NSCursor.pop()
             isDragging = false
         }
+    }
+}
+
+struct WaveformMouseTrackingView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WaveformTrackingNSView { WaveformTrackingNSView() }
+    func updateNSView(_ nsView: WaveformTrackingNSView, context: Context) {}
+    
+    class WaveformTrackingNSView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
     }
 }
 
@@ -2888,11 +2931,7 @@ class HorizontalScrollNSView: NSView {
     var monitor: Any?
     var onUserScrolled: (() -> Void)?
     
-    // Drag-to-scroll com mouse sobre o espectrograma
-    var dragStartWindowX: CGFloat? = nil
-    var dragStartScrollX: CGFloat = 0.0
-    var isMouseDragging: Bool = false
-    var hasPushedCursor: Bool = false
+    override var mouseDownCanMoveWindow: Bool { false }
     
     func scrollToStart() {
         if targetScrollView == nil {
@@ -2933,7 +2972,7 @@ class HorizontalScrollNSView: NSView {
     
     func setupMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
             guard let self = self, let window = self.window, event.window == window else {
                 return event
             }
@@ -2946,76 +2985,11 @@ class HorizontalScrollNSView: NSView {
             let mouseInSV = sv.convert(mouseInWindow, from: nil)
             let isInsideSV = sv.bounds.contains(mouseInSV)
             
-            // 1. Início de Clique / Arraste com o Mouse
-            if event.type == .leftMouseDown {
-                if isInsideSV {
-                    self.dragStartWindowX = mouseInWindow.x
-                    self.dragStartScrollX = sv.contentView.bounds.origin.x
-                    self.isMouseDragging = false
-                } else {
-                    self.dragStartWindowX = nil
-                    self.isMouseDragging = false
-                }
-                return event
-            }
-            
-            // 2. Arrastar o Mouse sobre o Espectrograma (Scroll Pan Fluido 1:1)
-            if event.type == .leftMouseDragged {
-                if let startX = self.dragStartWindowX {
-                    let deltaX = mouseInWindow.x - startX
-                    if self.isMouseDragging || abs(deltaX) > 4.0 {
-                        if !self.isMouseDragging {
-                            self.isMouseDragging = true
-                            NSCursor.closedHand.push()
-                            self.hasPushedCursor = true
-                        }
-                        let clipView = sv.contentView
-                        let docWidth = sv.documentView?.frame.width ?? 0
-                        let maxOffsetX = max(0, docWidth - clipView.bounds.width)
-                        
-                        if maxOffsetX > 0 {
-                            let targetX = max(0, min(maxOffsetX, self.dragStartScrollX - deltaX))
-                            var origin = clipView.bounds.origin
-                            origin.x = targetX
-                            clipView.scroll(to: origin)
-                            sv.reflectScrolledClipView(clipView)
-                            
-                            DispatchQueue.main.async {
-                                self.onUserScrolled?()
-                            }
-                        }
-                        return nil // Consome o evento para evitar seleção de texto ou arrasto padrão
-                    }
-                }
-                return event
-            }
-            
-            // 3. Fim do Clique / Arraste
-            if event.type == .leftMouseUp {
-                if self.hasPushedCursor {
-                    NSCursor.pop()
-                    self.hasPushedCursor = false
-                }
-                if self.isMouseDragging {
-                    self.isMouseDragging = false
-                    self.dragStartWindowX = nil
-                    DispatchQueue.main.async {
-                        self.onUserScrolled?()
-                    }
-                    return nil // Consome o mouseUp para não acionar o clique do bloco acidentalmente
-                }
-                self.dragStartWindowX = nil
-                self.isMouseDragging = false
-                return event
-            }
-            
-            // 4. Roda do Mouse e Trackpad
+            // Roda do Mouse e Trackpad
             if event.type == .scrollWheel && isInsideSV {
                 let deltaY = event.scrollingDeltaY
                 let deltaX = event.scrollingDeltaX
                 
-                // Prioriza deltaX se tiver valor (Shift+Scroll ou Trackpad horizontal)
-                // Caso contrário converte o deltaY da rodinha para horizontal
                 var horizontalDelta: CGFloat = 0.0
                 if abs(deltaX) > 0.001 {
                     horizontalDelta = deltaX
@@ -3049,10 +3023,6 @@ class HorizontalScrollNSView: NSView {
     }
     
     func removeMonitor() {
-        if hasPushedCursor {
-            NSCursor.pop()
-            hasPushedCursor = false
-        }
         if let m = monitor {
             NSEvent.removeMonitor(m)
             monitor = nil
@@ -3199,7 +3169,12 @@ struct SpectrogramWaveformView: View {
         }
         .frame(minHeight: 180, maxHeight: .infinity)
         .padding(.vertical, 8)
-        .background(Color(red: 0.07, green: 0.07, blue: 0.08))
+        .background(
+            ZStack {
+                Color(red: 0.07, green: 0.07, blue: 0.08)
+                WaveformMouseTrackingView()
+            }
+        )
         .overlay(
             Group {
                 if let msg = state.undoNotificationMessage {
@@ -4050,26 +4025,6 @@ struct BottomMixerDock: View {
                         }
                     }
                     .help("Zoom In")
-                
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        state.zoomLevel = (state.zoomLevel < 0.05) ? 1.0 : 0.0
-                    }
-                }) {
-                    Text(state.zoomLevel < 0.05 ? "ZOOM" : "FIT")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.75))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.20) : Color.white.opacity(0.06))
-                        .cornerRadius(4)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.4) : Color.white.opacity(0.10), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(state.zoomLevel < 0.05 ? "Restaurar Zoom Normal" : "Ajustar Música Toda na Tela (Fit)")
             }
             
             // Divisor vertical sutil
@@ -5292,7 +5247,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.title = PlaybackState.shared.currentSetlistName.isEmpty ? "VS Control" : PlaybackState.shared.currentSetlistName
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
