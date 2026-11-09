@@ -2551,21 +2551,17 @@ struct SpectrogramWaveformView: View {
                             }
                             .frame(width: totalTrackWidth, height: 175)
                             
-                            // 5. LINHAS DIVISÓRIAS VERTICAIS DE ALTO CONTRASTE ENTRE TODOS OS TRECHOS
+                            // 5. LINHAS DIVISÓRIAS VERTICAIS ENTRE TODOS OS TRECHOS (Alinhadas perfeitamente com os cartões)
                             let dividerPositions = calculateDividerPositions(blockWidths: blockWidths)
-                            ForEach(Array(dividerPositions.enumerated()), id: \.offset) { _, xPos in
-                                ZStack {
-                                    // Borda / sombra escura para garantir contraste total mesmo sobre a onda de áudio branca
+                            ZStack(alignment: .leading) {
+                                ForEach(Array(dividerPositions.enumerated()), id: \.offset) { _, xPos in
                                     Rectangle()
-                                        .fill(Color.black.opacity(0.85))
-                                        .frame(width: 2.5, height: 175)
-                                    // Linha branca nítida no centro exato da divisão
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.95))
-                                        .frame(width: 1.2, height: 175)
+                                        .fill(Color.white.opacity(0.42))
+                                        .frame(width: 1.5, height: 171)
+                                        .position(x: xPos, y: 175 / 2)
                                 }
-                                .position(x: xPos, y: 175 / 2)
                             }
+                            .frame(width: totalTrackWidth, height: 175)
                             
                             // 6. PLAYHEAD VERMELHO ALINHADO COM PRECISÃO
                             if state.totalSeconds > 0 {
