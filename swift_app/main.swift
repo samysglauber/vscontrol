@@ -1051,8 +1051,25 @@ class PlaybackState: ObservableObject {
     
     func adjustSectionDuration(at index: Int, deltaBars: Double) {
         guard index >= 0 && index < currentCues.count else { return }
+        guard index + 1 < currentCues.count else {
+            // Último bloco da música: não possui bloco à direita para tomar ou ceder compassos
+            return
+        }
+        
         let curDuration = calculateDurationBars(for: index)
-        if curDuration + deltaBars < 0.5 { return }
+        let nextDuration = calculateDurationBars(for: index + 1)
+        
+        // Regra: Se for aumentar (+deltaBars), os compassos são tomados APENAS do bloco à direita (index + 1).
+        // Limite máximo: o bloco da direita deve ficar com no mínimo 1 compasso de tempo (>= 1.0).
+        if deltaBars > 0 {
+            if nextDuration - deltaBars < 0.999 { return }
+        }
+        
+        // Se for diminuir (-deltaBars), o bloco atual diminui e o bloco à direita expande para a esquerda.
+        // Limite mínimo: o bloco atual deve ficar com no mínimo 1 compasso de tempo (>= 1.0).
+        if deltaBars < 0 {
+            if curDuration + deltaBars < 0.999 { return }
+        }
         
         let deltaStr = deltaBars > 0 ? "+\(formatBars(deltaBars))" : "\(formatBars(deltaBars))"
         pushUndoSnapshot(description: "Ajuste de Compasso (\(deltaStr) comp)")
@@ -1061,12 +1078,12 @@ class PlaybackState: ObservableObject {
         let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
         let secPerBar = secPerBeat * beatsPerBar
         
-        // Desloca o início de todas as seções subsequentes
-        for i in (index + 1)..<currentCues.count {
-            let newBar = max(currentCues[i - 1].bar + 0.5, currentCues[i].bar + deltaBars)
-            currentCues[i].bar = newBar
-            currentCues[i].time = round(Double(newBar - 1.0) * secPerBar * 100) / 100
-        }
+        // Desloca APENAS a fronteira do bloco à direita (index + 1).
+        // Nenhuma outra seção subsequente (index + 2 em diante) é alterada!
+        let newBar = currentCues[index + 1].bar + deltaBars
+        currentCues[index + 1].bar = newBar
+        currentCues[index + 1].time = round(Double(newBar - 1.0) * secPerBar * 100) / 100
+        
         saveCurrentCues()
     }
     
@@ -1651,29 +1668,22 @@ struct TopBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Auto-Advance: automatically play next track when current song finishes")
-            }
-            
-            Spacer()
-            
-            // Área Direita: Botão Edit / Done e Botão Remote
-            HStack(spacing: 10) {
-                // Botão Edit / Done do Setlist
+                
+                // 7. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         state.isEditMode.toggle()
                     }
                 }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: state.isEditMode ? "checkmark" : "pencil")
-                            .font(.system(size: 11, weight: .bold))
-                        Text(state.isEditMode ? "Done" : "Edit")
-                            .font(.system(size: 11, weight: .bold))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
+                            .frame(width: 36, height: 36)
+                        Text(state.isEditMode ? "DONE" : "EDIT")
+                            .font(.system(size: 9, weight: .black, design: .monospaced))
+                            .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
                     }
-                    .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.85))
-                    .frame(height: 36)
-                    .padding(.horizontal, 12)
-                    .background(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
-                    .cornerRadius(8)
+                    .frame(width: 36, height: 36)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
@@ -1681,28 +1691,30 @@ struct TopBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
-                
-                // Botão Conectar Controle Remoto Mobile
-                Button(action: { state.isQrModalPresented = true }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "qrcode")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Remote")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(Color.purple.opacity(0.95))
-                    .frame(height: 36)
-                    .padding(.horizontal, 12)
-                    .background(Color.purple.opacity(0.18))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.purple.opacity(0.45), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Connect smartphone remote control via QR Code")
             }
+            
+            Spacer()
+            
+            // Área Direita: Apenas Botão Remote (QR)
+            Button(action: { state.isQrModalPresented = true }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Remote")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundColor(Color.purple.opacity(0.95))
+                .frame(height: 36)
+                .padding(.horizontal, 12)
+                .background(Color.purple.opacity(0.18))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.purple.opacity(0.45), lineWidth: 1)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Connect smartphone remote control via QR Code")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -3319,6 +3331,9 @@ struct QuickSectionEditPopoverView: View {
                 }
                 
                 // Duration in Bars with Stepper [-1] [-½] [ 8½ bars ] [+½] [+1]
+                let hasNext = cueIndex + 1 < state.currentCues.count
+                let nextDuration = hasNext ? state.calculateDurationBars(for: cueIndex + 1) : 0.0
+                
                 HStack {
                     Text("Duration")
                         .font(.system(size: 11, weight: .semibold))
@@ -3337,8 +3352,8 @@ struct QuickSectionEditPopoverView: View {
                                 .cornerRadius(5)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .disabled(curDuration <= 1.0)
-                        .help("Remove 1 whole bar (-1)")
+                        .disabled(!hasNext || curDuration - 1.0 < 0.999)
+                        .help("Remove 1 whole bar (right block expands left)")
                         
                         Button(action: {
                             state.adjustSectionDuration(at: cueIndex, deltaBars: -0.5)
@@ -3351,8 +3366,8 @@ struct QuickSectionEditPopoverView: View {
                                 .cornerRadius(5)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .disabled(curDuration <= 0.5)
-                        .help("Remove half bar (-½ comp / 2 tempos)")
+                        .disabled(!hasNext || curDuration - 0.5 < 0.999)
+                        .help("Remove half bar (right block expands left)")
                         
                         Text("\(formatBars(curDuration)) bars")
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -3370,7 +3385,8 @@ struct QuickSectionEditPopoverView: View {
                                 .cornerRadius(5)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Add half bar (+½ comp / 2 tempos - compasso quebrado)")
+                        .disabled(!hasNext || nextDuration - 0.5 < 0.999)
+                        .help("Add half bar (taken from right block, keeping min 1 bar)")
                         
                         Button(action: {
                             state.adjustSectionDuration(at: cueIndex, deltaBars: 1.0)
@@ -3383,7 +3399,8 @@ struct QuickSectionEditPopoverView: View {
                                 .cornerRadius(5)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Add 1 whole bar (+1)")
+                        .disabled(!hasNext || nextDuration - 1.0 < 0.999)
+                        .help("Add 1 whole bar (taken from right block, keeping min 1 bar)")
                     }
                 }
                 
