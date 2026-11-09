@@ -2820,8 +2820,42 @@ struct CoverResultCard: View {
 }
 
 // ==========================================
-// 7. HOOK DE SCROLL HORIZONTAL (RODA DO MOUSE, SHIFT+SCROLL & TRACKPAD)
+// 7. CONTROLADOR E HOOK DE SCROLL HORIZONTAL (ARRASTE COM MOUSE, RODA, TRACKPAD)
 // ==========================================
+
+class WaveformScrollController {
+    static let shared = WaveformScrollController()
+    weak var scrollView: NSScrollView?
+    var dragStartOriginX: CGFloat = 0
+    var isDragging: Bool = false
+    
+    func onDragChanged(translationX: CGFloat) {
+        guard let sv = scrollView else { return }
+        if !isDragging {
+            isDragging = true
+            dragStartOriginX = sv.contentView.bounds.origin.x
+            NSCursor.closedHand.push()
+        }
+        let clip = sv.contentView
+        let docWidth = sv.documentView?.frame.width ?? 0
+        let maxOffsetX = max(0, docWidth - clip.bounds.width)
+        guard maxOffsetX > 0 else { return }
+        
+        let targetX = max(0, min(maxOffsetX, dragStartOriginX - translationX))
+        var origin = clip.bounds.origin
+        origin.x = targetX
+        clip.scroll(to: origin)
+        sv.reflectScrolledClipView(clip)
+    }
+    
+    func onDragEnded() {
+        if isDragging {
+            NSCursor.pop()
+            isDragging = false
+        }
+    }
+}
+
 struct HorizontalScrollWheelHook: NSViewRepresentable {
     var onUserScrolled: (() -> Void)? = nil
     var resetTrigger: Int = 0
@@ -2890,6 +2924,7 @@ class HorizontalScrollNSView: NSView {
         while let parent = current?.superview {
             if let sv = parent as? NSScrollView {
                 self.targetScrollView = sv
+                WaveformScrollController.shared.scrollView = sv
                 return
             }
             current = parent
@@ -3104,6 +3139,18 @@ struct SpectrogramWaveformView: View {
                     .frame(height: 195)
                     .padding(.horizontal, 20)
                     .frame(minHeight: geo.size.height)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 3)
+                            .onChanged { val in
+                                lastUserScrollTime = Date()
+                                WaveformScrollController.shared.onDragChanged(translationX: val.translation.width)
+                            }
+                            .onEnded { _ in
+                                lastUserScrollTime = Date()
+                                WaveformScrollController.shared.onDragEnded()
+                            }
+                    )
                 }
                 .onChange(of: state.scrollToStartTrigger) { _, _ in
                     lastUserScrollTime = .distantPast
@@ -3199,7 +3246,7 @@ struct SpectrogramWaveformView: View {
         }
         
         let t = CGFloat(max(0.0, min(1.0, state.zoomLevel)))
-        return fitPxPerSec + (maxPxPerSec - fitPxPerSec) * t
+        return fitPxPerSec + (maxPxPerSec - fitPxPerSec) * (t * 0.30)
     }
     
     private func calculateBlockWidths(scale: CGFloat, totalTrackWidth: CGFloat) -> [CGFloat] {
@@ -3443,8 +3490,7 @@ struct WaveformSectionBlock: View, Equatable {
     let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
     
     var body: some View {
-        Button(action: onSelect) {
-            ZStack(alignment: .topLeading) {
+        ZStack(alignment: .topLeading) {
                 // Fundo translúcido com a cor de leve de cada parte (conforme foto de referência MultiTracks)
                 RoundedRectangle(cornerRadius: 8)
                     .fill(blockBgColor)
@@ -3557,8 +3603,10 @@ struct WaveformSectionBlock: View, Equatable {
                     }
                 }
             )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
         }
-        .buttonStyle(PlainButtonStyle())
         .frame(width: width, height: 175)
         .clipped()
         .modifier(RightClickModifier(action: {
@@ -4005,7 +4053,7 @@ struct BottomMixerDock: View {
                 
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        state.zoomLevel = (state.zoomLevel < 0.05) ? 0.35 : 0.0
+                        state.zoomLevel = (state.zoomLevel < 0.05) ? 1.0 : 0.0
                     }
                 }) {
                     Text(state.zoomLevel < 0.05 ? "ZOOM" : "FIT")
