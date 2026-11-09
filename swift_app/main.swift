@@ -1958,7 +1958,7 @@ struct PlaybackAppView: View {
             BottomMixerDock(state: state)
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
-        .edgesIgnoringSafeArea(.top)
+        .edgesIgnoringSafeArea(.all)
         .sheet(isPresented: $state.isAddSongSheetPresented) {
             AddSongSheetView(state: state)
         }
@@ -3103,6 +3103,7 @@ struct SpectrogramWaveformView: View {
                     }
                     .frame(height: 195)
                     .padding(.horizontal, 20)
+                    .frame(minHeight: geo.size.height)
                 }
                 .onChange(of: state.scrollToStartTrigger) { _, _ in
                     lastUserScrollTime = .distantPast
@@ -3149,8 +3150,8 @@ struct SpectrogramWaveformView: View {
                 }
             }
         }
-        .frame(height: 195)
-        .padding(.vertical, 16)
+        .frame(minHeight: 180, maxHeight: .infinity)
+        .padding(.vertical, 8)
         .background(Color(red: 0.07, green: 0.07, blue: 0.08))
         .overlay(
             Group {
@@ -4049,7 +4050,8 @@ struct BottomMixerDock: View {
             }
         }
         .padding(.horizontal, 22)
-        .padding(.vertical, 12)
+        .padding(.top, 9)
+        .padding(.bottom, 9)
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
     }
 }
@@ -5231,11 +5233,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let contentView = PlaybackAppView()
         
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 500),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        window.minSize = NSSize(width: 900, height: 440)
         
         window.center()
         window.title = PlaybackState.shared.currentSetlistName.isEmpty ? "VS Control" : PlaybackState.shared.currentSetlistName
