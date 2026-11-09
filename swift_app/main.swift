@@ -3709,7 +3709,7 @@ struct RealWaveformPeaksView: View {
 struct FaderMouseTrackingView: NSViewRepresentable {
     @Binding var volume: Double
     let maxVolume: Double = 1.5
-    let capWidth: CGFloat = 18.0
+    let capWidth: CGFloat = 16.0
     let onVolumeChange: () -> Void
     
     func makeNSView(context: Context) -> FaderTrackingNSView {
@@ -3741,7 +3741,7 @@ struct FaderMouseTrackingView: NSViewRepresentable {
     class FaderTrackingNSView: NSView {
         var onChanged: ((Double) -> Void)?
         var onDoubleClick: (() -> Void)?
-        var capWidth: CGFloat = 18.0
+        var capWidth: CGFloat = 16.0
         
         override var mouseDownCanMoveWindow: Bool { false }
         
@@ -3768,6 +3768,7 @@ struct FaderMouseTrackingView: NSViewRepresentable {
     }
 }
 
+// 8.1 CABEÇALHO DO CANAL (MINIMALISTA, SEM BUBBLES/CAIXAS)
 struct ChannelHeaderView: View {
     let title: String
     let subtitle: String
@@ -3777,143 +3778,85 @@ struct ChannelHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(accentColor)
-                .frame(width: 26, height: 26)
-                .background(accentColor.opacity(0.12))
-                .clipShape(Circle())
             
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
                 Text(subtitle)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(Color.gray.opacity(0.85))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(Color.gray)
             }
         }
-        .frame(width: 95, alignment: .leading)
+        .frame(width: 85, alignment: .leading)
     }
 }
 
+// 8.2 BOTÃO MUTE DISCRETO
 struct MuteButtonView: View {
     let isMuted: Bool
     let onToggle: () -> Void
     
     var body: some View {
         Button(action: onToggle) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isMuted ? Color(red: 0.85, green: 0.20, blue: 0.20) : Color.white.opacity(0.06))
-                    .frame(width: 26, height: 26)
-                
-                Text("M")
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
-                    .foregroundColor(isMuted ? .white : Color.white.opacity(0.45))
-            }
-            .frame(width: 26, height: 26)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isMuted ? Color.red.opacity(0.8) : Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .shadow(color: isMuted ? Color.red.opacity(0.4) : Color.clear, radius: 4)
+            Text("M")
+                .font(.system(size: 10, weight: .black, design: .monospaced))
+                .foregroundColor(isMuted ? .white : Color.white.opacity(0.40))
+                .frame(width: 22, height: 22)
+                .background(isMuted ? Color(red: 0.85, green: 0.25, blue: 0.25) : Color.white.opacity(0.06))
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isMuted ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)
+                )
         }
         .buttonStyle(PlainButtonStyle())
         .help(isMuted ? "Unmute channel" : "Mute channel")
     }
 }
 
+// 8.3 FADER CAP MINIMALISTA (SÓLIDO, MATTE, SEM GRADIENTES OU SOMBRAS PESADAS)
 struct FaderCapKnobView: View {
     let accentColor: Color
     let isMuted: Bool
     
     var body: some View {
         ZStack {
-            // Corpo do Fader Cap Metálico Escovado com Curvatura Cilíndrica e Sombras 3D
-            RoundedRectangle(cornerRadius: 4.5)
-                .fill(
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color(white: 0.20), location: 0.0),
-                            .init(color: Color(white: 0.38), location: 0.15),
-                            .init(color: Color(white: 0.44), location: 0.34),
-                            .init(color: Color(white: 0.28), location: 0.48),
-                            .init(color: Color(white: 0.28), location: 0.52),
-                            .init(color: Color(white: 0.44), location: 0.66),
-                            .init(color: Color(white: 0.38), location: 0.85),
-                            .init(color: Color(white: 0.20), location: 1.0)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(width: 18, height: 30)
+            // Corpo retangular minimalista e sólido com bordas suaves
+            RoundedRectangle(cornerRadius: 3.5)
+                .fill(Color(white: 0.28))
+                .frame(width: 16, height: 26)
                 .overlay(
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color.white.opacity(0.32), location: 0.0),
-                            .init(color: Color.clear, location: 0.22),
-                            .init(color: Color.clear, location: 0.78),
-                            .init(color: Color.black.opacity(0.40), location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 4.5))
+                    RoundedRectangle(cornerRadius: 3.5)
+                        .stroke(Color.white.opacity(0.20), lineWidth: 1)
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4.5)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.08), Color.black.opacity(0.55)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 0.8
-                        )
-                )
-                .shadow(color: Color.black.opacity(0.85), radius: 5, x: 0, y: 2.5)
-                .shadow(color: Color.black.opacity(0.50), radius: 2, x: 0, y: 1)
             
-            // Rebaixo escuro central do entalhe
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.black.opacity(0.65))
-                .frame(width: 3.2, height: 22)
-            
-            // Linha indicadora central prateada/branca brilhante realista
-            Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: isMuted ? [Color.red.opacity(0.85), Color.red.opacity(0.65)] : [Color.white, Color(white: 0.88)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: 1.8, height: 20)
+            // Traço central limpo e nítido
+            Rectangle()
+                .fill(isMuted ? Color(red: 0.90, green: 0.25, blue: 0.25) : Color.white)
+                .frame(width: 1.5, height: 16)
         }
-        .frame(width: 18, height: 30)
+        .frame(width: 16, height: 26)
     }
 }
 
+// 8.4 VALOR DE VOLUME (MINIMALISTA)
 struct FaderValueBadgeView: View {
     let isMuted: Bool
     let volume: Double
     let dbText: String
     
     var body: some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(isMuted ? "MUTED" : dbText)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(isMuted ? Color.red.opacity(0.95) : Color.white)
-            
-            Text(isMuted ? "--" : "\(Int(volume * 100))%")
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundColor(isMuted ? Color.red.opacity(0.6) : Color.gray)
-        }
-        .frame(width: 52, alignment: .trailing)
+        Text(isMuted ? "MUTE" : dbText)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundColor(isMuted ? Color(red: 0.90, green: 0.30, blue: 0.30) : Color.white.opacity(0.85))
+            .frame(width: 48, alignment: .trailing)
     }
 }
 
+// 8.5 PLAYBACK FADER STRIP (SEAMLESS, SEM CAIXA/CARD FLUTUANTE)
 struct PlaybackFaderView: View {
     let title: String
     let subtitle: String
@@ -3924,8 +3867,8 @@ struct PlaybackFaderView: View {
     let onMuteToggle: () -> Void
     let onVolumeChange: () -> Void
     
-    private let trackWidth: CGFloat = 145.0
-    private let faderCapWidth: CGFloat = 18.0
+    private let trackWidth: CGFloat = 140.0
+    private let faderCapWidth: CGFloat = 16.0
     
     private var availableTravel: CGFloat {
         max(1.0, trackWidth - faderCapWidth)
@@ -3954,72 +3897,53 @@ struct PlaybackFaderView: View {
             
             MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
             
-            // Fader Area com visual de console analógico e tracking sem arrasto da janela
+            // Fenda e Knob com tracking anti-arraste de janela
             ZStack(alignment: .leading) {
-                // Camada Visual (Fenda + Marcação de 0dB + Knob Metálico)
+                // Trilho / Fenda preta simples e elegante
                 ZStack(alignment: .leading) {
-                    // Linha discreta de ganho unitário (0 dB / 100%)
+                    // Marcação sutil de 0dB
                     Rectangle()
-                        .fill(Color.white.opacity(0.20))
-                        .frame(width: 1, height: 10)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 1, height: 8)
                         .offset(x: unityX - 0.5)
                     
-                    // Fenda mecânica preta contínua chanfrada
+                    // Fenda preta fosca contínua
                     Capsule()
                         .fill(Color.black)
-                        .frame(width: trackWidth, height: 3.5)
+                        .frame(width: trackWidth, height: 2.5)
                         .overlay(
-                            Capsule()
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [Color.black, Color.white.opacity(0.14)],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    ),
-                                    lineWidth: 0.8
-                                )
+                            Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                         )
-                        .shadow(color: Color.black.opacity(0.95), radius: 1, y: 1)
                     
-                    // Fader Cap Knob
+                    // Knob sólido matte
                     FaderCapKnobView(accentColor: accentColor, isMuted: isMuted)
                         .offset(x: capOffset)
                 }
-                .frame(width: trackWidth, height: 32)
+                .frame(width: trackWidth, height: 28)
                 
-                // Camada de Tracking de Mouse (NSView que desativa o arraste da janela do macOS)
+                // Camada de mouse tracking nativo (previne arraste da janela)
                 FaderMouseTrackingView(volume: $volume, onVolumeChange: onVolumeChange)
-                    .frame(width: trackWidth, height: 32)
+                    .frame(width: trackWidth, height: 28)
             }
-            .frame(width: 145, height: 32)
+            .frame(width: trackWidth, height: 28)
             
             FaderValueBadgeView(isMuted: isMuted, volume: volume, dbText: dbText)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isMuted ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
-        )
     }
 }
 
 // ==========================================
-// 8. BOTTOM MIXER DOCK COM SELETOR DE SAÍDA PERSISTENTE
+// 8. BOTTOM MIXER DOCK (SEAMLESS, MINIMALISTA, SEM GRADIENTES OU CAIXAS)
 // ==========================================
 struct BottomMixerDock: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        HStack(spacing: 14) {
-            // Canal L: CLICK & GUIA
+        HStack(spacing: 18) {
+            // Canal L: CLICK
             PlaybackFaderView(
                 title: "CLICK",
-                subtitle: "Guide / Click (L)",
+                subtitle: "Guide (L)",
                 icon: "headphones",
                 accentColor: Color.cyan,
                 volume: $state.clickVol,
@@ -4028,10 +3952,15 @@ struct BottomMixerDock: View {
                 onVolumeChange: { state.sendVolumes() }
             )
             
+            // Divisor vertical sutil
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1, height: 22)
+            
             // Canal R: VS INSTRUMENTOS
             PlaybackFaderView(
                 title: "VS TRACKS",
-                subtitle: "Audio Out (R)",
+                subtitle: "Audio (R)",
                 icon: "waveform",
                 accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
                 volume: $state.vsVol,
@@ -4040,13 +3969,18 @@ struct BottomMixerDock: View {
                 onVolumeChange: { state.sendVolumes() }
             )
             
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
             
-            // Controle de Zoom da Timeline elegante e discreto
+            // Divisor vertical sutil
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1, height: 22)
+            
+            // Controle de Zoom da Timeline (Minimalista)
             HStack(spacing: 8) {
                 Image(systemName: "minus.magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.white.opacity(0.25) : Color.white.opacity(0.70))
+                    .font(.system(size: 11))
+                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.white.opacity(0.20) : Color.white.opacity(0.60))
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             state.zoomLevel = max(0.0, state.zoomLevel - 0.2)
@@ -4055,12 +3989,12 @@ struct BottomMixerDock: View {
                     .help("Zoom Out")
                 
                 Slider(value: $state.zoomLevel, in: 0.0...1.0)
-                    .frame(width: 80)
+                    .frame(width: 75)
                     .accentColor(.cyan)
                 
                 Image(systemName: "plus.magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.white.opacity(0.25) : Color.cyan)
+                    .font(.system(size: 11))
+                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.white.opacity(0.20) : Color.cyan)
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             state.zoomLevel = min(1.0, state.zoomLevel + 0.2)
@@ -4070,72 +4004,53 @@ struct BottomMixerDock: View {
                 
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        if state.zoomLevel < 0.05 {
-                            state.zoomLevel = 0.35
-                        } else {
-                            state.zoomLevel = 0.0
-                        }
+                        state.zoomLevel = (state.zoomLevel < 0.05) ? 0.35 : 0.0
                     }
                 }) {
                     Text(state.zoomLevel < 0.05 ? "ZOOM" : "FIT")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.85))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.22) : Color.white.opacity(0.08))
-                        .cornerRadius(5)
+                        .foregroundColor(state.zoomLevel < 0.05 ? Color.cyan : Color.white.opacity(0.75))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.20) : Color.white.opacity(0.06))
+                        .cornerRadius(4)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(state.zoomLevel < 0.05 ? Color.cyan.opacity(0.4) : Color.white.opacity(0.10), lineWidth: 1)
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(state.zoomLevel < 0.05 ? "Restaurar Zoom Normal" : "Ajustar Música Toda na Tela (Fit)")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
             
-            // Seletor de Saída de Áudio elegante e integrado
+            // Divisor vertical sutil
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1, height: 22)
+            
+            // Seletor de Saída de Áudio (Minimalista)
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12))
                     .foregroundColor(Color.cyan)
                 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("OUTPUT")
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundColor(Color.gray.opacity(0.75))
-                    
-                    Picker("", selection: $state.selectedDeviceId) {
-                        ForEach(state.devices) { dev in
-                            Text(dev.name)
-                                .tag(dev.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(MenuPickerStyle())
-                    .frame(width: 160)
-                    .onChange(of: state.selectedDeviceId) { _, newId in
-                        state.setAudioDevice(id: newId, save: true)
+                Picker("", selection: $state.selectedDeviceId) {
+                    ForEach(state.devices) { dev in
+                        Text(dev.name)
+                            .tag(dev.id)
                     }
                 }
+                .labelsHidden()
+                .pickerStyle(MenuPickerStyle())
+                .frame(width: 150)
+                .onChange(of: state.selectedDeviceId) { _, newId in
+                    state.setAudioDevice(id: newId, save: true)
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.75)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 0.11, green: 0.11, blue: 0.13), Color(red: 0.08, green: 0.08, blue: 0.09)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .padding(.horizontal, 22)
+        .padding(.vertical, 12)
+        .background(Color(red: 0.08, green: 0.08, blue: 0.09))
     }
 }
 
