@@ -1348,7 +1348,7 @@ struct PlaybackAppView: View {
             // 4. Mixer Dock com Seletor de Saída de Áudio Dinâmico
             BottomMixerDock(state: state)
         }
-        .background(Color(red: 0.07, green: 0.08, blue: 0.11))
+        .background(Color(red: 0.08, green: 0.08, blue: 0.09))
         .sheet(isPresented: $state.isAddSongSheetPresented) {
             AddSongSheetView(state: state)
         }
@@ -1529,6 +1529,41 @@ struct PlaybackAppView: View {
 // ==========================================
 // 5. TOP BAR (TRANSPORTE & EDIT BUTTON)
 // ==========================================
+
+// Ícone de Curva Suave de Fade Out (Estilo DAW / MultiTracks)
+struct FadeOutCurveIcon: View {
+    var color: Color = .white
+    var isFading: Bool = false
+    
+    var body: some View {
+        FadeOutCurveShape()
+            .stroke(color, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            .frame(width: 17, height: 16)
+    }
+}
+
+struct FadeOutCurveShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let padX: CGFloat = 1.0
+        let padY: CGFloat = 1.0
+        let left = rect.minX + padX
+        let right = rect.maxX - padX
+        let top = rect.minY + padY
+        let bottom = rect.maxY - padY
+        
+        path.move(to: CGPoint(x: left, y: top))
+        path.addLine(to: CGPoint(x: left, y: bottom))
+        path.addLine(to: CGPoint(x: right, y: bottom))
+        path.addQuadCurve(
+            to: CGPoint(x: left, y: top),
+            control: CGPoint(x: left + (right - left) * 0.40, y: bottom - (bottom - top) * 0.15)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
 struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
@@ -1559,7 +1594,7 @@ struct TopBarView: View {
             
             // Botões de Transporte Padronizados (Quadrados com cantos levemente arredondados 36x36, cornerRadius 8)
             HStack(spacing: 10) {
-                // 1. Botão Restart
+                // 1. Botão Restart (Branco)
                 Button(action: { state.restart() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -1567,7 +1602,7 @@ struct TopBarView: View {
                             .frame(width: 36, height: 36)
                         Image(systemName: "backward.end.fill")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(Color(red: 0.95, green: 0.55, blue: 0.4))
+                            .foregroundColor(.white)
                     }
                     .frame(width: 36, height: 36)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
@@ -1595,15 +1630,16 @@ struct TopBarView: View {
                 .keyboardShortcut(.space, modifiers: [])
                 .help("Play / Pause [Espaço]")
                 
-                // 3. Botão FADE STOP
+                // 3. Botão FADE STOP com Ícone de Curva DAW
                 Button(action: { state.fadeStop(duration: 3.0) }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(state.isFadingOut ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
                             .frame(width: 36, height: 36)
-                        Image(systemName: state.isFadingOut ? "speaker.slash.fill" : "waveform.badge.minus")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white.opacity(0.85) : Color.white.opacity(0.35)))
+                        FadeOutCurveIcon(
+                            color: state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white : Color.white.opacity(0.40)),
+                            isFading: state.isFadingOut
+                        )
                     }
                     .frame(width: 36, height: 36)
                     .overlay(
@@ -1615,23 +1651,7 @@ struct TopBarView: View {
                 .disabled(!state.isPlaying && !state.isFadingOut)
                 .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
                 
-                // 4. Botão Avançar Próxima Música (Setlist Skip)
-                Button(action: { state.advanceToNextSetlistSong() }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "forward.end.fill")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.85))
-                    }
-                    .frame(width: 36, height: 36)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Advance to next setlist song")
-                
-                // 5. Botão Loop da Seção Atual
+                // 4. Botão Loop da Seção Atual
                 Button(action: { state.toggleLoop() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -1650,7 +1670,7 @@ struct TopBarView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help("Loop current section (L)")
                 
-                // 6. Botão AUTO (Auto-Advance do Setlist)
+                // 5. Botão AUTO (Auto-Advance do Setlist)
                 Button(action: { state.autoAdvance.toggle() }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -1669,7 +1689,7 @@ struct TopBarView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help("Auto-Advance: automatically play next track when current song finishes")
                 
-                // 7. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
+                // 6. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         state.isEditMode.toggle()
@@ -1718,7 +1738,7 @@ struct TopBarView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
     
     private func formatTime(_ sec: Double) -> String {
@@ -1881,7 +1901,7 @@ struct SetlistCarouselView: View {
                     Button(action: { state.isAddSongSheetPresented = true }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.12, green: 0.13, blue: 0.18).opacity(0.85))
+                                .fill(Color(red: 0.12, green: 0.12, blue: 0.13).opacity(0.85))
                                 .frame(width: 175, height: 75)
                             
                             VStack(spacing: 6) {
@@ -1906,7 +1926,7 @@ struct SetlistCarouselView: View {
                 .padding(.vertical, 10)
             }
         }
-        .background(Color(red: 0.08, green: 0.09, blue: 0.13))
+        .background(Color(red: 0.09, green: 0.09, blue: 0.10))
     }
     
     private func cardGradient(for index: Int) -> LinearGradient {
@@ -2096,7 +2116,7 @@ struct SpectrogramWaveformView: View {
                         } else {
                             // 1. Fundo Geral Escuro da Timeline
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.07, green: 0.08, blue: 0.11))
+                                .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
                                 .frame(width: totalTrackWidth, height: 175)
                             
                             // 2. Linha de Centro Discreta
@@ -2113,7 +2133,7 @@ struct SpectrogramWaveformView: View {
                                         LinearGradient(
                                             gradient: Gradient(colors: [
                                                 Color.white.opacity(0.85),
-                                                Color(red: 0.82, green: 0.86, blue: 0.92).opacity(0.65)
+                                                Color(white: 0.85).opacity(0.65)
                                             ]),
                                             startPoint: .top,
                                             endPoint: .bottom
@@ -2234,7 +2254,7 @@ struct SpectrogramWaveformView: View {
         }
         .frame(height: 195)
         .padding(.vertical, 16)
-        .background(Color(red: 0.05, green: 0.06, blue: 0.08))
+        .background(Color(red: 0.07, green: 0.07, blue: 0.08))
         .overlay(
             Group {
                 if let msg = state.undoNotificationMessage {
@@ -2242,14 +2262,13 @@ struct SpectrogramWaveformView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.uturn.backward.circle.fill")
                                 .foregroundColor(.cyan)
-                                .font(.system(size: 13, weight: .bold))
                             Text(msg)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
-                        .background(Color(red: 0.10, green: 0.12, blue: 0.18).opacity(0.96))
+                        .background(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.96))
                         .clipShape(Capsule())
                         .overlay(Capsule().stroke(Color.cyan.opacity(0.4), lineWidth: 1))
                         .shadow(color: .black.opacity(0.7), radius: 10, y: 4)
@@ -2371,6 +2390,8 @@ struct WaveformSectionBlock: View {
     let onSelect: () -> Void
     let onLoopToggle: () -> Void
     
+    @State private var isPulsing: Bool = false
+    
     let cueTypes = ["Count-In", "Intro", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
     
     var body: some View {
@@ -2480,11 +2501,11 @@ struct WaveformSectionBlock: View {
                                 }
                             )
                     } else if isQueued {
-                        // Bloco selecionado para salto: cor laranja evidente
+                        // Bloco selecionado para salto: cor laranja evidente pulsando
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.orange, lineWidth: 2.5)
+                            .stroke(Color.orange.opacity(isPulsing ? 1.0 : 0.60), lineWidth: isPulsing ? 2.8 : 1.8)
                             .padding(2)
-                            .shadow(color: Color.orange.opacity(0.7), radius: 6)
+                            .shadow(color: Color.orange.opacity(isPulsing ? 0.90 : 0.40), radius: isPulsing ? 8 : 3)
                     } else if isFocused {
                         // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
                         RoundedRectangle(cornerRadius: 8)
@@ -2492,9 +2513,9 @@ struct WaveformSectionBlock: View {
                             .padding(2)
                             .shadow(color: Color.white.opacity(0.7), radius: 6)
                     } else {
-                        // Borda sutil com a cor da seção (estilo MultiTracks Playback como na foto de referência)
+                        // Borda sutil com a cor da seção (mais discreta e sutil)
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(badgeColor.opacity(0.40), lineWidth: 1.2)
+                            .stroke(badgeColor.opacity(0.28), lineWidth: 1.2)
                             .padding(2)
                     }
                 }
@@ -2503,6 +2524,24 @@ struct WaveformSectionBlock: View {
         .buttonStyle(PlainButtonStyle())
         .frame(width: width, height: 175)
         .clipped()
+        .onAppear {
+            if isQueued {
+                withAnimation(Animation.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
+                    isPulsing = true
+                }
+            }
+        }
+        .onChange(of: isQueued) { _, queued in
+            if queued {
+                withAnimation(Animation.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
+                    isPulsing = true
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isPulsing = false
+                }
+            }
+        }
         .modifier(RightClickModifier(action: {
             state.quickEditingCueIdx = index
         }))
@@ -2520,19 +2559,19 @@ struct WaveformSectionBlock: View {
     private var blockBgColor: Color {
         if isPlaying {
             if isFocused && !isQueued {
-                return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.65)
+                return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.55)
             }
-            return Color(red: 0.10, green: 0.40, blue: 0.22).opacity(0.45)
+            return Color(red: 0.10, green: 0.40, blue: 0.22).opacity(0.35)
         }
         if isQueued {
-            return Color(red: 0.85, green: 0.45, blue: 0.08).opacity(0.45)
+            return Color(red: 0.95, green: 0.50, blue: 0.10).opacity(isPulsing ? 0.35 : 0.14)
         }
         if isFocused {
             // Fundo de destaque branco translúcido elegante
-            return Color.white.opacity(0.24)
+            return Color.white.opacity(0.20)
         }
-        // Cor de leve no fundo de acordo com cada parte (estilo MultiTracks Playback)
-        return badgeColor.opacity(0.16)
+        // Cor de leve no fundo de acordo com cada parte (mais discreta e sutil)
+        return badgeColor.opacity(0.09)
     }
     
     private var borderColor: Color {
@@ -2949,7 +2988,7 @@ struct BottomMixerDock: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+        .background(Color(red: 0.10, green: 0.10, blue: 0.11))
     }
 }
 
@@ -3103,7 +3142,7 @@ struct AddSongSheetView: View {
         }
         .padding(20)
         .frame(width: 450, height: 420)
-        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if state.librarySongs.isEmpty {
                 state.fetchAllLibrarySongs()
@@ -3156,7 +3195,7 @@ struct QrCodeSheetView: View {
         }
         .padding(24)
         .frame(width: 390, height: 440)
-        .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
     
     private func generateQRCodeImage(from string: String) -> NSImage? {
@@ -3423,23 +3462,23 @@ struct QuickSectionEditPopoverView: View {
                     .buttonStyle(PlainButtonStyle())
                     .help("Split section in two (Cut with dashed line)")
                     
-                    // Delete Section Button
+                    // Botão Unir Seção com o Bloco à Esquerda
                     if state.currentCues.count > 1 {
                         Button(action: {
                             state.deleteSection(at: cueIndex)
                         }) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.red.opacity(0.18))
+                                    .fill(Color.orange.opacity(0.18))
                                     .frame(width: 36, height: 36)
-                                Image(systemName: "trash")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundColor(Color(red: 1.0, green: 0.35, blue: 0.35))
+                                Image(systemName: "arrow.left.to.line.compact")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(Color.orange)
                             }
-                            .overlay(Circle().stroke(Color.red.opacity(0.35), lineWidth: 1.5))
+                            .overlay(Circle().stroke(Color.orange.opacity(0.35), lineWidth: 1.5))
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Delete section")
+                        .help(cueIndex == 0 ? "Unir seção com a próxima" : "Unir com o bloco à esquerda")
                     }
                     
                     Spacer()
@@ -3465,7 +3504,7 @@ struct QuickSectionEditPopoverView: View {
             }
             .padding(16)
             .frame(width: 260)
-            .background(Color(red: 0.12, green: 0.14, blue: 0.18))
+            .background(Color(red: 0.12, green: 0.12, blue: 0.13))
             .onAppear {
                 if !cueTypes.contains(cue.name) {
                     isCustom = true
@@ -3568,7 +3607,7 @@ struct SongEditorSheetView: View {
                 .buttonStyle(PlainButtonStyle())
             }
             .padding(20)
-            .background(Color(red: 0.12, green: 0.13, blue: 0.18))
+            .background(Color(red: 0.12, green: 0.12, blue: 0.13))
             
             Divider().background(Color.white.opacity(0.1))
             
@@ -4009,10 +4048,10 @@ struct SongEditorSheetView: View {
                 .buttonStyle(PlainButtonStyle())
             }
             .padding(16)
-            .background(Color(red: 0.10, green: 0.11, blue: 0.15))
+            .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
         .frame(width: 760, height: 600)
-        .background(Color(red: 0.08, green: 0.09, blue: 0.13))
+        .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .onAppear {
             localBpmText = formatBpm(state.bpm)
             localTimeSignature = state.timeSignature
@@ -4094,7 +4133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "VS Control"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(red: 0.07, green: 0.08, blue: 0.11, alpha: 1.0)
+        window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
