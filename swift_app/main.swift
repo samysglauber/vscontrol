@@ -595,13 +595,6 @@ class PlaybackState: ObservableObject {
                 return
             }
         }
-        
-        // Fallback: Primeiras 4 músicas se não houver setlist salvo
-        let initialSet = availableSongs.prefix(4).map { SetlistSong(song: $0) }
-        self.setlist = Array(initialSet)
-        if let first = availableSongs.first {
-            self.loadSong(first)
-        }
     }
     
     // ==========================================
@@ -962,14 +955,21 @@ class PlaybackState: ObservableObject {
         
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             DispatchQueue.main.async {
-                self?.isScanningFolder = false
+                guard let self = self else { return }
+                self.isScanningFolder = false
                 if let data = data,
                    let resp = try? JSONDecoder().decode(RefreshTracksResponse.self, from: data),
                    let songs = resp.songs {
-                    self?.librarySongs = songs
-                    self?.songs = songs
+                    self.librarySongs = songs
+                    self.songs = songs
+                    
+                    // Atualiza dados de músicas que já estejam no setlist sem alterar a lista
+                    for (idx, item) in self.setlist.enumerated() {
+                        if let updated = songs.first(where: { $0.id == item.song.id }) {
+                            self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
+                        }
+                    }
                 }
-                self?.fetchSetlistSongs()
             }
         }.resume()
     }
@@ -2057,21 +2057,6 @@ struct SetlistCarouselView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if state.isEditMode {
-                HStack(spacing: 6) {
-                    Image(systemName: "hand.draw.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.yellow)
-                    Text("Edit Mode: Drag cards to reorder or tap ✕ to remove")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.yellow)
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-            }
-            
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
