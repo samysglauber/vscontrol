@@ -83,7 +83,10 @@ async def status_broadcaster():
         if manager.active_connections:
             status = engine.get_status()
             await manager.broadcast({"event": "tick", "data": status})
-        await asyncio.sleep(0.06)  # ~16 updates por segundo (leve e ultra fluido)
+            sleep_time = 0.06 if engine.is_playing else 0.5
+        else:
+            sleep_time = 0.5
+        await asyncio.sleep(sleep_time)
 
 # ==========================
 # Endpoints de Informação de Rede e QR Code para Android

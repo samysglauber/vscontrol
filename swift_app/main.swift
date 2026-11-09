@@ -395,6 +395,10 @@ class PlaybackState: ObservableObject {
     private var redoStack: [CueHistorySnapshot] = []
     @Published var undoNotificationMessage: String? = nil
     
+    // Controle de concorrência e throttle de auto-fetch de capas
+    private var isSavingSetlistDoc = false
+    private var attemptedCoverAutoFetchSongIds: Set<String> = []
+    
     var shortFolderName: String {
         if tracksFolderPath.isEmpty { return "Tracks" }
         let name = URL(fileURLWithPath: tracksFolderPath).lastPathComponent
@@ -607,43 +611,42 @@ class PlaybackState: ObservableObject {
                             self.advanceToNextSetlistSong()
                         }
                     }
-                    self.isPlaying = playing
-                    if !playing { self.isFadingOut = false }
+                    if self.isPlaying != playing { self.isPlaying = playing }
+                    if !playing && self.isFadingOut { self.isFadingOut = false }
                 }
-                if let fActive = eventData["fade_stop_active"] as? Bool { self.isFadingOut = fActive }
-                if let cMute = eventData["click_mute"] as? Bool { self.clickMute = cMute }
-                if let vMute = eventData["vs_mute"] as? Bool { self.vsMute = vMute }
-                if let cVol = eventData["click_vol"] as? Double { self.clickVol = cVol }
-                if let vVol = eventData["vs_vol"] as? Double { self.vsVol = vVol }
-                if let curSec = eventData["current_seconds"] as? Double { self.currentSeconds = curSec }
-                if let totSec = eventData["total_seconds"] as? Double { if totSec > 0 { self.totalSeconds = totSec } }
-                if let bar = eventData["bar"] as? Int { self.currentBar = bar }
-                if let beat = eventData["beat"] as? Int { self.currentBeat = beat }
-                if let bpmVal = eventData["bpm"] as? Double { self.bpm = bpmVal }
-                if let sig = eventData["time_signature"] as? String { self.timeSignature = sig }
-                if let cIdx = eventData["current_cue_idx"] as? Int { self.currentCueIdx = cIdx }
-                if let qIdx = eventData["queued_cue_idx"] as? Int { self.queuedCueIdx = qIdx } else { self.queuedCueIdx = nil }
-                if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
-                if let lIdx = eventData["loop_cue_idx"] as? Int { self.loopCueIdx = lIdx } else { self.loopCueIdx = nil }
-                if let pad = eventData["pad_active"] as? Bool { self.padActive = pad }
+                if let fActive = eventData["fade_stop_active"] as? Bool, self.isFadingOut != fActive { self.isFadingOut = fActive }
+                if let cMute = eventData["click_mute"] as? Bool, self.clickMute != cMute { self.clickMute = cMute }
+                if let vMute = eventData["vs_mute"] as? Bool, self.vsMute != vMute { self.vsMute = vMute }
+                if let cVol = eventData["click_vol"] as? Double, abs(self.clickVol - cVol) > 0.005 { self.clickVol = cVol }
+                if let vVol = eventData["vs_vol"] as? Double, abs(self.vsVol - vVol) > 0.005 { self.vsVol = vVol }
+                if let curSec = eventData["current_seconds"] as? Double, abs(self.currentSeconds - curSec) > 0.015 { self.currentSeconds = curSec }
+                if let totSec = eventData["total_seconds"] as? Double, totSec > 0, abs(self.totalSeconds - totSec) > 0.015 { self.totalSeconds = totSec }
+                if let bar = eventData["bar"] as? Int, self.currentBar != bar { self.currentBar = bar }
+                if let beat = eventData["beat"] as? Int, self.currentBeat != beat { self.currentBeat = beat }
+                if let bpmVal = eventData["bpm"] as? Double, abs(self.bpm - bpmVal) > 0.01 { self.bpm = bpmVal }
+                if let sig = eventData["time_signature"] as? String, self.timeSignature != sig { self.timeSignature = sig }
+                if let cIdx = eventData["current_cue_idx"] as? Int, self.currentCueIdx != cIdx { self.currentCueIdx = cIdx }
+                let newQueued = eventData["queued_cue_idx"] as? Int
+                if self.queuedCueIdx != newQueued { self.queuedCueIdx = newQueued }
+                if let loop = eventData["loop_active"] as? Bool, self.loopActive != loop { self.loopActive = loop }
+                let newLoopCue = eventData["loop_cue_idx"] as? Int
+                if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
+                if let pad = eventData["pad_active"] as? Bool, self.padActive != pad { self.padActive = pad }
             } else if event == "fade_stop_started" {
-                self.isFadingOut = true
+                if !self.isFadingOut { self.isFadingOut = true }
             } else if event == "play_state" {
                 if let p = eventData["is_playing"] as? Bool {
-                    self.isPlaying = p
-                    if !p { self.isFadingOut = false }
+                    if self.isPlaying != p { self.isPlaying = p }
+                    if !p && self.isFadingOut { self.isFadingOut = false }
                 }
             } else if event == "volume_state" {
-                if let cm = eventData["click_mute"] as? Bool { self.clickMute = cm }
-                if let vm = eventData["vs_mute"] as? Bool { self.vsMute = vm }
-                if let cv = eventData["click_vol"] as? Double { self.clickVol = cv }
-                if let vv = eventData["vs_vol"] as? Double { self.vsVol = vv }
+                if let cm = eventData["click_mute"] as? Bool, self.clickMute != cm { self.clickMute = cm }
+                if let vm = eventData["vs_mute"] as? Bool, self.vsMute != vm { self.vsMute = vm }
+                if let cv = eventData["click_vol"] as? Double, abs(self.clickVol - cv) > 0.005 { self.clickVol = cv }
+                if let vv = eventData["vs_vol"] as? Double, abs(self.vsVol - vv) > 0.005 { self.vsVol = vv }
             } else if event == "cue_queued" {
-                if let qIdx = eventData["queued_cue_idx"] as? Int {
-                    self.queuedCueIdx = qIdx
-                } else {
-                    self.queuedCueIdx = nil
-                }
+                let qIdx = eventData["queued_cue_idx"] as? Int
+                if self.queuedCueIdx != qIdx { self.queuedCueIdx = qIdx }
             } else if event == "cue_jumped" {
                 if let cIdx = eventData["current_cue_idx"] as? Int {
                     self.currentCueIdx = cIdx
@@ -701,9 +704,12 @@ class PlaybackState: ObservableObject {
         }
         UserDefaults.standard.synchronize()
         
-        // Auto-salvamento no arquivo de setlist ativo (se houver um arquivo aberto)
-        if let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
-            saveSetlistTo(url: URL(fileURLWithPath: filePath), notify: false)
+        // Auto-salvamento no arquivo de setlist ativo (se houver um arquivo aberto) com proteção contra reentrância
+        if !isSavingSetlistDoc, let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
+            isSavingSetlistDoc = true
+            saveSetlistTo(url: URL(fileURLWithPath: filePath), notify: false) { [weak self] in
+                self?.isSavingSetlistDoc = false
+            }
         }
     }
     
@@ -832,7 +838,6 @@ class PlaybackState: ObservableObject {
                 self.addRecentSetlistPath(url.path)
                 UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
                 UserDefaults.standard.synchronize()
-                self.saveSetlistState()
                 
                 if notify {
                     self.showUndoFeedback("Setlist '\(docName)' salva com sucesso!")
@@ -840,10 +845,11 @@ class PlaybackState: ObservableObject {
                 completion?()
             }
         } catch {
-            if notify {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                if notify {
                     self.showUndoFeedback("Erro ao salvar Setlist: \(error.localizedDescription)")
                 }
+                completion?()
             }
         }
     }
@@ -1373,6 +1379,9 @@ class PlaybackState: ObservableObject {
     }
     
     func autoFetchCover(for song: SongItem) {
+        guard !attemptedCoverAutoFetchSongIds.contains(song.id) else { return }
+        attemptedCoverAutoFetchSongIds.insert(song.id)
+        
         guard let url = URL(string: "http://127.0.0.1:8080/api/covers/auto") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -3059,81 +3068,14 @@ struct SpectrogramWaveformView: View {
                             }
                             .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
                         } else {
-                            // 1. Fundo Geral Escuro da Timeline
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
-                                .frame(width: totalTrackWidth, height: 175)
+                            // 1. Fundo Geral Estático & Onda Contínua Global (Acelerado por GPU Metal via .drawingGroup & Equatable)
+                            WaveformStaticBackgroundView(peaks: state.displayFullWaveform, totalTrackWidth: totalTrackWidth)
+                                .equatable()
                             
-                            // 2. Linha de Centro Discreta
-                            Rectangle()
-                                .fill(Color.white.opacity(0.06))
-                                .frame(width: totalTrackWidth, height: 1)
-                                .position(x: totalTrackWidth / 2, y: 175 / 2)
-                            
-                            // 3. ONDA REAL CONTÍNUA GLOBAL (Fundo Fixo Unificado de Toda a Música)
-                            let peaks = state.displayFullWaveform
-                            if !peaks.isEmpty {
-                                ContinuousWaveformShape(peaks: peaks)
-                                    .fill(
-                                        LinearGradient(
-                                            gradient: Gradient(colors: [
-                                                Color.white.opacity(0.85),
-                                                Color(white: 0.85).opacity(0.65)
-                                            ]),
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(width: totalTrackWidth, height: 175)
-                            }
-                            
-                            // 4. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
+                            // 2. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
                             HStack(spacing: 0) {
                                 ForEach(Array(state.currentCues.enumerated()), id: \.element.id) { idx, section in
-                                    let isPlayingSection = idx == state.currentCueIdx
-                                    let isQueued = idx == state.queuedCueIdx
-                                    let isFocused = idx == state.focusedCueIdx
-                                    let isLoopThis = state.loopActive && (state.loopCueIdx == idx || (state.loopCueIdx == nil && isPlayingSection))
-                                    let width = idx < blockWidths.count ? blockWidths[idx] : 90
-                                    
-                                    WaveformSectionBlock(
-                                        state: state,
-                                        index: idx,
-                                        section: section,
-                                        isPlaying: isPlayingSection,
-                                        isQueued: isQueued,
-                                        isFocused: isFocused,
-                                        isLoopActive: isLoopThis,
-                                        width: width,
-                                        onSelect: {
-                                            state.focusedCueIdx = nil
-                                            lastUserScrollTime = .distantPast
-                                            withAnimation(.easeInOut(duration: 0.25)) {
-                                                proxy.scrollTo(idx, anchor: .center)
-                                            }
-                                            // SALTO QUANTIZADO NO TEMPO 1 DO PRÓXIMO COMPASSO
-                                            if state.isPlaying {
-                                                if idx == state.currentCueIdx {
-                                                    // Se clicar no trecho que já está tocando:
-                                                    // Não agenda repetição nem loop. Se havia outro trecho na fila, cancela a fila.
-                                                    if state.queuedCueIdx != nil {
-                                                        state.triggerCue(idx: idx, quantize: true)
-                                                    }
-                                                    return
-                                                }
-                                                // Enquanto toca outro trecho: programa o salto para cair exatamente no tempo 1 do próximo compasso
-                                                state.triggerCue(idx: idx, quantize: true)
-                                            } else {
-                                                // Quando parado: busca para o início exato da seção
-                                                state.seekToSeconds(section.time)
-                                                state.triggerCue(idx: idx, quantize: false)
-                                            }
-                                        },
-                                        onLoopToggle: {
-                                            state.toggleLoop(cueIdx: idx)
-                                        }
-                                    )
-                                    .id(idx)
+                                    sectionItemView(idx: idx, section: section, blockWidths: blockWidths, proxy: proxy)
                                 }
                             }
                             .frame(width: totalTrackWidth, height: 175)
@@ -3292,6 +3234,65 @@ struct SpectrogramWaveformView: View {
         }
         return positions
     }
+    
+    private func isLooping(idx: Int, isPlaying: Bool) -> Bool {
+        guard state.loopActive else { return false }
+        if let loopCue = state.loopCueIdx {
+            return loopCue == idx
+        }
+        return isPlaying
+    }
+    
+    private func handleCueSelection(index idx: Int, section: CueSection, proxy: ScrollViewProxy) {
+        state.focusedCueIdx = nil
+        lastUserScrollTime = .distantPast
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(idx, anchor: .center)
+        }
+        // SALTO QUANTIZADO NO TEMPO 1 DO PRÓXIMO COMPASSO
+        if state.isPlaying {
+            if idx == state.currentCueIdx {
+                if state.queuedCueIdx != nil {
+                    state.triggerCue(idx: idx, quantize: true)
+                }
+                return
+            }
+            state.triggerCue(idx: idx, quantize: true)
+        } else {
+            state.seekToSeconds(section.time)
+            state.triggerCue(idx: idx, quantize: false)
+        }
+    }
+    
+    @ViewBuilder
+    private func sectionItemView(idx: Int, section: CueSection, blockWidths: [CGFloat], proxy: ScrollViewProxy) -> some View {
+        let isPlaying = (idx == state.currentCueIdx)
+        let isQueued = (idx == state.queuedCueIdx)
+        let isFocused = (idx == state.focusedCueIdx)
+        let isLoop = isLooping(idx: idx, isPlaying: isPlaying)
+        let w: CGFloat = (idx < blockWidths.count) ? blockWidths[idx] : 90.0
+        
+        WaveformSectionBlock(
+            state: state,
+            index: idx,
+            section: section,
+            isPlaying: isPlaying,
+            isQueued: isQueued,
+            isFocused: isFocused,
+            isLoopActive: isLoop,
+            width: w,
+            timeSignature: state.timeSignature,
+            durationBars: state.calculateDurationBars(for: idx),
+            onSelect: {
+                handleCueSelection(index: idx, section: section, proxy: proxy)
+            },
+            onLoopToggle: {
+                state.toggleLoop(cueIdx: idx)
+            }
+        )
+        .equatable()
+        .id(idx)
+    }
 }
 
 // ==========================================
@@ -3371,9 +3372,51 @@ struct QueuedJumpPulsingOverlay: View {
     }
 }
 
+// ==========================================
+// 8.1 FUNDO ESTÁTICO & ONDA CONTÍNUA (GPU METAL ACCELERATED VIA .drawingGroup)
+// ==========================================
+struct WaveformStaticBackgroundView: View, Equatable {
+    let peaks: [Double]
+    let totalTrackWidth: CGFloat
+    
+    static func == (lhs: WaveformStaticBackgroundView, rhs: WaveformStaticBackgroundView) -> Bool {
+        lhs.totalTrackWidth == rhs.totalTrackWidth && lhs.peaks.count == rhs.peaks.count
+    }
+    
+    var body: some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                .frame(width: totalTrackWidth, height: 175)
+            
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(width: totalTrackWidth, height: 1)
+                .position(x: totalTrackWidth / 2, y: 175 / 2)
+            
+            if !peaks.isEmpty {
+                ContinuousWaveformShape(peaks: peaks)
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.white.opacity(0.85),
+                                Color(white: 0.85).opacity(0.65)
+                            ]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: totalTrackWidth, height: 175)
+                    .drawingGroup()
+            }
+        }
+        .frame(width: totalTrackWidth, height: 175)
+    }
+}
+
 // Bloco de Seção Sobreposto (Divisões, Métricas e Controles sobre a Onda Contínua)
-struct WaveformSectionBlock: View {
-    @ObservedObject var state: PlaybackState
+struct WaveformSectionBlock: View, Equatable {
+    let state: PlaybackState
     let index: Int
     let section: CueSection
     let isPlaying: Bool
@@ -3381,8 +3424,22 @@ struct WaveformSectionBlock: View {
     let isFocused: Bool
     let isLoopActive: Bool
     let width: CGFloat
+    let timeSignature: String
+    let durationBars: Double
     let onSelect: () -> Void
     let onLoopToggle: () -> Void
+    
+    static func == (lhs: WaveformSectionBlock, rhs: WaveformSectionBlock) -> Bool {
+        lhs.index == rhs.index &&
+        lhs.section.id == rhs.section.id &&
+        lhs.isPlaying == rhs.isPlaying &&
+        lhs.isQueued == rhs.isQueued &&
+        lhs.isFocused == rhs.isFocused &&
+        lhs.isLoopActive == rhs.isLoopActive &&
+        lhs.width == rhs.width &&
+        lhs.timeSignature == rhs.timeSignature &&
+        lhs.durationBars == rhs.durationBars
+    }
     
     let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
     
@@ -3395,9 +3452,8 @@ struct WaveformSectionBlock: View {
                     .padding(2)
                 
                 // Divisões verticais dos compassos da seção
-                let durationBars = state.calculateDurationBars(for: index)
-                if durationBars > 0.5 {
-                    let total = durationBars
+                let total = durationBars
+                if total > 0.5 {
                     let numLines = Int(floor(total - 0.001))
                     if numLines >= 1 {
                         ForEach(1...numLines, id: \.self) { b in
@@ -3415,7 +3471,7 @@ struct WaveformSectionBlock: View {
                     VStack {
                         Spacer()
                         HStack {
-                            Text(state.timeSignature)
+                            Text(timeSignature)
                                 .font(.system(size: 8, weight: .black, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.85))
                                 .padding(.horizontal, 4)
