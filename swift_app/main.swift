@@ -4550,46 +4550,48 @@ struct BottomMixerDock: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1, height: 22)
             
-            // Seletor de Saída de Áudio (Minimalista e Confiável)
-            HStack(spacing: 8) {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color.cyan)
-                
-                Menu {
-                    ForEach(state.devices) { dev in
-                        Button(action: {
-                            state.setAudioDevice(id: dev.id, save: true)
-                        }) {
-                            HStack {
-                                Text(dev.name)
-                                if dev.id == state.selectedDeviceId {
-                                    Image(systemName: "checkmark")
-                                }
+            // Seletor de Saída de Áudio (Pill Unificada e Alinhada)
+            Menu {
+                ForEach(state.devices) { dev in
+                    Button(action: {
+                        state.setAudioDevice(id: dev.id, save: true)
+                    }) {
+                        HStack {
+                            Text(dev.name)
+                            if dev.id == state.selectedDeviceId {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(state.selectedDeviceName.isEmpty ? "BlackHole 2ch" : state.selectedDeviceName)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8))
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(6)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
                 }
-                .menuStyle(BorderlessButtonMenuStyle())
-                .frame(minWidth: 120, maxWidth: 170)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color.cyan)
+                    
+                    Text(state.selectedDeviceName.isEmpty ? "BlackHole 2ch" : state.selectedDeviceName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.gray)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
             }
+            .menuStyle(BorderlessButtonMenuStyle())
+            .fixedSize()
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 20)
         .padding(.top, 9)
         .padding(.bottom, 9)
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
