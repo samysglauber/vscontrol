@@ -771,11 +771,15 @@ class PlaybackState: ObservableObject {
                 if let playing = eventData["is_playing"] as? Bool {
                     // Fallback de segurança para avanço automático de Setlist caso o evento WebSocket de fim se perca
                     if self.isPlaying && !playing && self.totalSeconds > 0 && self.currentSeconds >= self.totalSeconds - 0.4 {
-                        if self.autoAdvance {
+                        if self.autoAdvance && !self.hasTriggeredCrossfade {
                             self.advanceToNextSetlistSong()
                         }
                     }
-                    if self.isPlaying != playing { self.isPlaying = playing }
+                    if self.hasTriggeredCrossfade && !playing {
+                        // Ignora evento residual de pausa da música anterior durante a janela de transição
+                    } else if self.isPlaying != playing {
+                        self.isPlaying = playing
+                    }
                 }
                 if let fState = eventData["tracks_fade_state"] as? String {
                     self.isFadedOut = (fState == "faded_out")
@@ -863,6 +867,10 @@ class PlaybackState: ObservableObject {
                     }
                 }
             } else if event == "song_ended" {
+                if self.hasTriggeredCrossfade {
+                    // Ignora evento residual de fim da música anterior durante a janela de crossfade
+                    return
+                }
                 self.isPlaying = false
                 if self.autoAdvance {
                     self.advanceToNextSetlistSong()
@@ -1602,7 +1610,15 @@ class PlaybackState: ObservableObject {
     }
     
     func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
-        self.hasTriggeredCrossfade = false
+        if crossfade {
+            self.hasTriggeredCrossfade = true
+            self.isPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self.hasTriggeredCrossfade = false
+            }
+        } else {
+            self.hasTriggeredCrossfade = false
+        }
         self.undoStack.removeAll()
         self.redoStack.removeAll()
         self.undoNotificationMessage = nil
@@ -1613,9 +1629,6 @@ class PlaybackState: ObservableObject {
         self.isFadingOut = false
         self.isFadedOut = false
         self.isFadingIn = false
-        if crossfade {
-            self.isPlaying = true
-        }
         
         // 1. OBTÉM DADOS COMPLETOS DA MÚSICA SINCRONIZADAMENTE (0.00s)
         let cached = getOrLoadSongData(for: song, fallbackCues: cues)
@@ -1714,12 +1727,8 @@ class PlaybackState: ObservableObject {
                     self.abletonSynced = false
                 }
                 if autoPlay {
-                    if !crossfade {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            self.sendAction("play")
-                        }
-                    } else {
-                        self.isPlaying = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        self.sendAction("play")
                     }
                 }
             }

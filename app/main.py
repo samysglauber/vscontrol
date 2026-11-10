@@ -317,6 +317,8 @@ def load_song(req: LoadSongRequest):
         crossfade=req.crossfade,
         crossfade_duration=req.crossfade_duration
     )
+    if req.crossfade:
+        engine.play()
 
     tot_dur = engine.total_frames / engine.sample_rate if (engine.total_frames and engine.sample_rate) else 0.0
     song["total_duration"] = tot_dur

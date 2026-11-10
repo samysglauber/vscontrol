@@ -214,7 +214,7 @@ class LiveAudioEngine:
 
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4), crossfade: bool = False, crossfade_duration: float = 4.0):
         """Carrega uma música na memória e prepara o grid de compassos."""
-        is_xfade_transition = crossfade and self.is_playing and self.audio_data is not None and self.stream is not None
+        is_xfade_transition = crossfade and self.audio_data is not None
 
         if is_xfade_transition:
             # Salva o trecho restante da música anterior para fade-out suave no Canal R (PA)
@@ -267,6 +267,8 @@ class LiveAudioEngine:
 
             if is_xfade_transition:
                 self.is_playing = True
+                self._start_stream()
+                self._notify_event("play_state", {"is_playing": True})
 
     def play(self):
         """Inicia a reprodução."""
