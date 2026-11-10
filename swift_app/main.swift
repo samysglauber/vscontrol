@@ -5738,10 +5738,40 @@ struct SongEditorSheetView: View {
 // 11. INICIALIZAÇÃO NATIVA APPKIT
 // ==========================================
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     var window: NSWindow!
     private var recentSetlistsSubmenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
+    
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
+    }
+    
+    func windowWillClose(_ notification: Notification) {
+        NSApp.terminate(nil)
+    }
+    
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            window?.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        PlaybackState.shared.saveSetlistState()
+        let semaphore = DispatchSemaphore(value: 0)
+        if let url = URL(string: "http://127.0.0.1:8080/api/action") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: ["action": "pause"])
+            URLSession.shared.dataTask(with: req) { _, _, _ in
+                semaphore.signal()
+            }.resume()
+            _ = semaphore.wait(timeout: .now() + 0.3)
+        }
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -5759,6 +5789,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             backing: .buffered,
             defer: false
         )
+        window.delegate = self
         window.minSize = NSSize(width: 900, height: 440)
         
         window.center()
