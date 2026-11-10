@@ -1,139 +1,106 @@
 <div align="center">
 
-# 🎛️ VS Control
+<img src="docs/app-icon-256.png" alt="Ícone do VS Control" width="112" height="112">
 
-### Playback de VSs e faixas split ao vivo, nativo para macOS
+# VS Control
 
-Estilo **Multitracks Playback / Apple Logic Pro**, com latência zero e sincronização perfeita.
+**Playback de VSs split (L/R) para o palco. Nativo para macOS.**
 
-![Plataforma](https://img.shields.io/badge/plataforma-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
-![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?style=for-the-badge&logo=swift&logoColor=white)
-![Áudio](https://img.shields.io/badge/áudio-CoreAudio%20%2B%20BlackHole-7B2FF7?style=for-the-badge)
-![Remote](https://img.shields.io/badge/remote-WebSocket-00B894?style=for-the-badge)
+Leve, rápido e confiável. Sem multitracks pesadas, sem complicação.
 
-[Funcionalidades](#-funcionalidades) •
-[Como funciona](#-como-funciona) •
-[Instalação](#-instalação) •
-[Controle remoto](#-controle-remoto-pelo-smartphone) •
-[Atalhos](#%EF%B8%8F-atalhos-de-teclado)
+![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white)
+![Swift](https://img.shields.io/badge/Swift-F05138?style=flat-square&logo=swift&logoColor=white)
+![WebSocket](https://img.shields.io/badge/Remote-WebSocket-00B894?style=flat-square)
 
-<!-- 📸 Adicione aqui um print ou GIF do app:
-<img src="docs/screenshot.png" alt="VS Control" width="800">
--->
+<br>
+
+<img src="docs/screenshot.png" alt="Tela principal do VS Control" width="900">
 
 </div>
 
----
+<br>
 
-## 🎚️ Como funciona
+## Conceito
 
-O VS Control foi pensado para quem toca ao vivo com VSs em arquivos **split**: cada faixa tem dois canais independentes, que podem ser roteados para destinos diferentes.
+Feito exclusivamente para arquivos **split de dois canais**, o VS Control entrega carregamento instantâneo, troca imediata de repertório e estabilidade absoluta ao vivo.
 
-| Canal | Conteúdo | Para quem vai |
-|:-----:|----------|---------------|
-| 🔈 **L** (esquerdo) | Click + voz guia (*"Intro 2, 3, 4"*, *"Verso"*, *"Refrão"*…) | Retorno do músico / in-ear |
-| 🔊 **R** (direito) | Mix do VS: bateria, guitarras, synths, backing vocals | P.A. / mesa de som |
+| Canal | Conteúdo | Destino |
+|:-----:|----------|---------|
+| **L** | Click + voz guia | Fones / in-ear |
+| **R** | Mix do VS | P.A. |
 
----
+<br>
 
-## ✨ Funcionalidades
+## Recursos
 
-| | Recurso | Descrição |
-|---|---------|-----------|
-| 🧠 | **Mapeamento de seções com detecção IA** | Análise inteligente da forma de onda com blocos proporcionais, cores por tipo de seção e badges resumidos |
-| ⏱️ | **Salto quantizado (tempo 1)** | Trocas de seção e disparos sempre quantizados no tempo 1 do próximo compasso |
-| ✂️ | **Edição completa de cues** | Ajuste de compassos inteiros e meios compassos (`-1`, `-½`, `+½`, `+1`), split de blocos e tipos customizados |
-| ↩️ | **Desfazer / refazer total** | Histórico de até 50 passos, com feedback visual em tempo real e persistência imediata |
-| 🖱️ | **Mouse e trackpad** | Navegação horizontal suave por toda a música no espectrograma |
-| 📋 | **Setlist dinâmica** | Reorganização por drag & drop, transição automática e seleção de faixas |
-| 🌅 | **Fade stop suave** | Fade out de 3 segundos pela tecla `0` ou pelo botão no painel |
-| 📱 | **Controle remoto web / mobile** | Conexão com smartphones na mesma rede Wi-Fi via QR Code |
+**Timeline de seções**  
+Forma de onda contínua com blocos coloridos (Intro, Verso, Refrão, Ponte, Solo, Ending…), detecção por IA e edição direta em compassos e meios compassos.
 
----
+**Salto quantizado**  
+Repita um refrão, estenda uma ponte ou vá ao final. Todo disparo espera o tempo 1 do próximo compasso.
 
-## 📦 Instalação
+**Setlists `.vset`**  
+Menu rápido na barra de título, troca instantânea, drag & drop e transição `AUTO` ou `STOP` por música. A faixa atual fica em destaque no escuro do palco.
 
-### Abrir o app pronto
+**Fade das tracks**  
+Reduz o P.A. em 3 segundos mantendo click e guia nos fones. Um novo clique traz tudo de volta com Fade In suave.
 
-1. Dê dois cliques em **`VS Control.app`**, na raiz do projeto.
-2. *(Opcional)* Arraste o app para **`/Applications`** ou para o **Dock**.
+**Controle remoto**  
+Escaneie o QR Code com o celular ou tablet e dispare tudo por WebSocket, na mesma rede Wi-Fi.
+
+**Modo de edição protegido**  
+Bloqueia alterações acidentais durante a apresentação.
+
+<br>
+
+## Atalhos
+
+| Tecla | Ação |
+|:-----:|------|
+| `Espaço` | Play / Pause |
+| `←` / `→` | Navegar pelas seções |
+| `Enter` | Disparar salto quantizado para a seção |
+| `Esc` | Cancelar seleção de seção |
+| `L` | Ativar / desativar loop da seção |
+| `0` | Fade out / fade in das tracks (3s) |
+| `1` a `8` | Disparar músicas 1 a 8 da setlist |
+| `⌘ Z` | Desfazer (até 50 passos) |
+| `⇧ ⌘ Z` | Refazer |
+| `⌘ N` | Novo setlist |
+| `⌘ O` | Abrir setlist |
+| `⌘ S` | Salvar setlist |
+| `⇧ ⌘ S` | Salvar setlist como |
+
+<br>
+
+## Instalação e Execução
+
+### Abrir o aplicativo pronto
+1. Dê dois cliques em **`VS Control.app`** na raiz do projeto.
+2. *(Opcional)* Arraste para a pasta **/Applications** ou adicione ao **Dock**.
 
 ### Compilar a partir do código-fonte
-
 ```bash
-./scripts/build.sh
+swiftc swift_app/main.swift -o "VS Control.app/Contents/MacOS/VSControl"
 ```
 
-Ou manualmente pelo terminal:
+<br>
 
-```bash
-swiftc -O swift_app/main.swift -o swift_app/VSControl -framework SwiftUI -framework AppKit
-cp swift_app/VSControl "VS Control.app/Contents/MacOS/VSControl"
-```
+## Áudio com BlackHole 2ch
 
----
-
-## 🔊 Roteamento de áudio com BlackHole 2ch
-
-Para enviar o áudio do VS Control a outros softwares (como o **Ableton Live**), use o driver virtual **BlackHole 2ch**.
-
-**1. Instale o driver**
+Para rotear o som para outros softwares ou DAWs:
 
 ```bash
 ./scripts/install_blackhole.sh
-```
-
-**2. Reinicie o serviço de áudio do macOS**
-
-Drivers de áudio do CoreAudio exigem a reinicialização do serviço:
-
-```bash
 sudo killall coreaudiod
 ```
 
-**3. Pronto!** O **BlackHole 2ch** aparecerá automaticamente na lista de saídas de áudio do app e no Ableton Live.
+O **BlackHole 2ch** passa a aparecer nas saídas do app.
 
----
-
-## 📱 Controle remoto pelo smartphone
-
-Controle o palco direto do celular, sem cabos.
-
-1. Abra o **VS Control** no Mac.
-2. Clique no botão superior direito **`📱 Remote`**.
-3. Aponte a câmera do celular para o **QR Code** exibido na tela.
-4. O celular abre a interface web responsiva de palco, com botões grandes e resposta instantânea via **WebSocket**.
-
-> 💡 O Mac e o smartphone precisam estar na **mesma rede Wi-Fi**.
-
----
-
-## ⌨️ Atalhos de teclado
-
-| Atalho | Ação |
-|:------:|------|
-| `⌘ Z` | Desfazer |
-| `⇧ ⌘ Z` | Refazer |
-| `0` | Fade stop (3 segundos) |
-
----
-
-## 🗂️ Estrutura do projeto
-
-```text
-vscontrol/
-├── VS Control.app/          # Aplicativo nativo pronto para uso
-├── swift_app/
-│   └── main.swift           # Código-fonte Swift (SwiftUI + AppKit)
-└── scripts/
-    ├── build.sh             # Compila o app
-    └── install_blackhole.sh # Instala o driver BlackHole 2ch
-```
-
----
+<br>
 
 <div align="center">
 
-Feito com 🎶 para quem toca ao vivo.
+<sub>Feito para quem toca ao vivo.</sub>
 
 </div>
