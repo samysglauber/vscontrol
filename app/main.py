@@ -301,7 +301,7 @@ class LoadSongRequest(BaseModel):
 
 @app.post("/api/load")
 def load_song(req: LoadSongRequest):
-    if req.device_id is not None or req.device_name is not None:
+    if not req.crossfade and (req.device_id is not None or req.device_name is not None):
         engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
 
     song = library.get_song(req.song_id)

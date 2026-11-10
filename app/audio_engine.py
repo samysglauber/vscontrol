@@ -55,6 +55,8 @@ class LiveAudioEngine:
         self.outgoing_audio = None
         self.outgoing_pos = 0
         self.outgoing_total_frames = 0
+        self.incoming_xfade_frames = 0
+        self.incoming_xfade_pos = 0
 
         # Fade Stop & Tracks Fade (Fade Out / Fade In suave sem pausar a música e mantendo o Click)
         self.fade_stop_active = False
@@ -185,6 +187,9 @@ class LiveAudioEngine:
                         resolved_id = device_id
 
                 if resolved_id is not None and 0 <= resolved_id < len(devices):
+                    # Se o dispositivo já é o atual e o stream está ativo, não interrompe nada!
+                    if self.output_device == resolved_id and self.stream is not None:
+                        return True
                     was_playing = self.is_playing
                     self.is_playing = False
                     self.output_device = resolved_id
@@ -214,11 +219,16 @@ class LiveAudioEngine:
 
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4), crossfade: bool = False, crossfade_duration: float = 4.0):
         """Carrega uma música na memória e prepara o grid de compassos."""
-        is_xfade_transition = crossfade and self.audio_data is not None
+        # 1. Lê a nova faixa do disco ANTES de mexer no playback para não pausar nem travar o áudio atual
+        raw_data, sr = sf.read(filepath)
+        if len(raw_data.shape) == 1:
+            new_audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
+        else:
+            new_audio = raw_data[:, :2].astype(np.float32)
 
-        if is_xfade_transition:
-            # Salva o trecho restante da música anterior para fade-out suave no Canal R (PA)
-            with self.lock:
+        # 2. No momento exato da troca, captura a cauda de saída de Song A sem interrupção
+        with self.lock:
+            if crossfade and self.audio_data is not None and self.is_playing:
                 rem_frames = int(max(0.5, crossfade_duration) * self.sample_rate)
                 start_frame = self.pos_frame
                 end_frame = min(self.total_frames, start_frame + rem_frames)
@@ -226,21 +236,19 @@ class LiveAudioEngine:
                     self.outgoing_audio = self.audio_data[start_frame:end_frame].copy()
                     self.outgoing_pos = 0
                     self.outgoing_total_frames = len(self.outgoing_audio)
+                    self.incoming_xfade_frames = self.outgoing_total_frames
+                    self.incoming_xfade_pos = 0
                 else:
                     self.outgoing_audio = None
-        else:
-            with self.lock:
-                self.is_playing = False
+                    self.incoming_xfade_frames = 0
+                    self.incoming_xfade_pos = 0
+            else:
                 self.outgoing_audio = None
-            self._stop_stream()
+                self.incoming_xfade_frames = 0
+                self.incoming_xfade_pos = 0
+                self.is_playing = False
+                self._stop_stream()
 
-        raw_data, sr = sf.read(filepath)
-        if len(raw_data.shape) == 1:
-            new_audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
-        else:
-            new_audio = raw_data[:, :2].astype(np.float32)
-
-        with self.lock:
             self.filepath = filepath
             self.sample_rate = sr
             self.audio_data = new_audio
@@ -265,9 +273,10 @@ class LiveAudioEngine:
             self.pad_buffer = self.pad_gen.get_pad_chunk(self.pad_key, duration_sec=10.0)
             self.pad_pos = 0
 
-            if is_xfade_transition:
+            if crossfade:
                 self.is_playing = True
-                self._start_stream()
+                if self.stream is None:
+                    self._start_stream()
                 self._notify_event("play_state", {"is_playing": True})
 
     def play(self):
@@ -294,6 +303,8 @@ class LiveAudioEngine:
             self.tracks_fade_frames_left = 0
             self.xfade_tail = None
             self.outgoing_audio = None
+            self.incoming_xfade_frames = 0
+            self.incoming_xfade_pos = 0
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
@@ -312,6 +323,8 @@ class LiveAudioEngine:
             self.guide_lead_in = None
             self.xfade_tail = None
             self.outgoing_audio = None
+            self.incoming_xfade_frames = 0
+            self.incoming_xfade_pos = 0
             self.fade_stop_active = False
             self.tracks_fade_gain = 1.0
             self.tracks_fade_state = "normal"
@@ -1013,7 +1026,21 @@ class LiveAudioEngine:
         # Canal R (VS Instrumentos / Tracks) - FADE SUAVE DAS TRACKS
         r_base = 0.0 if self.vs_mute else self.vs_vol
         
-        if self.tracks_fade_frames_left > 0:
+        # 1. Automação de Volume da NOVA Música (Song B): FADE IN (0.0 -> 1.0)
+        if self.incoming_xfade_frames > 0 and self.incoming_xfade_pos < self.incoming_xfade_frames:
+            n_in = min(frames, self.incoming_xfade_frames - self.incoming_xfade_pos)
+            p_start_in = self.incoming_xfade_pos / self.incoming_xfade_frames
+            p_end_in = (self.incoming_xfade_pos + n_in) / self.incoming_xfade_frames
+            fade_in = np.sin(np.linspace(p_start_in, p_end_in, n_in, endpoint=False, dtype=np.float32) * (np.pi / 2))
+            
+            chunk_r = chunk[:, 1].copy()
+            chunk_r[:n_in] *= fade_in
+            outdata[:, 1] = chunk_r * (r_base * self.tracks_fade_gain)
+            self.incoming_xfade_pos += n_in
+            if self.incoming_xfade_pos >= self.incoming_xfade_frames:
+                self.incoming_xfade_frames = 0
+                self.incoming_xfade_pos = 0
+        elif self.tracks_fade_frames_left > 0:
             n = min(frames, self.tracks_fade_frames_left)
             p_start = 1.0 - (self.tracks_fade_frames_left / max(1, self.tracks_fade_total_frames))
             self.tracks_fade_frames_left -= n
@@ -1037,29 +1064,23 @@ class LiveAudioEngine:
         else:
             outdata[:, 1] = chunk[:, 1] * (r_base * self.tracks_fade_gain)
 
-        # Adiciona o Pad no Canal R (Mix dos instrumentos/PA)
-        if self.pad_active and self.pad_buffer is not None:
-            buf_len = len(self.pad_buffer)
-            pad_slice = np.zeros((frames, 2), dtype=np.float32)
-            for i in range(frames):
-                pad_slice[i] = self.pad_buffer[self.pad_pos]
-                self.pad_pos = (self.pad_pos + 1) % buf_len
-            outdata[:, 1] += pad_slice[:, 1] * self.pad_vol
-
-        # Adiciona a cauda da música anterior em crossfade suave no Canal R (Instrumentos/PA)
+        # 2. Automação de Volume da MÚSICA ANTERIOR (Song A): FADE OUT (1.0 -> 0.0)
+        # Ambas as músicas tocam SIMULTANEAMENTE no Canal R durante o crossfade!
         if self.outgoing_audio is not None and self.outgoing_total_frames > 0:
             rem = len(self.outgoing_audio) - self.outgoing_pos
             if rem > 0:
                 n = min(frames, rem)
-                p_start = self.outgoing_pos / max(1, self.outgoing_total_frames)
-                p_end = (self.outgoing_pos + n) / max(1, self.outgoing_total_frames)
-                fade_curve = np.cos(np.linspace(p_start, p_end, n, endpoint=False, dtype=np.float32) * (np.pi / 2))
-                outdata[:n, 1] += self.outgoing_audio[self.outgoing_pos:self.outgoing_pos + n, 1] * fade_curve * r_base
+                p_start = self.outgoing_pos / self.outgoing_total_frames
+                p_end = (self.outgoing_pos + n) / self.outgoing_total_frames
+                fade_out = np.cos(np.linspace(p_start, p_end, n, endpoint=False, dtype=np.float32) * (np.pi / 2))
+                outdata[:n, 1] += self.outgoing_audio[self.outgoing_pos:self.outgoing_pos + n, 1] * (fade_out * r_base)
                 self.outgoing_pos += n
                 if self.outgoing_pos >= len(self.outgoing_audio):
                     self.outgoing_audio = None
+                    self.outgoing_pos = 0
             else:
                 self.outgoing_audio = None
+                self.outgoing_pos = 0
 
     def _render_pad_only(self, outdata: np.ndarray, frames: int):
         """Toca apenas o Pad contínuo com a música parada."""
