@@ -2487,12 +2487,14 @@ struct SetlistCarouselView: View {
                                 
                                 Text(item.song.name)
                                     .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.85))
+                                    .foregroundColor(.white)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                             }
                             .frame(width: 160, alignment: .leading)
                         }
+                        .opacity(isSelected ? 1.0 : 0.7)
+                        .animation(.easeInOut(duration: 0.2), value: isSelected)
                         
                         // Seta de Transição (Clica para alternar AUTO / STOP)
                         if index < state.setlist.count - 1 {
