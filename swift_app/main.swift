@@ -1195,6 +1195,19 @@ class PlaybackState: ObservableObject {
         self.undoNotificationMessage = nil
         self.focusedCueIdx = nil
         self.currentSong = song
+        
+        // Carrega imediatamente cache local de waveform e cues para transição instantânea sem congelar a tela
+        if let savedW = UserDefaults.standard.array(forKey: "saved_waveform_\(song.id)") as? [Double], !savedW.isEmpty {
+            self.fullWaveform = savedW
+        } else {
+            self.fullWaveform = []
+        }
+        if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
+           let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
+           !localCues.isEmpty {
+            self.currentCues = localCues
+        }
+        
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
         guard let url = URL(string: "http://127.0.0.1:8080/api/load") else { return }
@@ -3076,8 +3089,13 @@ struct SpectrogramWaveformView: View {
                             .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
                         } else {
                             // 1. Fundo Geral Estático & Onda Contínua Global (Acelerado por GPU Metal via .drawingGroup & Equatable)
-                            WaveformStaticBackgroundView(peaks: state.displayFullWaveform, totalTrackWidth: totalTrackWidth)
-                                .equatable()
+                            WaveformStaticBackgroundView(
+                                songId: state.currentSong?.id ?? "",
+                                peaks: state.displayFullWaveform,
+                                totalTrackWidth: totalTrackWidth
+                            )
+                            .equatable()
+                            .id("\(state.currentSong?.id ?? "none")_\(state.displayFullWaveform.count)")
                             
                             // 2. CAMADA DE SEÇÕES SOBREPOSTAS (Divisões e Ações por Cima da Onda)
                             HStack(spacing: 0) {
@@ -3350,16 +3368,44 @@ struct RightClickRepresentable: NSViewRepresentable {
         var action: (() -> Void)?
         
         override func hitTest(_ point: NSPoint) -> NSView? {
-            if let event = NSApp.currentEvent {
-                if event.type == .rightMouseDown || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
-                    return self
-                }
+            // 1. Verifica geometricamente se o clique está dentro dos limites deste bloco específico
+            guard let sup = superview else {
+                return self.frame.contains(point) ? self : nil
             }
+            let localPoint = self.convert(point, from: sup)
+            guard self.bounds.contains(localPoint) else {
+                return nil
+            }
+            
+            // 2. Detecta se é clique secundário (botão direito físico ou via trackpad) ou Control+Clique
+            let pressed = NSEvent.pressedMouseButtons
+            let isRightPressed = (pressed & (1 << 1)) != 0
+            let isCtrlLeft = (pressed & 1 != 0) && NSEvent.modifierFlags.contains(.control)
+            let currentType = NSApp.currentEvent?.type
+            let isRightEvent = currentType == .rightMouseDown || currentType == .rightMouseUp ||
+                               (currentType == .leftMouseDown && NSApp.currentEvent?.modifierFlags.contains(.control) == true)
+            
+            if isRightPressed || isCtrlLeft || isRightEvent {
+                return self
+            }
+            
+            // 3. Clique esquerdo comum: retorna nil para repassar para seleção de trecho e botão de loop
             return nil
         }
         
         override func rightMouseDown(with event: NSEvent) {
             action?()
+        }
+        
+        override func rightMouseUp(with event: NSEvent) {
+            // Consome o mouseUp para não propagar
+        }
+        
+        override func menu(for event: NSEvent) -> NSMenu? {
+            DispatchQueue.main.async { [weak self] in
+                self?.action?()
+            }
+            return nil
         }
         
         override func mouseDown(with event: NSEvent) {
@@ -3401,11 +3447,16 @@ struct QueuedJumpPulsingOverlay: View {
 // 8.1 FUNDO ESTÁTICO & ONDA CONTÍNUA (GPU METAL ACCELERATED VIA .drawingGroup)
 // ==========================================
 struct WaveformStaticBackgroundView: View, Equatable {
+    let songId: String
     let peaks: [Double]
     let totalTrackWidth: CGFloat
     
     static func == (lhs: WaveformStaticBackgroundView, rhs: WaveformStaticBackgroundView) -> Bool {
-        lhs.totalTrackWidth == rhs.totalTrackWidth && lhs.peaks.count == rhs.peaks.count
+        lhs.songId == rhs.songId &&
+        lhs.totalTrackWidth == rhs.totalTrackWidth &&
+        lhs.peaks.count == rhs.peaks.count &&
+        lhs.peaks.first == rhs.peaks.first &&
+        lhs.peaks.last == rhs.peaks.last
     }
     
     var body: some View {
