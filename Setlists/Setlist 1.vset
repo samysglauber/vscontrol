@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-10T14:08:52Z",
+  "createdAt" : "2026-11-10T15:11:30Z",
   "items" : [
     {
       "cues" : [
@@ -3555,7 +3555,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Ele Vem (76bpm) - vs.mp3",
         "search_query" : "Ele Vem",
         "time_signature" : "6\/8",
-        "total_duration" : 369.47591836734694
+        "total_duration" : 341.84
       },
       "transitionType" : "AUTO"
     },
@@ -21716,6 +21716,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-10T14:08:52Z",
+  "updatedAt" : "2026-11-10T15:11:30Z",
   "version" : 1
 }

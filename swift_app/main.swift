@@ -758,6 +758,12 @@ class PlaybackState: ObservableObject {
                 if let cIdx = eventData["current_cue_idx"] as? Int, self.currentCueIdx != cIdx { self.currentCueIdx = cIdx }
                 let newQueued = eventData["queued_cue_idx"] as? Int
                 if self.queuedCueIdx != newQueued { self.queuedCueIdx = newQueued }
+                if let devId = eventData["output_device_id"] as? Int, self.selectedDeviceId != devId {
+                    if let found = self.devices.first(where: { $0.id == devId }) {
+                        self.selectedDeviceId = devId
+                        self.selectedDeviceName = found.name
+                    }
+                }
                 if let loop = eventData["loop_active"] as? Bool, self.loopActive != loop { self.loopActive = loop }
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
@@ -1397,29 +1403,26 @@ class PlaybackState: ObservableObject {
                 self?.devices = devs
                 
                 let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
-                let savedId = UserDefaults.standard.object(forKey: "saved_audio_device_id") as? Int
                 
-                // 1. Tenta restaurar pelo nome salvo
+                // 1. Tenta restaurar pelo nome exato do dispositivo salvo
                 if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
                     self?.selectedDeviceId = match.id
                     self?.selectedDeviceName = match.name
                     self?.setAudioDevice(id: match.id, save: false)
-                } else if let savedId = savedId, let match = devs.first(where: { $0.id == savedId }) {
-                    self?.selectedDeviceId = match.id
-                    self?.selectedDeviceName = match.name
-                    self?.setAudioDevice(id: match.id, save: false)
-                } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
-                    self?.selectedDeviceId = blackhole.id
-                    self?.selectedDeviceName = blackhole.name
-                    self?.setAudioDevice(id: blackhole.id, save: false)
                 } else if let def = devs.first(where: { $0.is_default }) {
+                    // 2. Se o salvo não estiver conectado, usa a saída padrão atual do macOS (fones/alto-falante)
                     self?.selectedDeviceId = def.id
                     self?.selectedDeviceName = def.name
-                    self?.setAudioDevice(id: def.id, save: false)
+                    self?.setAudioDevice(id: def.id, save: true)
+                } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
+                    // 3. Fallback BlackHole
+                    self?.selectedDeviceId = blackhole.id
+                    self?.selectedDeviceName = blackhole.name
+                    self?.setAudioDevice(id: blackhole.id, save: true)
                 } else if let first = devs.first {
                     self?.selectedDeviceId = first.id
                     self?.selectedDeviceName = first.name
-                    self?.setAudioDevice(id: first.id, save: false)
+                    self?.setAudioDevice(id: first.id, save: true)
                 }
             }
         }.resume()

@@ -88,8 +88,8 @@ class LiveAudioEngine:
 
         try:
             devices = sd.query_devices()
-            # 1. Tenta restaurar dispositivo pelo nome salvo
-            if saved_name:
+            # 1. Tenta restaurar dispositivo pelo nome salvo (garantindo que não seja microfone)
+            if saved_name and "microph" not in saved_name.lower() and "microf" not in saved_name.lower():
                 for i, d in enumerate(devices):
                     if d.get("max_output_channels", 0) > 0 and d["name"] == saved_name:
                         self.output_device = i
@@ -101,6 +101,12 @@ class LiveAudioEngine:
                     if d.get("max_output_channels", 0) > 0 and "blackhole" in d["name"].lower():
                         self.output_device = i
                         break
+
+            # 3. Se ainda não encontrou, usa a saída padrão do sistema
+            if self.output_device is None:
+                def_out = sd.default.device[1]
+                if 0 <= def_out < len(devices) and devices[def_out].get("max_output_channels", 0) > 0:
+                    self.output_device = def_out
         except Exception:
             pass
         
@@ -112,8 +118,12 @@ class LiveAudioEngine:
         devices = sd.query_devices()
         out_devs = []
         for i, d in enumerate(devices):
+            name_lower = d["name"].lower()
+            # Filtra microfones virtuais ou entradas que reportam falsos canais de saída
+            if "microphone" in name_lower or "microfone" in name_lower or "camo" in name_lower:
+                continue
             if d.get("max_output_channels", 0) > 0:
-                is_blackhole = "blackhole" in d["name"].lower()
+                is_blackhole = "blackhole" in name_lower
                 out_devs.append({
                     "id": i,
                     "name": d["name"],
