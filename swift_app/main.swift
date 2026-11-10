@@ -402,6 +402,7 @@ class PlaybackState: ObservableObject {
     
     // Controle de concorrência e throttle de auto-fetch de capas
     private var isSavingSetlistDoc = false
+    private var isLoadingSetlistDoc = false
     private var attemptedCoverAutoFetchSongIds: Set<String> = []
     
     var shortFolderName: String {
@@ -543,6 +544,7 @@ class PlaybackState: ObservableObject {
         
         // 2. Busca e atualiza apenas as músicas da Setlist no backend
         fetchSetlistSongs()
+        fetchAllLibrarySongs()
         fetchTracksFolder()
         fetchDevices()
         fetchNetworkInfo()
@@ -710,7 +712,15 @@ class PlaybackState: ObservableObject {
         }
     }
     
-    func saveSetlistState() {
+    func saveSetlistState(writeToDisk: Bool = true) {
+        if setlist.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "saved_setlist_items")
+            UserDefaults.standard.removeObject(forKey: "saved_setlist_full_songs")
+            UserDefaults.standard.removeObject(forKey: "saved_last_loaded_song_id")
+            UserDefaults.standard.synchronize()
+            return
+        }
+        
         let savedItems = setlist.map { item -> [String: String] in
             return [
                 "id": item.song.id,
@@ -734,7 +744,7 @@ class PlaybackState: ObservableObject {
         UserDefaults.standard.synchronize()
         
         // Auto-salvamento no arquivo de setlist ativo (apenas se houver itens no setlist para evitar apagar arquivos)
-        if !isSavingSetlistDoc, !setlist.isEmpty, let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
+        if writeToDisk, !isLoadingSetlistDoc, !isSavingSetlistDoc, !setlist.isEmpty, let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
             isSavingSetlistDoc = true
             saveSetlistTo(url: URL(fileURLWithPath: filePath), notify: false) { [weak self] in
                 self?.isSavingSetlistDoc = false
@@ -788,13 +798,18 @@ class PlaybackState: ObservableObject {
         if isPlaying {
             playPause()
         }
+        self.isLoadingSetlistDoc = true
+        self.currentSetlistFilePath = nil
+        self.currentSetlistName = "Untitled Setlist"
         self.setlist = []
+        self.isLoadingSetlistDoc = false
         self.currentSong = nil
         self.currentCues = []
         self.fullWaveform = []
-        self.currentSetlistFilePath = nil
-        self.currentSetlistName = "Untitled Setlist"
         UserDefaults.standard.removeObject(forKey: "last_opened_setlist_path")
+        UserDefaults.standard.removeObject(forKey: "saved_setlist_items")
+        UserDefaults.standard.removeObject(forKey: "saved_setlist_full_songs")
+        UserDefaults.standard.removeObject(forKey: "saved_last_loaded_song_id")
         UserDefaults.standard.synchronize()
         showUndoFeedback("Novo Setlist criado. Adicione músicas pelo card '+ Add a Song'.")
     }
@@ -961,14 +976,17 @@ class PlaybackState: ObservableObject {
         }
         
         let applyChanges = {
-            self.setlist = restoredSongs
-            self.autoFetchCoversIfNeeded()
+            self.isLoadingSetlistDoc = true
             self.currentSetlistFilePath = url.path
             self.currentSetlistName = docName
+            self.setlist = restoredSongs
+            self.isLoadingSetlistDoc = false
+            
+            self.autoFetchCoversIfNeeded()
             self.addRecentSetlistPath(url.path)
             UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
             UserDefaults.standard.synchronize()
-            self.saveSetlistState()
+            self.saveSetlistState(writeToDisk: false)
             
             if let first = restoredSongs.first {
                 self.loadSong(first.song)
@@ -1017,17 +1035,28 @@ class PlaybackState: ObservableObject {
         showUndoFeedback("Histórico de setlists recentes limpo.")
     }
     
+    func getAvailableSetlists() -> [URL] {
+        let folder = defaultSetlistsFolder
+        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        return files
+            .filter { $0.pathExtension.lowercased() == "vset" || $0.pathExtension.lowercased() == "json" }
+            .sorted {
+                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+                return d1 > d2
+            }
+    }
+    
     func fetchSetlistSongs(retryCount: Int = 0) {
         // Carrega APENAS as músicas que estão na setlist para inicialização relâmpago
         let ids = setlist.map { $0.song.id }
-        let urlStr: String
-        if !ids.isEmpty {
-            let joined = ids.joined(separator: ",")
-            let encoded = joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined
-            urlStr = "http://127.0.0.1:8080/api/songs?ids=\(encoded)"
-        } else {
-            urlStr = "http://127.0.0.1:8080/api/songs"
-        }
+        guard !ids.isEmpty else { return }
+        
+        let joined = ids.joined(separator: ",")
+        let encoded = joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined
+        let urlStr = "http://127.0.0.1:8080/api/songs?ids=\(encoded)"
         
         guard let url = URL(string: urlStr) else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
@@ -1035,20 +1064,16 @@ class PlaybackState: ObservableObject {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.songs = songs
-                    if self.setlist.isEmpty {
-                        self.restoreSetlist(with: songs)
-                    } else {
-                        // Atualiza as instâncias da setlist com dados frescos do servidor
-                        for (idx, item) in self.setlist.enumerated() {
-                            if let updated = songs.first(where: { $0.id == item.song.id }) {
-                                self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
-                            }
+                    // Atualiza as instâncias da setlist com dados frescos do servidor
+                    for (idx, item) in self.setlist.enumerated() {
+                        if let updated = songs.first(where: { $0.id == item.song.id }) {
+                            self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
                         }
-                        if let current = self.currentSong {
-                            self.loadSong(current)
-                        } else if let first = self.setlist.first {
-                            self.loadSong(first.song)
-                        }
+                    }
+                    if let current = self.currentSong, let updated = songs.first(where: { $0.id == current.id }) {
+                        self.currentSong = updated
+                    } else if self.currentSong == nil, let first = self.setlist.first {
+                        self.loadSong(first.song)
                     }
                 }
             } else {
@@ -2259,17 +2284,79 @@ struct TopBarView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Linha 1: Barra de Título Nativa Customizada (Alinhada perfeitamente na mesma linha horizontal dos botões de fechar/minimizar/expandir do macOS)
-            HStack {
-                Spacer()
-                Text(state.currentSetlistName.isEmpty ? "VS Control" : state.currentSetlistName)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white.opacity(0.92))
-                    .lineLimit(1)
-                Spacer()
+            HStack(spacing: 0) {
+                WindowTitlebarDragView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                Menu {
+                    Section("SETLISTS SALVOS") {
+                        let available = state.getAvailableSetlists()
+                        if available.isEmpty {
+                            Text("Nenhum setlist salvo").foregroundColor(.secondary)
+                        } else {
+                            ForEach(available, id: \.path) { url in
+                                let name = url.deletingPathExtension().lastPathComponent
+                                let isCurrent = (state.currentSetlistFilePath == url.path) || (state.currentSetlistName == name)
+                                Button(action: {
+                                    _ = state.loadSetlistFrom(url: url)
+                                }) {
+                                    HStack {
+                                        Text(name)
+                                        if isCurrent {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    Button(action: { state.newSetlist() }) {
+                        Label("Novo Setlist", systemImage: "doc.badge.plus")
+                    }
+                    
+                    Button(action: { state.openSetlistDialog() }) {
+                        Label("Abrir Setlist...", systemImage: "folder")
+                    }
+                    
+                    Button(action: { state.saveSetlist() }) {
+                        Label("Salvar Setlist", systemImage: "square.and.arrow.down")
+                    }
+                    
+                    Button(action: { state.saveSetlistAs() }) {
+                        Label("Salvar Como...", systemImage: "square.and.arrow.down.on.square")
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.gray)
+                        Text(state.currentSetlistName.isEmpty ? "VS Control" : state.currentSetlistName)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white.opacity(0.95))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.gray)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .menuStyle(BorderlessButtonMenuStyle())
+                
+                WindowTitlebarDragView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 80)
             .frame(height: 32)
-            .background(WindowTitlebarDragView())
             
             // Linha 2: Métricas, Controles Centrais de Transporte e Remote
             ZStack {
