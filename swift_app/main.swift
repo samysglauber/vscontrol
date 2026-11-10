@@ -597,8 +597,8 @@ class PlaybackState: ObservableObject {
     }
     
     @Published var devices: [AudioDeviceItem] = []
-    @Published var selectedDeviceId: Int = 7
-    @Published var selectedDeviceName: String = "BlackHole 2ch"
+    @Published var selectedDeviceId: Int = -1  // -1 = not yet resolved; set by fetchDevices()
+    @Published var selectedDeviceName: String = "Output"
     
     @Published var isAddSongSheetPresented: Bool = false
     @Published var isQrModalPresented: Bool = false
@@ -651,9 +651,11 @@ class PlaybackState: ObservableObject {
         if let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name"), !savedName.isEmpty {
             self.selectedDeviceName = savedName
         }
-        if let savedId = UserDefaults.standard.object(forKey: "saved_audio_device_id") as? Int {
-            self.selectedDeviceId = savedId
-        }
+        // NOTE: Do NOT restore numeric device ID from UserDefaults here.
+        // PortAudio device indices change between sessions (USB devices plugged/unplugged).
+        // The correct ID will be resolved by name in fetchDevices().
+        // Use -1 as sentinel to indicate "not yet resolved".
+        self.selectedDeviceId = -1
         
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
         restoreInitialSetlistFromCache()
@@ -768,6 +770,14 @@ class PlaybackState: ObservableObject {
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
                 if let pad = eventData["pad_active"] as? Bool, self.padActive != pad { self.padActive = pad }
+                if event == "status" && self.selectedDeviceId < 0 {
+                    if let devId = eventData["output_device_id"] as? Int, devId >= 0 {
+                        self.selectedDeviceId = devId
+                    }
+                    if let devName = eventData["output_device_name"] as? String, !devName.isEmpty {
+                        self.selectedDeviceName = devName
+                    }
+                }
             } else if event == "fade_tracks_started" || event == "fade_stop_started" {
                 if let fState = eventData["state"] as? String {
                     self.isFadingOut = (fState == "fading_out")
@@ -1508,7 +1518,11 @@ class PlaybackState: ObservableObject {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["song_id": song.id, "device_id": self.selectedDeviceId]
+        // Only send device_id if it has been resolved by fetchDevices() (not the -1 sentinel)
+        var body: [String: Any] = ["song_id": song.id]
+        if self.selectedDeviceId >= 0 {
+            body["device_id"] = self.selectedDeviceId
+        }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
@@ -1897,7 +1911,12 @@ class PlaybackState: ObservableObject {
             queuedCueIdx = nil
             sendAction("pause")
         } else {
-            sendAction("play", body: ["device_id": self.selectedDeviceId])
+            // Only send device_id if it has been resolved (not -1 sentinel)
+            var playBody: [String: Any]? = nil
+            if self.selectedDeviceId >= 0 {
+                playBody = ["device_id": self.selectedDeviceId]
+            }
+            sendAction("play", body: playBody)
         }
     }
     
@@ -4576,7 +4595,7 @@ struct BottomMixerDock: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Color.cyan)
                     
-                    Text(state.selectedDeviceName.isEmpty ? "BlackHole 2ch" : state.selectedDeviceName)
+                    Text(state.selectedDeviceName.isEmpty ? "Output" : state.selectedDeviceName)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white)
                         .lineLimit(1)

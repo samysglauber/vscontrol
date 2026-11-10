@@ -76,6 +76,7 @@ class LiveAudioEngine:
         
         # Dispositivo de Saída (carrega preferência salva ou prioriza BlackHole)
         self.output_device = None
+        self.output_device_name = ""
         config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
         saved_name = None
         if os.path.exists(config_path):
@@ -93,6 +94,7 @@ class LiveAudioEngine:
                 for i, d in enumerate(devices):
                     if d.get("max_output_channels", 0) > 0 and d["name"] == saved_name:
                         self.output_device = i
+                        self.output_device_name = d["name"]
                         break
             
             # 2. Se não encontrou salvo, tenta BlackHole
@@ -100,6 +102,7 @@ class LiveAudioEngine:
                 for i, d in enumerate(devices):
                     if d.get("max_output_channels", 0) > 0 and "blackhole" in d["name"].lower():
                         self.output_device = i
+                        self.output_device_name = d["name"]
                         break
 
             # 3. Se ainda não encontrou, usa a saída padrão do sistema
@@ -107,6 +110,7 @@ class LiveAudioEngine:
                 def_out = sd.default.device[1]
                 if 0 <= def_out < len(devices) and devices[def_out].get("max_output_channels", 0) > 0:
                     self.output_device = def_out
+                    self.output_device_name = devices[def_out]["name"]
         except Exception:
             pass
         
@@ -149,6 +153,7 @@ class LiveAudioEngine:
                     self._stop_stream()
                     self.output_device = device_id
                     dev_name = devices[device_id].get("name", "")
+                    self.output_device_name = dev_name
                     config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
                     with open(config_path, "w", encoding="utf-8") as f:
                         json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
@@ -528,6 +533,7 @@ class LiveAudioEngine:
                 "click_mute": self.click_mute,
                 "vs_mute": self.vs_mute,
                 "output_device_id": self.output_device,
+                "output_device_name": self.output_device_name,
                 "fade_stop_active": self.tracks_fade_state != "normal",
                 "tracks_fade_state": self.tracks_fade_state,
                 "tracks_fade_gain": self.tracks_fade_gain,
