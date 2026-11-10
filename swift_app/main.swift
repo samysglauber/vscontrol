@@ -619,6 +619,7 @@ class PlaybackState: ObservableObject {
     @Published var isFadingIn: Bool = false
     @Published var abletonSynced: Bool = false
     @Published var scrollToStartTrigger: Int = 0
+    private var hasTriggeredCrossfade: Bool = false
     @Published var zoomLevel: Double = 0.35 {
         didSet {
             UserDefaults.standard.set(zoomLevel, forKey: "saved_timeline_zoom_level")
@@ -795,6 +796,7 @@ class PlaybackState: ObservableObject {
                 if let vVol = eventData["vs_vol"] as? Double, abs(self.vsVol - vVol) > 0.005 { self.vsVol = vVol }
                 if let curSec = eventData["current_seconds"] as? Double, abs(self.currentSeconds - curSec) > 0.015 { self.currentSeconds = curSec }
                 if let totSec = eventData["total_seconds"] as? Double, totSec > 0, abs(self.totalSeconds - totSec) > 0.015 { self.totalSeconds = totSec }
+                self.checkSongTransitions(currentSeconds: self.currentSeconds)
                 if let bar = eventData["bar"] as? Int, self.currentBar != bar { self.currentBar = bar }
                 if let beat = eventData["beat"] as? Int, self.currentBeat != beat { self.currentBeat = beat }
                 if let bpmVal = eventData["bpm"] as? Double, abs(self.bpm - bpmVal) > 0.01 { self.bpm = bpmVal }
@@ -870,6 +872,7 @@ class PlaybackState: ObservableObject {
     }
     
     func advanceToNextSetlistSong() {
+        if hasTriggeredCrossfade { return }
         guard let current = currentSong,
               let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }) else {
             return
@@ -881,6 +884,68 @@ class PlaybackState: ObservableObject {
             let trans = SongTransitionType.from(raw: currentItem.transitionType)
             let shouldAutoPlay = (trans == .cue || trans == .crossfade)
             loadSong(nextItem.song, cues: nextItem.cues, autoPlay: shouldAutoPlay)
+        }
+    }
+    
+    func calculateCountInDuration(for setlistSong: SetlistSong) -> Double {
+        let song = setlistSong.song
+        let cues = setlistSong.cues ?? song.cues ?? []
+        
+        // Se a música tem seções e a segunda seção (ex: Intro) existe:
+        if cues.count > 1 {
+            let cue1Time = cues[1].time
+            if cue1Time > 0.5 {
+                return cue1Time
+            }
+        }
+        
+        // Se não tiver cues, calcula 2 compassos baseado em BPM e Fórmula de Compasso
+        let bpm = song.bpm ?? 120.0
+        let parts = (song.time_signature ?? "4/4").split(separator: "/")
+        let beatsPerBar = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let secPerBeat = 60.0 / max(30.0, bpm)
+        let twoBarsDuration = secPerBeat * beatsPerBar * 2.0
+        return max(2.0, min(8.0, twoBarsDuration))
+    }
+    
+    func checkSongTransitions(currentSeconds: Double) {
+        guard isPlaying,
+              autoAdvance,
+              !hasTriggeredCrossfade,
+              totalSeconds > 0,
+              let current = currentSong,
+              let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }) else {
+            return
+        }
+        
+        let currentItem = setlist[currentIndex]
+        let trans = SongTransitionType.from(raw: currentItem.transitionType)
+        
+        guard trans == .crossfade,
+              currentIndex + 1 < setlist.count else {
+            return
+        }
+        
+        let nextItem = setlist[currentIndex + 1]
+        let countInDuration = calculateCountInDuration(for: nextItem)
+        
+        // Identifica o início do último bloco (Ending/Outro) da música atual
+        let lastCueTime: Double
+        if let cues = currentItem.cues ?? current.cues, !cues.isEmpty {
+            lastCueTime = cues.last?.time ?? 0.0
+        } else {
+            lastCueTime = 0.0
+        }
+        
+        // Opção A: A contagem da próxima música termina exatamente quando a música atual termina
+        // O disparo ocorre na reta final do Ending: max(lastCueTime, totalSeconds - countInDuration)
+        let triggerTime = max(lastCueTime, totalSeconds - countInDuration)
+        
+        if currentSeconds >= triggerTime && totalSeconds > countInDuration {
+            self.hasTriggeredCrossfade = true
+            let effectiveDuration = totalSeconds - currentSeconds
+            let xfadeDuration = max(countInDuration, effectiveDuration)
+            self.loadSong(nextItem.song, cues: nextItem.cues, autoPlay: true, crossfade: true, crossfadeDuration: xfadeDuration)
         }
     }
     
@@ -1536,7 +1601,8 @@ class PlaybackState: ObservableObject {
         }.resume()
     }
     
-    func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false) {
+    func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
+        self.hasTriggeredCrossfade = false
         self.undoStack.removeAll()
         self.redoStack.removeAll()
         self.undoNotificationMessage = nil
@@ -1547,6 +1613,9 @@ class PlaybackState: ObservableObject {
         self.isFadingOut = false
         self.isFadedOut = false
         self.isFadingIn = false
+        if crossfade {
+            self.isPlaying = true
+        }
         
         // 1. OBTÉM DADOS COMPLETOS DA MÚSICA SINCRONIZADAMENTE (0.00s)
         let cached = getOrLoadSongData(for: song, fallbackCues: cues)
@@ -1584,6 +1653,10 @@ class PlaybackState: ObservableObject {
         }
         if !self.selectedDeviceName.isEmpty && self.selectedDeviceName != "Output" {
             body["device_name"] = self.selectedDeviceName
+        }
+        if crossfade {
+            body["crossfade"] = true
+            body["crossfade_duration"] = crossfadeDuration
         }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
@@ -1641,8 +1714,12 @@ class PlaybackState: ObservableObject {
                     self.abletonSynced = false
                 }
                 if autoPlay {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        self.sendAction("play")
+                    if !crossfade {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            self.sendAction("play")
+                        }
+                    } else {
+                        self.isPlaying = true
                     }
                 }
             }
@@ -2026,6 +2103,7 @@ class PlaybackState: ObservableObject {
     
     func restart() {
         if isFadingOut { isFadingOut = false }
+        hasTriggeredCrossfade = false
         queuedCueIdx = nil
         focusedCueIdx = nil
         triggerScrollToStart()
@@ -2034,6 +2112,7 @@ class PlaybackState: ObservableObject {
     
     func seekToSeconds(_ sec: Double) {
         if isFadingOut { isFadingOut = false }
+        hasTriggeredCrossfade = false
         queuedCueIdx = nil
         sendAction("seek", body: ["seconds": sec])
     }

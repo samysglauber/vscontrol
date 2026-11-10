@@ -296,6 +296,8 @@ class LoadSongRequest(BaseModel):
     song_id: str
     device_id: int | None = None
     device_name: str | None = None
+    crossfade: bool = False
+    crossfade_duration: float = 4.0
 
 @app.post("/api/load")
 def load_song(req: LoadSongRequest):
@@ -311,7 +313,9 @@ def load_song(req: LoadSongRequest):
         filepath=song["path"],
         bpm=song["bpm"],
         cues=song["cues"],
-        time_signature=ts
+        time_signature=ts,
+        crossfade=req.crossfade,
+        crossfade_duration=req.crossfade_duration
     )
 
     tot_dur = engine.total_frames / engine.sample_rate if (engine.total_frames and engine.sample_rate) else 0.0

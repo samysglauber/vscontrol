@@ -51,6 +51,11 @@ class LiveAudioEngine:
         self.xfade_in_total = 0
         self.xfade_duration_sec = 0.030 # 30ms
 
+        # Cauda de saída para Crossfade entre músicas (Canal R fade-out suave / Canal L contagem limpa)
+        self.outgoing_audio = None
+        self.outgoing_pos = 0
+        self.outgoing_total_frames = 0
+
         # Fade Stop & Tracks Fade (Fade Out / Fade In suave sem pausar a música e mantendo o Click)
         self.fade_stop_active = False
         self.tracks_fade_gain = 1.0  # 1.0 = normal, 0.0 = totalmente atenuado
@@ -207,24 +212,38 @@ class LiveAudioEngine:
         self._notify_event("device_changed", {"output_device_id": self.output_device, "output_device_name": self.output_device_name})
         return True
 
-    def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4)):
+    def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4), crossfade: bool = False, crossfade_duration: float = 4.0):
         """Carrega uma música na memória e prepara o grid de compassos."""
-        with self.lock:
-            self.is_playing = False
-        self._stop_stream()
+        is_xfade_transition = crossfade and self.is_playing and self.audio_data is not None and self.stream is not None
+
+        if is_xfade_transition:
+            # Salva o trecho restante da música anterior para fade-out suave no Canal R (PA)
+            with self.lock:
+                rem_frames = int(max(0.5, crossfade_duration) * self.sample_rate)
+                start_frame = self.pos_frame
+                end_frame = min(self.total_frames, start_frame + rem_frames)
+                if end_frame > start_frame:
+                    self.outgoing_audio = self.audio_data[start_frame:end_frame].copy()
+                    self.outgoing_pos = 0
+                    self.outgoing_total_frames = len(self.outgoing_audio)
+                else:
+                    self.outgoing_audio = None
+        else:
+            with self.lock:
+                self.is_playing = False
+                self.outgoing_audio = None
+            self._stop_stream()
+
+        raw_data, sr = sf.read(filepath)
+        if len(raw_data.shape) == 1:
+            new_audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
+        else:
+            new_audio = raw_data[:, :2].astype(np.float32)
+
         with self.lock:
             self.filepath = filepath
-            
-            raw_data, sr = sf.read(filepath)
             self.sample_rate = sr
-            
-            # Garante que os dados estejam em float32 estéreo
-            if len(raw_data.shape) == 1:
-                # Se for mono, duplica em L e R
-                self.audio_data = np.column_stack((raw_data, raw_data)).astype(np.float32)
-            else:
-                self.audio_data = raw_data[:, :2].astype(np.float32)
-                
+            self.audio_data = new_audio
             self.total_frames = len(self.audio_data)
             self.pos_frame = 0
             self.bpm = bpm if bpm and bpm > 30 else 120.0
@@ -245,6 +264,9 @@ class LiveAudioEngine:
             # Prepara buffer do Pad na tonalidade
             self.pad_buffer = self.pad_gen.get_pad_chunk(self.pad_key, duration_sec=10.0)
             self.pad_pos = 0
+
+            if is_xfade_transition:
+                self.is_playing = True
 
     def play(self):
         """Inicia a reprodução."""
@@ -269,6 +291,7 @@ class LiveAudioEngine:
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
             self.xfade_tail = None
+            self.outgoing_audio = None
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
@@ -286,6 +309,7 @@ class LiveAudioEngine:
             self.queued_jump = None
             self.guide_lead_in = None
             self.xfade_tail = None
+            self.outgoing_audio = None
             self.fade_stop_active = False
             self.tracks_fade_gain = 1.0
             self.tracks_fade_state = "normal"
@@ -1019,6 +1043,21 @@ class LiveAudioEngine:
                 pad_slice[i] = self.pad_buffer[self.pad_pos]
                 self.pad_pos = (self.pad_pos + 1) % buf_len
             outdata[:, 1] += pad_slice[:, 1] * self.pad_vol
+
+        # Adiciona a cauda da música anterior em crossfade suave no Canal R (Instrumentos/PA)
+        if self.outgoing_audio is not None and self.outgoing_total_frames > 0:
+            rem = len(self.outgoing_audio) - self.outgoing_pos
+            if rem > 0:
+                n = min(frames, rem)
+                p_start = self.outgoing_pos / max(1, self.outgoing_total_frames)
+                p_end = (self.outgoing_pos + n) / max(1, self.outgoing_total_frames)
+                fade_curve = np.cos(np.linspace(p_start, p_end, n, endpoint=False, dtype=np.float32) * (np.pi / 2))
+                outdata[:n, 1] += self.outgoing_audio[self.outgoing_pos:self.outgoing_pos + n, 1] * fade_curve * r_base
+                self.outgoing_pos += n
+                if self.outgoing_pos >= len(self.outgoing_audio):
+                    self.outgoing_audio = None
+            else:
+                self.outgoing_audio = None
 
     def _render_pad_only(self, outdata: np.ndarray, frames: int):
         """Toca apenas o Pad contínuo com a música parada."""
