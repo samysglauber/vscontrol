@@ -648,6 +648,12 @@ class PlaybackState: ObservableObject {
         if let savedZoom = UserDefaults.standard.object(forKey: "saved_timeline_zoom_level") as? Double {
             self.zoomLevel = savedZoom
         }
+        if let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name"), !savedName.isEmpty {
+            self.selectedDeviceName = savedName
+        }
+        if let savedId = UserDefaults.standard.object(forKey: "saved_audio_device_id") as? Int {
+            self.selectedDeviceId = savedId
+        }
         
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
         restoreInitialSetlistFromCache()
@@ -758,12 +764,6 @@ class PlaybackState: ObservableObject {
                 if let cIdx = eventData["current_cue_idx"] as? Int, self.currentCueIdx != cIdx { self.currentCueIdx = cIdx }
                 let newQueued = eventData["queued_cue_idx"] as? Int
                 if self.queuedCueIdx != newQueued { self.queuedCueIdx = newQueued }
-                if let devId = eventData["output_device_id"] as? Int, self.selectedDeviceId != devId {
-                    if let found = self.devices.first(where: { $0.id == devId }) {
-                        self.selectedDeviceId = devId
-                        self.selectedDeviceName = found.name
-                    }
-                }
                 if let loop = eventData["loop_active"] as? Bool, self.loopActive != loop { self.loopActive = loop }
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
@@ -2251,7 +2251,13 @@ class PlaybackState: ObservableObject {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        URLSession.shared.dataTask(with: req).resume()
+        URLSession.shared.dataTask(with: req) { _, response, error in
+            if let error = error {
+                print("⚠️ [sendAction] Erro ao enviar para /\(endpoint): \(error)")
+            } else if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                print("⚠️ [sendAction] HTTP \(http.statusCode) para /\(endpoint)")
+            }
+        }.resume()
     }
 }
 

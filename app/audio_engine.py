@@ -145,6 +145,7 @@ class LiveAudioEngine:
                         print(f"Dispositivo {device_id} é um microfone e não pode ser usado como saída.")
                         return False
                     was_playing = self.is_playing
+                    self.is_playing = False
                     self._stop_stream()
                     self.output_device = device_id
                     dev_name = devices[device_id].get("name", "")
@@ -152,6 +153,7 @@ class LiveAudioEngine:
                     with open(config_path, "w", encoding="utf-8") as f:
                         json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
                     if was_playing:
+                        self.is_playing = True
                         self._start_stream()
                     print(f"Dispositivo de saída alterado para [{device_id}] {dev_name}")
                 else:
@@ -643,21 +645,41 @@ class LiveAudioEngine:
             print(f"Erro ao consultar dispositivos de áudio: {e}")
             target_device = None
 
-        # 2. Tenta abrir com o dispositivo alvo
+        # 2. Tenta abrir com o dispositivo alvo (tenta taxa da música e taxa nativa do dispositivo)
+        dev_default_sr = 48000
         try:
-            self.stream = sd.OutputStream(
-                samplerate=self.sample_rate,
-                channels=2,
-                dtype='float32',
-                device=target_device,
-                callback=self._audio_callback,
-                blocksize=512
-            )
-            self.stream.start()
-            self.output_device = target_device
-            return
-        except Exception as e:
-            print(f"Erro ao iniciar OutputStream com dispositivo {target_device}: {e}. Tentando fallback...")
+            if target_device is not None and 0 <= target_device < len(devs):
+                dev_default_sr = int(devs[target_device].get("default_samplerate", 48000))
+        except Exception:
+            pass
+
+        attempts = [
+            (self.sample_rate, 512),
+            (dev_default_sr, 512),
+            (self.sample_rate, None),
+            (dev_default_sr, None),
+        ]
+
+        for sr, bs in attempts:
+            if target_device is None:
+                break
+            try:
+                kwargs = {
+                    "samplerate": sr,
+                    "channels": 2,
+                    "dtype": "float32",
+                    "device": target_device,
+                    "callback": self._audio_callback,
+                }
+                if bs is not None:
+                    kwargs["blocksize"] = bs
+                self.stream = sd.OutputStream(**kwargs)
+                self.stream.start()
+                self.output_device = target_device
+                print(f"OutputStream iniciado no dispositivo [{target_device}] (sr={sr}, blocksize={bs})")
+                return
+            except Exception as e:
+                print(f"Tentativa com dispositivo {target_device} falhou (sr={sr}, blocksize={bs}): {e}")
 
         # 3. Fallback automático para o dispositivo de saída padrão do sistema
         try:
@@ -671,7 +693,6 @@ class LiveAudioEngine:
             )
             self.stream.start()
             default_out = sd.default.device[1] if sd.default.device[1] >= 0 else None
-            self.output_device = default_out
             print(f"Áudio iniciado com sucesso usando dispositivo padrão do sistema (ID: {default_out})")
         except Exception as e2:
             print(f"Falha ao iniciar áudio no dispositivo padrão: {e2}")

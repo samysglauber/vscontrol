@@ -331,7 +331,8 @@ def load_song(req: LoadSongRequest):
 
     # Se a música não tiver capa, busca automaticamente em segundo plano
     if not song.get("has_cover"):
-        asyncio.create_task(asyncio.to_thread(library.auto_fetch_cover, req.song_id))
+        import threading
+        threading.Thread(target=library.auto_fetch_cover, args=(req.song_id,), daemon=True).start()
 
     return {"status": "loaded", "song": song, "bpm_synced": bool(song.get("bpm"))}
 
