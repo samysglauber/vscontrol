@@ -2342,7 +2342,6 @@ struct PlaybackAppView: View {
                 let isZ = event.keyCode == 6 || event.charactersIgnoringModifiers?.lowercased() == "z"
                 if event.modifierFlags.contains(.command) && isZ {
                     if state.isSongEditorPresented {
-                        NotificationCenter.default.post(name: NSNotification.Name("SongEditorUndo"), object: nil)
                         return nil
                     } else if !state.isAddSongSheetPresented && !state.isQrModalPresented {
                         if event.modifierFlags.contains(.shift) {
@@ -5151,7 +5150,7 @@ struct QuickSectionEditPopoverView: View {
 }
 
 // ==========================================
-// 13. MODAL EDITOR DE MÚSICA & CUES (IA & COMPASSOS)
+// 13. MODAL EDITOR DE MÚSICA (BPM, COMPASSO & IA)
 // ==========================================
 struct SongEditorSheetView: View {
     @ObservedObject var state: PlaybackState
@@ -5160,25 +5159,8 @@ struct SongEditorSheetView: View {
     @State private var localBpmText: String = ""
     @State private var localTimeSignature: String = "4/4"
     @State private var localCues: [CueSection] = []
-    @State private var localUndoStack: [[CueSection]] = []
-    
-    private func pushLocalUndo() {
-        localUndoStack.append(localCues)
-        if localUndoStack.count > 30 { localUndoStack.removeFirst() }
-    }
-    
-    private func undoLocal() {
-        guard let prev = localUndoStack.popLast() else { return }
-        localCues = prev
-    }
     
     let timeSignatureOptions = ["4/4", "2/4", "3/4", "6/8"]
-    let cueTypeOptions = [
-        "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
-        "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
-        "Bridge", "Solo", "Tag", "Ending", "Outro"
-    ]
-    @State private var customEditingIdx: Int? = nil
     
     var body: some View {
         VStack(spacing: 0) {
@@ -5189,7 +5171,7 @@ struct SongEditorSheetView: View {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.cyan)
-                        Text("Song Editor & Cue Mapping")
+                        Text("Song Editor")
                             .font(.headline)
                             .foregroundColor(.white)
                     }
@@ -5202,23 +5184,6 @@ struct SongEditorSheetView: View {
                     }
                 }
                 Spacer()
-                if !localUndoStack.isEmpty {
-                    Button(action: undoLocal) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .bold))
-                            Text("Desfazer")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        .foregroundColor(.cyan)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.cyan.opacity(0.12))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Desfazer alteração local (⌘Z)")
-                }
                 Button(action: { presentationMode.wrappedValue.dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
@@ -5226,462 +5191,248 @@ struct SongEditorSheetView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background(Color(red: 0.12, green: 0.12, blue: 0.13))
             
             Divider().background(Color.white.opacity(0.1))
             
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 20) {
-                    // 1. Painel de BPM, Compasso, Capa e Reprocessamento com IA
+            // Corpo Principal
+            VStack(spacing: 16) {
+                // 1. Card da Capa & Informações da Música
+                if let song = state.currentSong {
                     HStack(spacing: 16) {
-                        // Capa da Música
-                        if let song = state.currentSong {
-                            HStack(spacing: 10) {
-                                SongCoverView(
-                                    song: song,
-                                    width: 52,
-                                    height: 52,
-                                    cornerRadius: 8,
-                                    isSelected: false,
-                                    refreshId: state.coverRefreshTrigger
-                                )
+                        SongCoverView(
+                            song: song,
+                            width: 68,
+                            height: 68,
+                            cornerRadius: 8,
+                            isSelected: false,
+                            refreshId: state.coverRefreshTrigger
+                        )
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(song.name)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            
+                            Text(song.filename)
+                                .font(.system(size: 11))
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                            
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    state.openCoverPicker(for: song)
+                                }) {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "photo.badge.plus")
+                                            .font(.system(size: 11))
+                                        Text(song.has_cover == true ? "Alterar Capa" : "Buscar Capa")
+                                            .font(.system(size: 11, weight: .semibold))
+                                    }
+                                    .foregroundColor(.cyan)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.cyan.opacity(0.12))
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(PlainButtonStyle())
                                 
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("COVER")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .foregroundColor(.gray)
-                                    
+                                if song.has_cover == true {
                                     Button(action: {
-                                        state.openCoverPicker(for: song)
+                                        state.removeCover(for: song)
                                     }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "photo")
-                                                .font(.system(size: 10, weight: .bold))
-                                            Text(song.has_cover == true ? "Alterar..." : "Buscar...")
-                                                .font(.system(size: 11, weight: .semibold))
+                                        HStack(spacing: 5) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 11))
+                                            Text("Remover Capa")
+                                                .font(.system(size: 11, weight: .medium))
                                         }
-                                        .foregroundColor(.cyan)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.cyan.opacity(0.12))
+                                        .foregroundColor(.red.opacity(0.85))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.red.opacity(0.10))
                                         .cornerRadius(6)
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                 }
                             }
-                            .padding(10)
-                            .background(Color.white.opacity(0.03))
-                            .cornerRadius(10)
                         }
-                        
-                        // Edição de BPM
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("TEMPO (BPM)")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.gray)
-                            HStack(spacing: 8) {
-                                Button(action: {
-                                    if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
-                                        let next = round(val - 1.0)
-                                        localBpmText = String(format: "%.1f", next)
-                                        recalculateCueTimes()
-                                    }
-                                }) {
-                                    Image(systemName: "minus")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .frame(width: 28, height: 28)
-                                        .background(Color.white.opacity(0.08))
-                                        .cornerRadius(6)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                                
-                                TextField("BPM", text: $localBpmText)
-                                    .textFieldStyle(PlainTextFieldStyle())
-                                    .font(.system(size: 16, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white)
-                                    .frame(width: 65, height: 28)
-                                    .multilineTextAlignment(.center)
-                                    .background(Color.black.opacity(0.3))
-                                    .cornerRadius(6)
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.15), lineWidth: 1))
-                                    .onChange(of: localBpmText) { _, _ in
-                                        recalculateCueTimes()
-                                    }
-                                
-                                Button(action: {
-                                    if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
-                                        let next = round(val + 1.0)
-                                        localBpmText = String(format: "%.1f", next)
-                                        recalculateCueTimes()
-                                    }
-                                }) {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .frame(width: 28, height: 28)
-                                        .background(Color.white.opacity(0.08))
-                                        .cornerRadius(6)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                        }
-                        .padding(12)
-                        .background(Color.white.opacity(0.03))
-                        .cornerRadius(10)
-                        
-                        // Edição do Tipo de Compasso
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("TIME SIGNATURE")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.gray)
-                            Picker("", selection: $localTimeSignature) {
-                                ForEach(timeSignatureOptions, id: \.self) { ts in
-                                    Text(ts).tag(ts)
-                                }
-                            }
-                            .pickerStyle(SegmentedPickerStyle())
-                            .frame(width: 150)
-                            .onChange(of: localTimeSignature) { _, _ in
-                                recalculateCueTimes()
-                            }
-                        }
-                        .padding(12)
-                        .background(Color.white.opacity(0.03))
-                        .cornerRadius(10)
-                        
-                        // Voz Guia na Troca (Lead-in)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("GUIDE LEAD-IN")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.gray)
-                            Picker("", selection: $state.guideLeadInBars) {
-                                Text("1 Bar").tag(1.0)
-                                Text("½ Bar").tag(0.5)
-                                Text("Off").tag(0.0)
-                            }
-                            .pickerStyle(SegmentedPickerStyle())
-                            .frame(width: 140)
-                        }
-                        .padding(12)
-                        .background(Color.white.opacity(0.03))
-                        .cornerRadius(10)
-                        
                         Spacer()
-                        
-                        // Botão Reprocessar com IA
-                        Button(action: {
-                            if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
-                                state.editorBpm = bpmVal
-                                state.editorTimeSignature = localTimeSignature
-                                state.reprocessWithAI()
-                            }
-                        }) {
-                            HStack(spacing: 8) {
-                                if state.isReprocessing {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                        .colorInvert()
-                                } else {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 13, weight: .bold))
-                                }
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text("Reprocess with AI")
-                                        .font(.system(size: 12, weight: .bold))
-                                    Text("Analyzes Guide & Dynamics")
-                                        .font(.system(size: 9))
-                                        .opacity(0.8)
-                                }
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            )
-                            .cornerRadius(10)
-                            .shadow(color: Color.purple.opacity(0.4), radius: 6)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(state.isReprocessing)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    
-                    // 2. Seções e Compassos da Música
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("SECTIONS & BARS (CUES)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(.gray)
-                            Spacer()
-                            Text("\(localCues.count) sections")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Cabeçalho das Colunas
-                        HStack(spacing: 12) {
-                            Text("SECTION TYPE")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.gray)
-                                .frame(width: 150, alignment: .leading)
-                            
-                            Text("BAR")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.gray)
-                                .frame(width: 145, alignment: .center)
-                            
-                            Text("TIME")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.gray)
-                                .frame(width: 80, alignment: .leading)
-                            
-                            Spacer()
-                            
-                            Text("ACTIONS")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.gray)
-                                .frame(width: 70, alignment: .trailing)
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Lista de Cues
-                        VStack(spacing: 6) {
-                            ForEach(Array(localCues.enumerated()), id: \.element.id) { idx, cue in
-                                HStack(spacing: 12) {
-                                    // Nome / Tipo de Cue com Badge Colorido (com Interlude, Post Chorus e Custom)
-                                    HStack(spacing: 6) {
-                                        Circle()
-                                            .fill(Color(hex: cue.color))
-                                            .frame(width: 10, height: 10)
-                                        
-                                        if customEditingIdx == idx || !cueTypeOptions.contains(cue.name) {
-                                            HStack(spacing: 4) {
-                                                TextField("Section", text: Binding(
-                                                    get: { cue.name },
-                                                    set: { newName in
-                                                        localCues[idx].name = newName
-                                                        localCues[idx].color = colorForCue(name: newName)
-                                                    }
-                                                ))
-                                                .textFieldStyle(PlainTextFieldStyle())
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3)
-                                                .background(Color.white.opacity(0.08))
-                                                .cornerRadius(5)
-                                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.cyan.opacity(0.6), lineWidth: 1))
-                                                .frame(width: 95)
-                                                
-                                                Button(action: {
-                                                    if !cueTypeOptions.contains(cue.name) {
-                                                        localCues[idx].name = "Chorus"
-                                                        localCues[idx].color = colorForCue(name: "Chorus")
-                                                    }
-                                                    customEditingIdx = nil
-                                                }) {
-                                                    Image(systemName: "list.bullet")
-                                                        .font(.system(size: 9))
-                                                        .foregroundColor(.gray)
-                                                }
-                                                .buttonStyle(PlainButtonStyle())
-                                                .help("Switch to preset types picker")
-                                            }
-                                        } else {
-                                            Picker("", selection: Binding(
-                                                get: { cue.name },
-                                                set: { newName in
-                                                    pushLocalUndo()
-                                                    if newName == "__custom__" {
-                                                        customEditingIdx = idx
-                                                        localCues[idx].name = "Custom Section"
-                                                        localCues[idx].color = colorForCue(name: "Custom Section")
-                                                    } else {
-                                                        localCues[idx].name = newName
-                                                        localCues[idx].color = colorForCue(name: newName)
-                                                    }
-                                                }
-                                            )) {
-                                                ForEach(cueTypeOptions, id: \.self) { opt in
-                                                    Text(opt).tag(opt)
-                                                }
-                                                Divider()
-                                                Text("Custom (Personalizado)...").tag("__custom__")
-                                            }
-                                            .pickerStyle(MenuPickerStyle())
-                                            .frame(width: 120)
-                                        }
-                                    }
-                                    .frame(width: 150, alignment: .leading)
-                                    
-                                    // Compasso (Bar #) com Stepper de Inteiros e Meios Compassos
-                                    HStack(spacing: 3) {
-                                        Button(action: {
-                                            if localCues[idx].bar > 1.0 {
-                                                pushLocalUndo()
-                                                localCues[idx].bar = max(1.0, localCues[idx].bar - 1.0)
-                                                recalculateCueTimes()
-                                            }
-                                        }) {
-                                            Text("-1")
-                                                .font(.system(size: 9, weight: .bold))
-                                                .frame(width: 20, height: 22)
-                                                .background(Color.white.opacity(0.08))
-                                                .cornerRadius(4)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .disabled(idx == 0)
-                                        .help("Remove 1 whole bar")
-                                        
-                                        Button(action: {
-                                            if localCues[idx].bar > 1.0 {
-                                                pushLocalUndo()
-                                                localCues[idx].bar = max(1.0, localCues[idx].bar - 0.5)
-                                                recalculateCueTimes()
-                                            }
-                                        }) {
-                                            Text("-½")
-                                                .font(.system(size: 9, weight: .bold))
-                                                .foregroundColor(.cyan)
-                                                .frame(width: 20, height: 22)
-                                                .background(Color.cyan.opacity(0.12))
-                                                .cornerRadius(4)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .disabled(idx == 0)
-                                        .help("Remove half bar (-½ comp / 2 tempos)")
-                                        
-                                        Text("Bar \(formatBars(localCues[idx].bar))")
-                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                            .foregroundColor(.white)
-                                            .frame(width: 58, alignment: .center)
-                                        
-                                        Button(action: {
-                                            pushLocalUndo()
-                                            localCues[idx].bar += 0.5
-                                            recalculateCueTimes()
-                                        }) {
-                                            Text("+½")
-                                                .font(.system(size: 9, weight: .bold))
-                                                .foregroundColor(.cyan)
-                                                .frame(width: 20, height: 22)
-                                                .background(Color.cyan.opacity(0.12))
-                                                .cornerRadius(4)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .disabled(idx == 0)
-                                        .help("Add half bar (+½ comp / 2 tempos - compasso quebrado)")
-                                        
-                                        Button(action: {
-                                            pushLocalUndo()
-                                            localCues[idx].bar += 1.0
-                                            recalculateCueTimes()
-                                        }) {
-                                            Text("+1")
-                                                .font(.system(size: 9, weight: .bold))
-                                                .frame(width: 20, height: 22)
-                                                .background(Color.white.opacity(0.08))
-                                                .cornerRadius(4)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .disabled(idx == 0)
-                                        .help("Add 1 whole bar")
-                                    }
-                                    .frame(width: 145, alignment: .center)
-                                    
-                                    // Tempo Calculado (MM:SS)
-                                    Text(formatTime(localCues[idx].time))
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(.white.opacity(0.8))
-                                        .frame(width: 80, alignment: .leading)
-                                    
-                                    Spacer()
-                                    
-                                    // Ações: Ouvir / Remover
-                                    HStack(spacing: 8) {
-                                        Button(action: {
-                                            state.triggerCue(idx: idx, quantize: false)
-                                            if !state.isPlaying { state.playPause() }
-                                        }) {
-                                            Image(systemName: "play.circle.fill")
-                                                .font(.system(size: 16))
-                                                .foregroundColor(.green)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .help("Play from this section with voice guide lead-in")
-                                        
-                                        Button(action: {
-                                            if localCues.count > 1 && idx > 0 {
-                                                pushLocalUndo()
-                                                localCues.remove(at: idx)
-                                                recalculateCueTimes()
-                                            }
-                                        }) {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 12))
-                                                .foregroundColor(idx > 0 ? Color.red.opacity(0.8) : Color.clear)
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .disabled(idx == 0)
-                                        .help("Delete section")
-                                    }
-                                    .frame(width: 70, alignment: .trailing)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.04))
-                                .cornerRadius(8)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        // Botão Adicionar Seção
-                        Button(action: {
-                            pushLocalUndo()
-                            let lastBar = localCues.last?.bar ?? 1.0
-                            let newBar = lastBar + 8.0
-                            let secPerBar = calculateSecPerBar()
-                            let newTime = Double(newBar - 1.0) * secPerBar
-                            let nextName = getNextDefaultName()
-                            let newCue = CueSection(
-                                id: "cue_\(UUID().uuidString.prefix(8))",
-                                name: nextName,
-                                time: round(newTime * 100) / 100,
-                                bar: newBar,
-                                color: colorForCue(name: nextName),
-                                waveform: nil
-                            )
-                            localCues.append(newCue)
-                            recalculateCueTimes()
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus.circle.fill")
-                                Text("Add New Section")
-                            }
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.cyan)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.cyan.opacity(0.08))
-                            .cornerRadius(8)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .padding(.horizontal, 20)
-                        .padding(.top, 4)
-                    }
+                    .padding(14)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
-                .padding(.bottom, 20)
+                
+                // 2. Grid de Métricas: BPM, Compasso e Lead-In
+                HStack(spacing: 12) {
+                    // BPM
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TEMPO (BPM)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.gray)
+                        HStack(spacing: 6) {
+                            Button(action: {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
+                                    let next = round(val - 1.0)
+                                    localBpmText = String(format: "%.1f", next)
+                                    recalculateCueTimes()
+                                }
+                            }) {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.white.opacity(0.08))
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            TextField("BPM", text: $localBpmText)
+                                .textFieldStyle(PlainTextFieldStyle())
+                                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 65, height: 28)
+                                .multilineTextAlignment(.center)
+                                .background(Color.black.opacity(0.3))
+                                .cornerRadius(6)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                                .onChange(of: localBpmText) { _, _ in
+                                    recalculateCueTimes()
+                                }
+                            
+                            Button(action: {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
+                                    let next = round(val + 1.0)
+                                    localBpmText = String(format: "%.1f", next)
+                                    recalculateCueTimes()
+                                }
+                            }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.white.opacity(0.08))
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    
+                    // Compasso
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TIME SIGNATURE")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.gray)
+                        Picker("", selection: $localTimeSignature) {
+                            ForEach(timeSignatureOptions, id: \.self) { ts in
+                                Text(ts).tag(ts)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .onChange(of: localTimeSignature) { _, _ in
+                            recalculateCueTimes()
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    
+                    // Lead-In
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("GUIDE LEAD-IN")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.gray)
+                        Picker("", selection: $state.guideLeadInBars) {
+                            Text("1 Bar").tag(1.0)
+                            Text("½ Bar").tag(0.5)
+                            Text("Off").tag(0.0)
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                }
+                
+                // 3. Card de Reprocessamento com Inteligência Artificial
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(colors: [Color.purple.opacity(0.35), Color.indigo.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(Color(red: 0.8, green: 0.5, blue: 1.0))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Re-análise com Inteligência Artificial")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                        Text("Detecta seções dinâmicas, voz guia e grid de compassos automaticamente.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
+                            state.editorBpm = bpmVal
+                            state.editorTimeSignature = localTimeSignature
+                            state.reprocessWithAI()
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            if state.isReprocessing {
+                                ProgressView()
+                                    .scaleEffect(0.75)
+                                    .colorInvert()
+                                Text("Analisando...")
+                                    .font(.system(size: 12, weight: .bold))
+                            } else {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("Reprocessar com IA")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .cornerRadius(8)
+                        .shadow(color: Color.purple.opacity(0.35), radius: 5, y: 2)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(state.isReprocessing)
+                }
+                .padding(14)
+                .background(Color.white.opacity(0.04))
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.purple.opacity(0.3), lineWidth: 1))
             }
+            .padding(20)
+            
+            Spacer()
             
             Divider().background(Color.white.opacity(0.1))
             
             // Footer: Cancelar e Salvar
             HStack {
-                Button("Cancel") {
+                Button("Cancelar") {
                     presentationMode.wrappedValue.dismiss()
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -5692,11 +5443,12 @@ struct SongEditorSheetView: View {
                 Button(action: {
                     if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
                         state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues)
+                        presentationMode.wrappedValue.dismiss()
                     }
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark")
-                        Text("Save Changes")
+                        Text("Salvar Alterações")
                     }
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
@@ -5710,7 +5462,7 @@ struct SongEditorSheetView: View {
             .padding(16)
             .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
-        .frame(width: 760, height: 600)
+        .frame(width: 620, height: 430)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .sheet(isPresented: $state.isCoverPickerPresented) {
             CoverPickerSheetView(state: state)
@@ -5719,10 +5471,12 @@ struct SongEditorSheetView: View {
             localBpmText = formatBpm(state.bpm)
             localTimeSignature = state.timeSignature
             localCues = state.currentCues
-            localUndoStack.removeAll()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SongEditorUndo"))) { _ in
-            undoLocal()
+        .onChange(of: state.bpm) { _, newBpm in
+            localBpmText = formatBpm(newBpm)
+        }
+        .onChange(of: state.timeSignature) { _, newTs in
+            localTimeSignature = newTs
         }
         .onChange(of: state.currentCues.count) { _, _ in
             localCues = state.currentCues
@@ -5753,23 +5507,6 @@ struct SongEditorSheetView: View {
             }
         }
         localCues.sort { $0.bar < $1.bar }
-    }
-    
-    private func getNextDefaultName() -> String {
-        let count = localCues.count
-        if count == 1 { return "Verse 1" }
-        if count == 2 { return "Chorus" }
-        if count == 3 { return "Verse 2" }
-        if count == 4 { return "Chorus" }
-        if count == 5 { return "Bridge" }
-        if count == 6 { return "Chorus" }
-        return "Ending"
-    }
-    
-    private func formatTime(_ sec: Double) -> String {
-        let m = Int(sec) / 60
-        let s = Int(sec) % 60
-        return String(format: "%02d:%02d", m, s)
     }
 }
 

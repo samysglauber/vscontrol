@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-10T15:35:24Z",
+  "createdAt" : "2026-11-10T17:04:20Z",
   "items" : [
     {
       "cues" : [
@@ -3555,7 +3555,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Ele Vem (76bpm) - vs.mp3",
         "search_query" : "Ele Vem",
         "time_signature" : "6\/8",
-        "total_duration" : 341.84
+        "total_duration" : 369.47591836734694
       },
       "transitionType" : "AUTO"
     },
@@ -11328,7 +11328,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Bondade de Deus (68bpm) (com teclado) - vs.mp3",
         "search_query" : "Bondade de Deus",
         "time_signature" : "4\/4",
-        "total_duration" : 306.18
+        "total_duration" : 304.6661224489796
       },
       "transitionType" : "AUTO"
     },
@@ -14594,7 +14594,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/A Ele a Glória (68bpm) - vs.mp3",
         "search_query" : "A Ele a Glória",
         "time_signature" : "4\/4",
-        "total_duration" : 290.29
+        "total_duration" : 416.47020408163263
       },
       "transitionType" : "AUTO"
     },
@@ -21716,6 +21716,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-10T15:35:24Z",
+  "updatedAt" : "2026-11-10T17:04:20Z",
   "version" : 1
 }
