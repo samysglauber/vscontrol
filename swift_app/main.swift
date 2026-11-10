@@ -636,6 +636,7 @@ class PlaybackState: ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
     
     init() {
+        URLCache.shared.removeAllCachedResponses()
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
         }
@@ -1416,7 +1417,10 @@ class PlaybackState: ObservableObject {
     
     func fetchDevices(retryCount: Int = 0) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/devices") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
             if let data = data, let devs = try? JSONDecoder().decode([AudioDeviceItem].self, from: data), !devs.isEmpty {
                 DispatchQueue.main.async {
                     self?.devices = devs
@@ -1456,14 +1460,20 @@ class PlaybackState: ObservableObject {
     
     func setAudioDevice(id: Int, save: Bool = true) {
         self.selectedDeviceId = id
+        var devName = self.selectedDeviceName
         if let d = devices.first(where: { $0.id == id }) {
             self.selectedDeviceName = d.name
+            devName = d.name
             if save {
                 UserDefaults.standard.set(d.name, forKey: "saved_audio_device_name")
                 UserDefaults.standard.set(id, forKey: "saved_audio_device_id")
             }
         }
-        sendAction("device", body: ["device_id": id])
+        var body: [String: Any] = ["device_id": id]
+        if !devName.isEmpty && devName != "Output" {
+            body["device_name"] = devName
+        }
+        sendAction("device", body: body)
     }
     
     func fetchNetworkInfo() {
@@ -1522,6 +1532,9 @@ class PlaybackState: ObservableObject {
         var body: [String: Any] = ["song_id": song.id]
         if self.selectedDeviceId >= 0 {
             body["device_id"] = self.selectedDeviceId
+        }
+        if !self.selectedDeviceName.isEmpty && self.selectedDeviceName != "Output" {
+            body["device_name"] = self.selectedDeviceName
         }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
@@ -1911,10 +1924,17 @@ class PlaybackState: ObservableObject {
             queuedCueIdx = nil
             sendAction("pause")
         } else {
-            // Only send device_id if it has been resolved (not -1 sentinel)
+            // Only send device info if resolved
             var playBody: [String: Any]? = nil
-            if self.selectedDeviceId >= 0 {
-                playBody = ["device_id": self.selectedDeviceId]
+            if self.selectedDeviceId >= 0 || (!self.selectedDeviceName.isEmpty && self.selectedDeviceName != "Output") {
+                var pb: [String: Any] = [:]
+                if self.selectedDeviceId >= 0 {
+                    pb["device_id"] = self.selectedDeviceId
+                }
+                if !self.selectedDeviceName.isEmpty && self.selectedDeviceName != "Output" {
+                    pb["device_name"] = self.selectedDeviceName
+                }
+                playBody = pb
             }
             sendAction("play", body: playBody)
         }
@@ -2265,6 +2285,7 @@ class PlaybackState: ObservableObject {
     private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/\(endpoint)") else { return }
         var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.httpMethod = "POST"
         if let body = body {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -20,6 +20,16 @@ from app.song_library import SongLibrary
 from pythonosc import udp_client
 
 app = FastAPI(title="LivePlayback VS Controller")
+
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 engine = LiveAudioEngine()
 library = SongLibrary()
 
@@ -285,11 +295,12 @@ def parse_time_signature(ts_str: str) -> tuple[int, int]:
 class LoadSongRequest(BaseModel):
     song_id: str
     device_id: int | None = None
+    device_name: str | None = None
 
 @app.post("/api/load")
 def load_song(req: LoadSongRequest):
-    if req.device_id is not None:
-        engine.set_output_device(req.device_id)
+    if req.device_id is not None or req.device_name is not None:
+        engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
 
     song = library.get_song(req.song_id)
     if not song:
@@ -342,11 +353,12 @@ def load_song(req: LoadSongRequest):
 
 class PlayRequest(BaseModel):
     device_id: int | None = None
+    device_name: str | None = None
 
 @app.post("/api/play")
 def play(req: PlayRequest = None):
-    if req and req.device_id is not None:
-        engine.set_output_device(req.device_id)
+    if req and (req.device_id is not None or req.device_name is not None):
+        engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
     if engine.audio_data is None:
         songs = library.get_all_songs()
         if songs:
@@ -456,12 +468,13 @@ def get_devices():
     return engine.get_output_devices()
 
 class DeviceRequest(BaseModel):
-    device_id: int
+    device_id: int | None = None
+    device_name: str | None = None
 
 @app.post("/api/device")
 def set_device(req: DeviceRequest):
-    engine.set_output_device(req.device_id)
-    return {"status": "ok", "device_id": req.device_id}
+    engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
+    return {"status": "ok", "device_id": engine.output_device, "device_name": engine.output_device_name}
 
 class SaveCuesRequest(BaseModel):
     song_id: str

@@ -118,14 +118,15 @@ class LiveAudioEngine:
         self.event_listener = None
 
     def get_output_devices(self) -> list[dict]:
-        """Lista os dispositivos de saída disponíveis no macOS, atualizando o cache do PortAudio."""
-        if not self.is_playing:
+        """Lista os dispositivos de saída disponíveis no macOS."""
+        try:
+            devices = sd.query_devices()
+        except Exception:
             try:
-                sd._terminate()
                 sd._initialize()
+                devices = sd.query_devices()
             except Exception:
-                pass
-        devices = sd.query_devices()
+                devices = []
         out_devs = []
         for i, d in enumerate(devices):
             name_lower = d["name"].lower()
@@ -143,31 +144,55 @@ class LiveAudioEngine:
                 })
         return out_devs
 
-    def set_output_device(self, device_id: int):
-        """Troca o dispositivo de saída e salva a preferência em arquivo para persistência."""
+    def set_output_device(self, device_id: int | None = None, device_name: str | None = None):
+        """Troca o dispositivo de saída e salva a preferência em arquivo para persistência.
+        Aceita device_name e/ou device_id para resolução robusta mesmo se os índices mudarem.
+        """
         dev_name = ""
+        resolved_id = None
         was_playing = False
         with self.lock:
             try:
-                devices = sd.query_devices()
-                if 0 <= device_id < len(devices) and devices[device_id].get("max_output_channels", 0) > 0:
+                try:
+                    devices = sd.query_devices()
+                except Exception:
+                    sd._initialize()
+                    devices = sd.query_devices()
+                
+                # 1. Se device_name foi fornecido, tenta encontrar o índice atual correspondente no PortAudio
+                if device_name:
+                    dn_lower = device_name.strip().lower()
+                    for i, d in enumerate(devices):
+                        if d.get("max_output_channels", 0) > 0 and d["name"].strip().lower() == dn_lower:
+                            resolved_id = i
+                            break
+                    # Se não encontrou exato mas era BlackHole, busca qualquer BlackHole
+                    if resolved_id is None and "blackhole" in dn_lower:
+                        for i, d in enumerate(devices):
+                            if d.get("max_output_channels", 0) > 0 and "blackhole" in d["name"].lower():
+                                resolved_id = i
+                                break
+
+                # 2. Se não encontrou pelo nome mas tem device_id, valida se o device_id é válido e não é microfone
+                if resolved_id is None and device_id is not None and 0 <= device_id < len(devices):
                     name_check = devices[device_id].get("name", "").lower()
-                    if "microphone" in name_check or "microfone" in name_check or "camo" in name_check:
-                        print(f"Dispositivo {device_id} é um microfone e não pode ser usado como saída.")
-                        return False
+                    if "microphone" not in name_check and "microfone" not in name_check and "camo" not in name_check and devices[device_id].get("max_output_channels", 0) > 0:
+                        resolved_id = device_id
+
+                if resolved_id is not None and 0 <= resolved_id < len(devices):
                     was_playing = self.is_playing
                     self.is_playing = False
-                    self.output_device = device_id
-                    dev_name = devices[device_id].get("name", "")
+                    self.output_device = resolved_id
+                    dev_name = devices[resolved_id].get("name", "")
                     self.output_device_name = dev_name
                     config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
                     with open(config_path, "w", encoding="utf-8") as f:
-                        json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
+                        json.dump({"output_device_id": resolved_id, "output_device_name": dev_name}, f, indent=2)
                 else:
-                    print(f"Dispositivo {device_id} inválido para saída de áudio.")
+                    print(f"Dispositivo id={device_id}, name='{device_name}' inválido para saída de áudio.")
                     return False
             except Exception as e:
-                print(f"Erro ao configurar dispositivo {device_id}: {e}")
+                print(f"Erro ao configurar dispositivo id={device_id}, name='{device_name}': {e}")
                 return False
 
         # Para o stream fora do lock para evitar deadlock com a thread de áudio do CoreAudio
@@ -631,7 +656,11 @@ class LiveAudioEngine:
         # 1. Valida se o dispositivo atual existe, possui canais de saída e NÃO é microfone
         target_device = self.output_device
         try:
-            devs = sd.query_devices()
+            try:
+                devs = sd.query_devices()
+            except Exception:
+                sd._initialize()
+                devs = sd.query_devices()
             if target_device is not None:
                 dev_name = devs[target_device]["name"].lower() if 0 <= target_device < len(devs) else ""
                 is_mic = "microphone" in dev_name or "microfone" in dev_name or "camo" in dev_name
@@ -698,7 +727,7 @@ class LiveAudioEngine:
                 print(f"OutputStream iniciado no dispositivo [{target_device}] (sr={sr}, blocksize={bs})")
                 return
             except Exception as e:
-                print(f"Tentativa com dispositivo {target_device} falhou (sr={sr}, blocksize={bs}): {e}")
+                print(f"Tentativa com dispositivo {target_device} falhou (sr={sr}, blocksize={bs}): {type(e).__name__}: {e}")
 
         # 3. Fallback automático para o dispositivo de saída padrão do sistema
         try:
