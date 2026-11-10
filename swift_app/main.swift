@@ -20,11 +20,12 @@ struct CueSection: Identifiable, Codable {
     var cleanFullName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "Section" }
+        if trimmed.caseInsensitiveCompare("Outro") == .orderedSame { return "Ending" }
         return trimmed
     }
     
     var shortBadgeName: String {
-        let raw = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = cleanFullName.trimmingCharacters(in: .whitespacesAndNewlines)
         let upper = raw.uppercased()
         
         if upper.contains("COUNT") || upper.contains("CONTAGEM") || upper.contains("1234") {
@@ -77,8 +78,8 @@ struct CueSection: Identifiable, Codable {
         if upper.contains("INSTRUMENTAL") || upper.contains("INST") {
             return "Ins"
         }
-        if upper.contains("OUTRO") || upper.contains("FINAL") || upper.contains("ENDING") {
-            return "O"
+        if upper.contains("ENDING") || upper.contains("OUTRO") || upper.contains("FINAL") {
+            return "E"
         }
         
         if raw.count <= 2 {
@@ -146,7 +147,7 @@ func colorForCue(name: String) -> String {
     if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return "#06b6d4" }
     if upper.contains("SOLO") { return "#06b6d4" }
     if upper.contains("TAG") { return "#ec4899" }
-    if upper.contains("OUTRO") || upper.contains("FINAL") { return "#64748b" }
+    if upper.contains("ENDING") || upper.contains("OUTRO") || upper.contains("FINAL") { return "#64748b" }
     return "#3b82f6"
 }
 
@@ -1203,8 +1204,13 @@ class PlaybackState: ObservableObject {
             self.fullWaveform = []
         }
         if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
-           let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
+           var localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
            !localCues.isEmpty {
+            for i in 0..<localCues.count {
+                if localCues[i].name.caseInsensitiveCompare("Outro") == .orderedSame {
+                    localCues[i].name = "Ending"
+                }
+            }
             self.currentCues = localCues
         }
         
@@ -1225,6 +1231,11 @@ class PlaybackState: ObservableObject {
             
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
             var parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
+            for i in 0..<parsedCues.count {
+                if parsedCues[i].name.caseInsensitiveCompare("Outro") == .orderedSame {
+                    parsedCues[i].name = "Ending"
+                }
+            }
             if parsedCues.isEmpty {
                 if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
                    let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
@@ -3523,7 +3534,7 @@ struct WaveformSectionBlock: View, Equatable {
         lhs.durationBars == rhs.durationBars
     }
     
-    let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Outro"]
+    let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Ending"]
     
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -3543,25 +3554,6 @@ struct WaveformSectionBlock: View, Equatable {
                                 .fill(Color.white.opacity(0.12))
                                 .frame(width: 1)
                                 .position(x: xPos, y: 175 / 2)
-                        }
-                    }
-                }
-                
-                // Rodapé: Métrica de Compasso (4/4, 6/8...) posicionada de forma limpa e visível
-                if width >= 40 {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Text(timeSignature)
-                                .font(.system(size: 8, weight: .black, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.85))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(Color.black.opacity(0.60))
-                                .cornerRadius(4)
-                                .padding(.leading, 8)
-                                .padding(.bottom, 6)
-                            Spacer()
                         }
                     }
                 }
@@ -3701,7 +3693,7 @@ struct WaveformSectionBlock: View, Equatable {
         if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") { return Color(red: 0.16, green: 0.75, blue: 0.70) }
         if upper.contains("SOLO") { return Color(red: 0.16, green: 0.75, blue: 0.70) }
         if upper.contains("TAG") { return Color(red: 0.22, green: 0.78, blue: 0.45) }
-        if upper.contains("OUTRO") || upper.contains("FINAL") { return Color(red: 0.50, green: 0.55, blue: 0.62) }
+        if upper.contains("ENDING") || upper.contains("OUTRO") || upper.contains("FINAL") { return Color(red: 0.50, green: 0.55, blue: 0.62) }
         return Color(red: 0.25, green: 0.55, blue: 0.95)
     }
 }
@@ -4381,7 +4373,7 @@ struct QuickSectionEditPopoverView: View {
     let cueTypes = [
         "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
         "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
-        "Bridge", "Solo", "Tag", "Outro"
+        "Bridge", "Solo", "Tag", "Ending"
     ]
     
     @State private var isCustom: Bool = false
@@ -4694,7 +4686,7 @@ struct SongEditorSheetView: View {
     let cueTypeOptions = [
         "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
         "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
-        "Bridge", "Solo", "Tag", "Outro"
+        "Bridge", "Solo", "Tag", "Ending"
     ]
     @State private var customEditingIdx: Int? = nil
     
@@ -5281,7 +5273,7 @@ struct SongEditorSheetView: View {
         if count == 4 { return "Chorus" }
         if count == 5 { return "Bridge" }
         if count == 6 { return "Chorus" }
-        return "Outro"
+        return "Ending"
     }
     
     private func formatTime(_ sec: Double) -> String {

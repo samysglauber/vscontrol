@@ -65,9 +65,9 @@ def classify_spoken_text(text: str) -> str | None:
     if any(k in t for k in ["tag"]):
         return "Tag"
         
-    # Final / Outro / Termina
+    # Final / Outro / Ending / Termina
     if any(k in t for k in ["final", "outro", "termina", "fim", "ending", "corta"]):
-        return "Outro"
+        return "Ending"
         
     # Verso / Verse com numeração específica
     if any(k in t for k in ["verso um", "verso 1", "primeiro verso", "verse one", "verse 1"]):
@@ -493,7 +493,7 @@ def detect_cues(filepath: str, bpm: float, time_signature: tuple[int, int] = (4,
                 elif "Verse" in name:
                     verse_count += 1
             elif is_last and target_time > total_seconds - (sec_per_bar * 8):
-                name = "Outro"
+                name = "Ending"
                 color = "#64748b"
             elif sec_energy > med_energy * 1.28:
                 # Alta energia -> Refrão ou Solo
@@ -560,7 +560,7 @@ def default_cues(total_seconds: float, bpm: float, sec_per_bar: float) -> list[d
         ("Instrumental", max(29, int(bars * 0.55)), "#10b981"),
         ("Bridge", max(37, int(bars * 0.70)), "#f97316"),
         ("Chorus", max(45, int(bars * 0.82)), "#ef4444"),
-        ("Outro", max(51, int(bars * 0.92)), "#64748b"),
+        ("Ending", max(51, int(bars * 0.92)), "#64748b"),
     ]
     cues = []
     for i, (name, bar, color) in enumerate(sections):
