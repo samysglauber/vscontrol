@@ -465,6 +465,8 @@ class PlaybackState: ObservableObject {
     @Published var clickMute: Bool = false
     @Published var vsMute: Bool = false
     @Published var isFadingOut: Bool = false
+    @Published var isFadedOut: Bool = false
+    @Published var isFadingIn: Bool = false
     @Published var abletonSynced: Bool = false
     @Published var scrollToStartTrigger: Int = 0
     @Published var zoomLevel: Double = 0.35 {
@@ -613,9 +615,20 @@ class PlaybackState: ObservableObject {
                         }
                     }
                     if self.isPlaying != playing { self.isPlaying = playing }
-                    if !playing && self.isFadingOut { self.isFadingOut = false }
                 }
-                if let fActive = eventData["fade_stop_active"] as? Bool, self.isFadingOut != fActive { self.isFadingOut = fActive }
+                if let fState = eventData["tracks_fade_state"] as? String {
+                    self.isFadedOut = (fState == "faded_out")
+                    self.isFadingOut = (fState == "fading_out")
+                    self.isFadingIn = (fState == "fading_in")
+                } else if let fActive = eventData["fade_stop_active"] as? Bool {
+                    if !fActive && !self.isFadedOut {
+                        self.isFadingOut = false
+                        self.isFadingIn = false
+                    }
+                }
+                if let isFaded = eventData["is_faded_out"] as? Bool {
+                    self.isFadedOut = isFaded
+                }
                 if let cMute = eventData["click_mute"] as? Bool, self.clickMute != cMute { self.clickMute = cMute }
                 if let vMute = eventData["vs_mute"] as? Bool, self.vsMute != vMute { self.vsMute = vMute }
                 if let cVol = eventData["click_vol"] as? Double, abs(self.clickVol - cVol) > 0.005 { self.clickVol = cVol }
@@ -633,12 +646,23 @@ class PlaybackState: ObservableObject {
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
                 if let pad = eventData["pad_active"] as? Bool, self.padActive != pad { self.padActive = pad }
-            } else if event == "fade_stop_started" {
-                if !self.isFadingOut { self.isFadingOut = true }
+            } else if event == "fade_tracks_started" || event == "fade_stop_started" {
+                if let fState = eventData["state"] as? String {
+                    self.isFadingOut = (fState == "fading_out")
+                    self.isFadingIn = (fState == "fading_in")
+                    if fState == "fading_out" { self.isFadedOut = false }
+                } else {
+                    self.isFadingOut = true
+                }
+            } else if event == "fade_tracks_ended" {
+                if let fState = eventData["state"] as? String {
+                    self.isFadedOut = (fState == "faded_out")
+                    self.isFadingOut = false
+                    self.isFadingIn = false
+                }
             } else if event == "play_state" {
                 if let p = eventData["is_playing"] as? Bool {
                     if self.isPlaying != p { self.isPlaying = p }
-                    if !p && self.isFadingOut { self.isFadingOut = false }
                 }
             } else if event == "volume_state" {
                 if let cm = eventData["click_mute"] as? Bool, self.clickMute != cm { self.clickMute = cm }
@@ -1196,6 +1220,9 @@ class PlaybackState: ObservableObject {
         self.undoNotificationMessage = nil
         self.focusedCueIdx = nil
         self.currentSong = song
+        self.isFadingOut = false
+        self.isFadedOut = false
+        self.isFadingIn = false
         
         // Carrega imediatamente cache local de waveform e cues para transição instantânea sem congelar a tela
         if let savedW = UserDefaults.standard.array(forKey: "saved_waveform_\(song.id)") as? [Double], !savedW.isEmpty {
@@ -1601,11 +1628,21 @@ class PlaybackState: ObservableObject {
         }
     }
     
-    func fadeStop(duration: Double = 3.0) {
+    func toggleFadeTracks(duration: Double = 3.0) {
         guard isPlaying else { return }
-        isFadingOut = true
-        queuedCueIdx = nil
-        sendAction("fade_stop", body: ["duration": duration])
+        let targetDirection = (isFadedOut || isFadingOut) ? "in" : "out"
+        if targetDirection == "in" {
+            isFadingIn = true
+            isFadingOut = false
+        } else {
+            isFadingOut = true
+            isFadingIn = false
+        }
+        sendAction("fade_tracks", body: ["direction": targetDirection, "duration": duration])
+    }
+    
+    func fadeStop(duration: Double = 3.0) {
+        toggleFadeTracks(duration: duration)
     }
     
     func restart() {
@@ -2122,9 +2159,9 @@ struct PlaybackAppView: View {
                         return nil
                     }
                     
-                    // Tecla 0: Dispara o Fade Stop de 3 segundos
+                    // Tecla 0: Dispara o Fade Out / Fade In de 3 segundos nas Tracks
                     if char == "0" || event.keyCode == 29 || event.keyCode == 82 {
-                        state.fadeStop(duration: 3.0)
+                        state.toggleFadeTracks(duration: 3.0)
                         return nil
                     }
                     
@@ -2164,14 +2201,17 @@ struct PlaybackAppView: View {
 // 5. TOP BAR (TRANSPORTE & EDIT BUTTON)
 // ==========================================
 
-// Ícone de Curva Suave de Fade Out (Estilo DAW / MultiTracks)
+// Ícone de Curva Suave de Fade Out / Fade In (Estilo DAW / MultiTracks)
 struct FadeOutCurveIcon: View {
     var color: Color = .white
     var isFading: Bool = false
+    var isFlipped: Bool = false
     
     var body: some View {
         FadeOutCurveShape()
             .stroke(color, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            .scaleEffect(x: isFlipped ? -1 : 1, y: 1)
+            .animation(.easeInOut(duration: 0.25), value: isFlipped)
             .frame(width: 17, height: 16)
     }
 }
@@ -2292,26 +2332,29 @@ struct TopBarView: View {
                     .keyboardShortcut(.space, modifiers: [])
                     .help("Play / Pause [Espaço]")
                     
-                    // 3. Botão FADE STOP com Ícone de Curva DAW
-                    Button(action: { state.fadeStop(duration: 3.0) }) {
+                    // 3. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In quando atenuado)
+                    let isFadeActive = state.isFadingOut || state.isFadedOut || state.isFadingIn
+                    let isInverted = state.isFadedOut || state.isFadingIn
+                    Button(action: { state.toggleFadeTracks(duration: 3.0) }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(state.isFadingOut ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
+                                .fill(isFadeActive ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
                                 .frame(width: 36, height: 36)
                             FadeOutCurveIcon(
-                                color: state.isFadingOut ? Color.orange : (state.isPlaying ? Color.white : Color.white.opacity(0.40)),
-                                isFading: state.isFadingOut
+                                color: isFadeActive ? Color.orange : (state.isPlaying ? Color.white : Color.white.opacity(0.40)),
+                                isFading: state.isFadingOut || state.isFadingIn,
+                                isFlipped: isInverted
                             )
                         }
                         .frame(width: 36, height: 36)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.isFadingOut ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(isFadeActive ? Color.orange.opacity(0.65) : Color.white.opacity(0.12), lineWidth: 1)
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(!state.isPlaying && !state.isFadingOut)
-                    .help("Fade out in 3 seconds and stop [Atalho: Tecla 0]")
+                    .disabled(!state.isPlaying && !isFadeActive)
+                    .help(isInverted ? "Fade In Tracks (3s) [Atalho: Tecla 0]" : "Fade Out Tracks (3s) [Atalho: Tecla 0]")
                     
                     // 4. Botão Loop da Seção Atual
                     Button(action: { state.toggleLoop() }) {

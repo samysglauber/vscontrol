@@ -369,11 +369,17 @@ def stop():
 
 class FadeStopRequest(BaseModel):
     duration: float = 3.0
+    direction: str = "toggle"
 
 @app.post("/api/fade_stop")
 def fade_stop(req: FadeStopRequest = FadeStopRequest()):
-    engine.fade_stop(req.duration)
-    return {"status": "fade_stop_started", "duration": req.duration}
+    engine.fade_tracks(direction=req.direction, duration_sec=req.duration)
+    return {"status": "fade_started", "fade_state": engine.tracks_fade_state}
+
+@app.post("/api/fade_tracks")
+def fade_tracks(req: FadeStopRequest = FadeStopRequest()):
+    engine.fade_tracks(direction=req.direction, duration_sec=req.duration)
+    return {"status": "fade_started", "fade_state": engine.tracks_fade_state}
 
 class SeekRequest(BaseModel):
     seconds: float
@@ -518,8 +524,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 engine.pause()
             elif action == "stop":
                 engine.stop()
-            elif action == "fade_stop":
-                engine.fade_stop(msg.get("duration", 3.0))
+            elif action in ["fade_stop", "fade_tracks"]:
+                engine.fade_tracks(
+                    direction=msg.get("direction", "toggle"),
+                    duration_sec=msg.get("duration", 3.0)
+                )
             elif action == "trigger_cue":
                 engine.trigger_cue(msg.get("cue_idx", 0), quantize=msg.get("quantize", True))
             elif action == "toggle_loop":

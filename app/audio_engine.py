@@ -51,10 +51,14 @@ class LiveAudioEngine:
         self.xfade_in_total = 0
         self.xfade_duration_sec = 0.030 # 30ms
 
-        # Fade Stop (3s Fade Out suave)
+        # Fade Stop & Tracks Fade (Fade Out / Fade In suave sem pausar a música e mantendo o Click)
         self.fade_stop_active = False
-        self.fade_stop_frames_left = 0
-        self.fade_stop_total_frames = 0
+        self.tracks_fade_gain = 1.0  # 1.0 = normal, 0.0 = totalmente atenuado
+        self.tracks_fade_state = "normal"  # "normal", "fading_out", "faded_out", "fading_in"
+        self.tracks_fade_frames_left = 0
+        self.tracks_fade_total_frames = 0
+        self.tracks_fade_start_gain = 1.0
+        self.tracks_fade_target_gain = 0.0
 
         # Volumes e Controles
         self.click_vol = 1.0        # Canal L
@@ -172,6 +176,9 @@ class LiveAudioEngine:
             self.loop_cue_idx = None
             self.xfade_tail = None
             self.fade_stop_active = False
+            self.tracks_fade_gain = 1.0
+            self.tracks_fade_state = "normal"
+            self.tracks_fade_frames_left = 0
             
             # Prepara buffer do Pad na tonalidade
             self.pad_buffer = self.pad_gen.get_pad_chunk(self.pad_key, duration_sec=10.0)
@@ -183,6 +190,9 @@ class LiveAudioEngine:
             if self.audio_data is None:
                 return
             self.fade_stop_active = False
+            self.tracks_fade_gain = 1.0
+            self.tracks_fade_state = "normal"
+            self.tracks_fade_frames_left = 0
             if not self.is_playing:
                 self.is_playing = True
                 self._start_stream()
@@ -193,6 +203,9 @@ class LiveAudioEngine:
         with self.lock:
             self.is_playing = False
             self.fade_stop_active = False
+            self.tracks_fade_gain = 1.0
+            self.tracks_fade_state = "normal"
+            self.tracks_fade_frames_left = 0
             self.xfade_tail = None
             self.queued_cue_idx = None
             self.queued_jump = None
@@ -212,20 +225,48 @@ class LiveAudioEngine:
             self.guide_lead_in = None
             self.xfade_tail = None
             self.fade_stop_active = False
+            self.tracks_fade_gain = 1.0
+            self.tracks_fade_state = "normal"
+            self.tracks_fade_frames_left = 0
             self._stop_stream()
         self._notify_event("play_state", {"is_playing": False, "pos_frame": 0})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
 
-    def fade_stop(self, duration_sec: float = 3.0):
-        """Inicia um fade-out gradual e para a reprodução suavemente ao final."""
+    def fade_tracks(self, direction: str = "toggle", duration_sec: float = 3.0):
+        """Alterna ou define Fade Out / Fade In dos VS Tracks, mantendo o Click e o playback ativos."""
         with self.lock:
             if not self.is_playing:
                 return
             tot = int(max(0.5, float(duration_sec)) * self.sample_rate)
-            self.fade_stop_active = True
-            self.fade_stop_total_frames = tot
-            self.fade_stop_frames_left = tot
-        self._notify_event("fade_stop_started", {"duration_sec": duration_sec})
+            self.tracks_fade_total_frames = tot
+            self.tracks_fade_frames_left = tot
+            self.tracks_fade_start_gain = self.tracks_fade_gain
+            
+            if direction == "in":
+                self.tracks_fade_target_gain = 1.0
+                self.tracks_fade_state = "fading_in"
+            elif direction == "out":
+                self.tracks_fade_target_gain = 0.0
+                self.tracks_fade_state = "fading_out"
+            else: # toggle
+                if self.tracks_fade_gain < 0.5 or self.tracks_fade_state in ["faded_out", "fading_out"]:
+                    self.tracks_fade_target_gain = 1.0
+                    self.tracks_fade_state = "fading_in"
+                else:
+                    self.tracks_fade_target_gain = 0.0
+                    self.tracks_fade_state = "fading_out"
+            
+            self.fade_stop_active = (self.tracks_fade_state != "normal")
+                
+        self._notify_event("fade_tracks_started", {
+            "state": self.tracks_fade_state,
+            "target_gain": self.tracks_fade_target_gain,
+            "duration_sec": duration_sec
+        })
+
+    def fade_stop(self, duration_sec: float = 3.0):
+        """Compatibilidade para fade_stop: agora alterna Fade Out / Fade In das tracks mantendo o playback."""
+        self.fade_tracks(direction="toggle", duration_sec=duration_sec)
 
     def seek_seconds(self, seconds: float):
         """Posiciona a reprodução no segundo especificado."""
@@ -236,6 +277,9 @@ class LiveAudioEngine:
             self.guide_lead_in = None
             self.xfade_tail = None
             self.fade_stop_active = False
+            self.tracks_fade_gain = 1.0
+            self.tracks_fade_state = "normal"
+            self.tracks_fade_frames_left = 0
             self._update_current_cue_idx()
         self._notify_event("seek", {"pos_frame": self.pos_frame, "seconds": seconds})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
@@ -465,7 +509,10 @@ class LiveAudioEngine:
                 "click_mute": self.click_mute,
                 "vs_mute": self.vs_mute,
                 "output_device_id": self.output_device,
-                "fade_stop_active": self.fade_stop_active,
+                "fade_stop_active": self.tracks_fade_state != "normal",
+                "tracks_fade_state": self.tracks_fade_state,
+                "tracks_fade_gain": self.tracks_fade_gain,
+                "is_faded_out": self.tracks_fade_state == "faded_out",
                 "pad_active": self.pad_active,
                 "pad_key": self.pad_key,
                 "pad_vol": self.pad_vol,
@@ -648,8 +695,6 @@ class LiveAudioEngine:
                         self.queued_jump = None
 
                         chunk = np.column_stack((slice_l, slice_r))
-                        if self.fade_stop_active:
-                            chunk = self._process_fade_stop(chunk, frames)
                         self._apply_volumes_and_pad(chunk, outdata, frames)
                         self._update_current_cue_idx()
                         return
@@ -670,8 +715,6 @@ class LiveAudioEngine:
                         self._notify_event("cue_queued", {"queued_cue_idx": None})
 
                         chunk = np.vstack((out1, out2)) if frames_before > 0 else out2
-                        if self.fade_stop_active:
-                            chunk = self._process_fade_stop(chunk, frames)
                         self._apply_volumes_and_pad(chunk, outdata, frames)
                         self._update_current_cue_idx()
                         return
@@ -806,34 +849,8 @@ class LiveAudioEngine:
                 self._notify_event("song_ended", {"song_path": self.filepath or ""})
 
             chunk = np.column_stack((slice_l, slice_r))
-
-            # Processamento de Fade Out suave de 3s (Fade Stop)
-            if self.fade_stop_active:
-                chunk = self._process_fade_stop(chunk, frames)
-
             self._apply_volumes_and_pad(chunk, outdata, frames)
             self._update_current_cue_idx()
-
-    def _process_fade_stop(self, chunk: np.ndarray, frames: int) -> np.ndarray:
-        """Aplica rampa de atenuação gradual para o comando Fade Stop (3s)."""
-        n = min(frames, self.fade_stop_frames_left)
-        start_gain = max(0.0, self.fade_stop_frames_left / max(1, self.fade_stop_total_frames))
-        end_gain = max(0.0, (self.fade_stop_frames_left - n) / max(1, self.fade_stop_total_frames))
-        ramp = np.linspace(start_gain, end_gain, frames, dtype=np.float32)[:, None]
-        chunk = chunk * ramp
-        self.fade_stop_frames_left -= frames
-        if self.fade_stop_frames_left <= 0:
-            self.fade_stop_active = False
-            self.is_playing = False
-            self.pos_frame = 0
-            self.current_cue_idx = 0
-            self.guide_lead_in = None
-            self.queued_jump = None
-            self.queued_cue_idx = None
-            self.xfade_tail = None
-            self._notify_event("play_state", {"is_playing": False, "pos_frame": 0})
-            self._notify_event("cue_queued", {"queued_cue_idx": None})
-        return chunk
 
     def _read_slice(self, start_frame: int, n_frames: int) -> np.ndarray:
         """Lê fatias do buffer garantindo preenchimento de zeros caso chegue ao fim."""
@@ -851,13 +868,36 @@ class LiveAudioEngine:
 
     def _apply_volumes_and_pad(self, chunk: np.ndarray, outdata: np.ndarray, frames: int):
         """Aplica ganhos nos canais L e R e soma o Pad contínuo."""
-        # Canal L (Click + Guia)
+        # Canal L (Click + Guia) - MANTIDO TOTALMENTE AUDÍVEL
         l_mult = 0.0 if self.click_mute else self.click_vol
         outdata[:, 0] = chunk[:, 0] * l_mult
         
-        # Canal R (VS Instrumentos)
-        r_mult = 0.0 if self.vs_mute else self.vs_vol
-        outdata[:, 1] = chunk[:, 1] * r_mult
+        # Canal R (VS Instrumentos / Tracks) - FADE SUAVE DAS TRACKS
+        r_base = 0.0 if self.vs_mute else self.vs_vol
+        
+        if self.tracks_fade_frames_left > 0:
+            n = min(frames, self.tracks_fade_frames_left)
+            p_start = 1.0 - (self.tracks_fade_frames_left / max(1, self.tracks_fade_total_frames))
+            self.tracks_fade_frames_left -= n
+            p_end = 1.0 - (self.tracks_fade_frames_left / max(1, self.tracks_fade_total_frames))
+            
+            g_start = self.tracks_fade_start_gain + (self.tracks_fade_target_gain - self.tracks_fade_start_gain) * p_start
+            g_end = self.tracks_fade_start_gain + (self.tracks_fade_target_gain - self.tracks_fade_start_gain) * p_end
+            
+            ramp = np.linspace(g_start, g_end, frames, dtype=np.float32)
+            outdata[:, 1] = chunk[:, 1] * (r_base * ramp)
+            
+            self.tracks_fade_gain = float(g_end)
+            if self.tracks_fade_frames_left <= 0:
+                self.tracks_fade_gain = float(self.tracks_fade_target_gain)
+                self.tracks_fade_state = "faded_out" if self.tracks_fade_gain < 0.01 else "normal"
+                self.fade_stop_active = (self.tracks_fade_state == "faded_out")
+                self._notify_event("fade_tracks_ended", {
+                    "state": self.tracks_fade_state,
+                    "gain": self.tracks_fade_gain
+                })
+        else:
+            outdata[:, 1] = chunk[:, 1] * (r_base * self.tracks_fade_gain)
 
         # Adiciona o Pad no Canal R (Mix dos instrumentos/PA)
         if self.pad_active and self.pad_buffer is not None:
