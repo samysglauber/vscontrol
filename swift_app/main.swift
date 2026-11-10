@@ -2963,6 +2963,8 @@ class HorizontalScrollNSView: NSView {
         while let parent = current?.superview {
             if let sv = parent as? NSScrollView {
                 self.targetScrollView = sv
+                sv.hasHorizontalScroller = false
+                sv.horizontalScroller = nil
                 WaveformScrollController.shared.scrollView = sv
                 return
             }
@@ -3050,7 +3052,7 @@ struct SpectrogramWaveformView: View {
             let playheadX = CGFloat(max(0.0, state.currentSeconds)) * scale
             
             ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: true) {
+                ScrollView(.horizontal, showsIndicators: false) {
                     ZStack(alignment: .leading) {
                         // Hook de Rolagem com Rodinha do Mouse e Trackpad
                         HorizontalScrollWheelHook(
