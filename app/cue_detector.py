@@ -65,8 +65,12 @@ def classify_spoken_text(text: str) -> str | None:
     if any(k in t for k in ["tag"]):
         return "Tag"
         
-    # Final / Outro / Ending / Termina
-    if any(k in t for k in ["final", "outro", "termina", "fim", "ending", "corta"]):
+    # Outro
+    if any(k in t for k in ["outro"]):
+        return "Outro"
+        
+    # Final / Ending / Termina
+    if any(k in t for k in ["final", "termina", "fim", "ending", "corta"]):
         return "Ending"
         
     # Verso / Verse com numeração específica
@@ -159,7 +163,7 @@ def color_for_name(name: str) -> str:
         return "#06b6d4"
     if "TAG" in upper:
         return "#ec4899"
-    if "OUTRO" in upper or "FINAL" in upper:
+    if "OUTRO" in upper or "ENDING" in upper or "FINAL" in upper:
         return "#64748b"
     return "#3b82f6"
 

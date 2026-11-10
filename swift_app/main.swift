@@ -20,7 +20,6 @@ struct CueSection: Identifiable, Codable {
     var cleanFullName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "Section" }
-        if trimmed.caseInsensitiveCompare("Outro") == .orderedSame { return "Ending" }
         return trimmed
     }
     
@@ -78,8 +77,13 @@ struct CueSection: Identifiable, Codable {
         if upper.contains("INSTRUMENTAL") || upper.contains("INST") {
             return "Ins"
         }
-        if upper.contains("ENDING") || upper.contains("OUTRO") || upper.contains("FINAL") {
+        if upper.contains("ENDING") {
+            if upper.contains("2") { return "E2" }
             return "E"
+        }
+        if upper.contains("OUTRO") || upper.contains("FINAL") {
+            if upper.contains("2") { return "O2" }
+            return "O"
         }
         
         if raw.count <= 2 {
@@ -1231,13 +1235,8 @@ class PlaybackState: ObservableObject {
             self.fullWaveform = []
         }
         if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
-           var localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
+           let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
            !localCues.isEmpty {
-            for i in 0..<localCues.count {
-                if localCues[i].name.caseInsensitiveCompare("Outro") == .orderedSame {
-                    localCues[i].name = "Ending"
-                }
-            }
             self.currentCues = localCues
         }
         
@@ -1258,11 +1257,6 @@ class PlaybackState: ObservableObject {
             
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
             var parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
-            for i in 0..<parsedCues.count {
-                if parsedCues[i].name.caseInsensitiveCompare("Outro") == .orderedSame {
-                    parsedCues[i].name = "Ending"
-                }
-            }
             if parsedCues.isEmpty {
                 if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
                    let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
@@ -3581,7 +3575,7 @@ struct WaveformSectionBlock: View, Equatable {
         lhs.durationBars == rhs.durationBars
     }
     
-    let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Ending"]
+    let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Ending", "Outro"]
     
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -4420,7 +4414,7 @@ struct QuickSectionEditPopoverView: View {
     let cueTypes = [
         "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
         "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
-        "Bridge", "Solo", "Tag", "Ending"
+        "Bridge", "Solo", "Tag", "Ending", "Outro"
     ]
     
     @State private var isCustom: Bool = false
@@ -4733,7 +4727,7 @@ struct SongEditorSheetView: View {
     let cueTypeOptions = [
         "Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", 
         "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", 
-        "Bridge", "Solo", "Tag", "Ending"
+        "Bridge", "Solo", "Tag", "Ending", "Outro"
     ]
     @State private var customEditingIdx: Int? = nil
     
