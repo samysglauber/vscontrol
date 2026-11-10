@@ -308,6 +308,41 @@ struct SongCoverView: View {
     }
 }
 
+enum SongTransitionType: String, CaseIterable {
+    case cue = "CUE"
+    case pause = "PAUSE"
+    case crossfade = "CROSSFADE"
+    
+    var title: String {
+        switch self {
+        case .cue: return "Cue Next Song"
+        case .pause: return "Pause"
+        case .crossfade: return "Crossfade"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .cue: return "arrow.right"
+        case .pause: return "pause.fill"
+        case .crossfade: return "shuffle"
+        }
+    }
+    
+    static func from(raw: String) -> SongTransitionType {
+        switch raw.uppercased() {
+        case "AUTO", "CUE":
+            return .cue
+        case "STOP", "PAUSE":
+            return .pause
+        case "CROSSFADE":
+            return .crossfade
+        default:
+            return .cue
+        }
+    }
+}
+
 struct SetlistSong: Identifiable, Equatable {
     let id: UUID
     var song: SongItem
@@ -843,7 +878,8 @@ class PlaybackState: ObservableObject {
         let nextIndex = currentIndex + 1
         if nextIndex < setlist.count {
             let nextItem = setlist[nextIndex]
-            let shouldAutoPlay = (currentItem.transitionType == "AUTO")
+            let trans = SongTransitionType.from(raw: currentItem.transitionType)
+            let shouldAutoPlay = (trans == .cue || trans == .crossfade)
             loadSong(nextItem.song, cues: nextItem.cues, autoPlay: shouldAutoPlay)
         }
     }
@@ -890,7 +926,20 @@ class PlaybackState: ObservableObject {
     
     func toggleTransition(at index: Int) {
         guard index >= 0 && index < setlist.count else { return }
-        setlist[index].transitionType = (setlist[index].transitionType == "AUTO") ? "STOP" : "AUTO"
+        let current = SongTransitionType.from(raw: setlist[index].transitionType)
+        let next: SongTransitionType
+        switch current {
+        case .cue: next = .pause
+        case .pause: next = .crossfade
+        case .crossfade: next = .cue
+        }
+        setlist[index].transitionType = next.rawValue
+        saveSetlistState()
+    }
+    
+    func setTransition(at index: Int, to type: SongTransitionType) {
+        guard index >= 0 && index < setlist.count else { return }
+        setlist[index].transitionType = type.rawValue
         saveSetlistState()
     }
     
@@ -2965,26 +3014,9 @@ struct SetlistCarouselView: View {
                         .opacity(isSelected ? 1.0 : 0.7)
                         .animation(.easeInOut(duration: 0.2), value: isSelected)
                         
-                        // Seta de Transição (Clica para alternar AUTO / STOP)
+                        // Botão de Transição com Popover (Cue Next Song, Pause, Crossfade)
                         if index < state.setlist.count - 1 {
-                            Button(action: {
-                                state.toggleTransition(at: index)
-                            }) {
-                                Circle()
-                                    .fill(Color(red: 0.16, green: 0.16, blue: 0.18))
-                                    .frame(width: 24, height: 24)
-                                    .overlay(
-                                        Image(systemName: item.transitionType == "AUTO" ? "arrow.right" : "pause.fill")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(item.transitionType == "AUTO" ? .white : Color.gray)
-                                    )
-                                    .overlay(
-                                        Circle().stroke(Color.white.opacity(0.12), lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .offset(y: 32)
-                            .help(item.transitionType == "AUTO" ? "Auto-transition to next track" : "Stop after this track")
+                            SetlistTransitionButton(index: index, state: state)
                         }
                     }
                     
@@ -3027,6 +3059,117 @@ struct SetlistCarouselView: View {
         .sheet(isPresented: $state.isCoverPickerPresented) {
             CoverPickerSheetView(state: state)
         }
+    }
+}
+
+// ==========================================
+// 6.0 BOTÃO DE TRANSIÇÃO ENTRE MÚSICAS COM POPOVER ESTILIZADO
+// ==========================================
+struct SetlistTransitionButton: View {
+    let index: Int
+    @ObservedObject var state: PlaybackState
+    @State private var isPopoverPresented: Bool = false
+    @State private var isHovered: Bool = false
+    
+    var transitionType: SongTransitionType {
+        guard index < state.setlist.count else { return .cue }
+        return SongTransitionType.from(raw: state.setlist[index].transitionType)
+    }
+    
+    var body: some View {
+        Button(action: {
+            isPopoverPresented.toggle()
+        }) {
+            Circle()
+                .fill(Color(red: 0.16, green: 0.16, blue: 0.18))
+                .frame(width: 24, height: 24)
+                .overlay(
+                    Image(systemName: transitionType.iconName)
+                        .font(.system(size: transitionType == .crossfade ? 11 : 9, weight: .bold))
+                        .foregroundColor(transitionType == .pause ? Color.gray : .white)
+                )
+                .overlay(
+                    Circle().stroke(isHovered ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .offset(y: 32)
+        .onHover { h in isHovered = h }
+        .help(transitionType.title)
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .trailing) {
+            SongTransitionPopoverView(
+                currentType: transitionType,
+                onSelect: { newType in
+                    state.setTransition(at: index, to: newType)
+                    isPopoverPresented = false
+                }
+            )
+        }
+    }
+}
+
+struct SongTransitionPopoverView: View {
+    let currentType: SongTransitionType
+    let onSelect: (SongTransitionType) -> Void
+    
+    var body: some View {
+        VStack(spacing: 2) {
+            ForEach(SongTransitionType.allCases, id: \.self) { type in
+                SongTransitionRowView(
+                    type: type,
+                    isSelected: type == currentType,
+                    onSelect: { onSelect(type) }
+                )
+                
+                if type != SongTransitionType.allCases.last {
+                    Divider()
+                        .background(Color.white.opacity(0.08))
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+        .padding(6)
+        .frame(width: 195)
+        .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+    }
+}
+
+struct SongTransitionRowView: View {
+    let type: SongTransitionType
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @State private var isHovered: Bool = false
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: type.iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.85))
+                    .frame(width: 20, alignment: .center)
+                
+                Text(type.title)
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(Color(red: 0.05, green: 0.50, blue: 1.0))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.white.opacity(0.12) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { h in isHovered = h }
     }
 }
 
@@ -4984,10 +5127,10 @@ struct QuickSectionEditPopoverView: View {
                 // Section Type (com Interlude, Post Chorus e Personalizado)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("Type")
+                        Text("Song Section")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.gray)
-                            .frame(width: 55, alignment: .leading)
+                            .frame(width: 82, alignment: .leading)
                         
                         Picker("", selection: Binding(
                             get: {
@@ -5042,7 +5185,7 @@ struct QuickSectionEditPopoverView: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
-                        .padding(.leading, 55)
+                        .padding(.leading, 82)
                     }
                 }
                 
@@ -5180,7 +5323,7 @@ struct QuickSectionEditPopoverView: View {
                 }
             }
             .padding(16)
-            .frame(width: 260)
+            .frame(width: 285)
             .background(Color(red: 0.12, green: 0.12, blue: 0.13))
             .onAppear {
                 if !cueTypes.contains(cue.name) {
