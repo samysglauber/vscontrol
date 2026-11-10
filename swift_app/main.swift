@@ -2845,7 +2845,7 @@ struct SetlistCarouselView: View {
                                     Button(action: {
                                         state.openCoverPicker(for: item.song)
                                     }) {
-                                        Label("Find / Change Cover...", systemImage: "photo.badge.plus")
+                                        Label("Change Cover...", systemImage: "photo.badge.plus")
                                     }
                                     
                                     if item.song.has_cover == true {
