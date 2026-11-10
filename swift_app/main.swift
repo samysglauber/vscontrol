@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 // 1. MODELOS DE DADOS
 // ==========================================
 
-struct CueSection: Identifiable, Codable {
+struct CueSection: Identifiable, Codable, Hashable {
     var id: String
     var name: String
     var time: Double
@@ -188,6 +188,8 @@ struct SongItem: Identifiable, Codable, Hashable {
     var has_cover: Bool?
     var cover_url: String?
     var search_query: String?
+    var total_duration: Double?
+    var cues: [CueSection]?
     
     var displayKey: String {
         return default_key ?? "D"
@@ -308,17 +310,26 @@ struct SongCoverView: View {
 
 struct SetlistSong: Identifiable, Equatable {
     let id: UUID
-    let song: SongItem
+    var song: SongItem
     var transitionType: String
+    var cues: [CueSection]?
+    var totalDuration: Double?
+    var waveform: [Double]?
     
-    init(id: UUID = UUID(), song: SongItem, transitionType: String = "AUTO") {
+    init(id: UUID = UUID(), song: SongItem, transitionType: String = "AUTO", cues: [CueSection]? = nil, totalDuration: Double? = nil, waveform: [Double]? = nil) {
         self.id = id
         self.song = song
         self.transitionType = transitionType
+        self.cues = cues ?? song.cues
+        self.totalDuration = totalDuration ?? song.total_duration
+        self.waveform = waveform ?? song.full_waveform
     }
     
     static func == (lhs: SetlistSong, rhs: SetlistSong) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.song.id == rhs.song.id &&
+        lhs.transitionType == rhs.transitionType &&
+        lhs.cues?.count == rhs.cues?.count
     }
 }
 
@@ -339,6 +350,15 @@ struct SetlistDocument: Codable {
     var createdAt: Date? = nil
     var updatedAt: Date? = nil
     var items: [SetlistDocumentItem]
+}
+
+// Cache de ultra-alta velocidade em memória RAM para transição instantânea e fluida entre músicas
+struct CachedSongData: Codable {
+    var bpm: Double
+    var timeSignature: String
+    var totalSeconds: Double
+    var cues: [CueSection]
+    var waveform: [Double]
 }
 
 struct AudioDeviceItem: Identifiable, Codable {
@@ -404,6 +424,96 @@ class PlaybackState: ObservableObject {
     private var isSavingSetlistDoc = false
     private var isLoadingSetlistDoc = false
     private var attemptedCoverAutoFetchSongIds: Set<String> = []
+    
+    // Cache de ultra-alta velocidade em memória RAM para transição instantânea e fluida entre músicas
+    var songCache: [String: CachedSongData] = [:]
+    
+    func getOrLoadSongData(for song: SongItem, fallbackCues: [CueSection]? = nil) -> CachedSongData? {
+        // 1. Memória RAM (0.00 ms)
+        if let c = songCache[song.id], !c.cues.isEmpty, !c.waveform.isEmpty, c.totalSeconds > 0 {
+            return c
+        }
+        
+        // 2. Setlist em memória RAM (0.00 ms)
+        if let match = setlist.first(where: { $0.song.id == song.id }) {
+            let matchedCues = match.cues ?? match.song.cues ?? fallbackCues
+            let matchedWf = match.waveform ?? match.song.full_waveform
+            let matchedDur = match.totalDuration ?? match.song.total_duration
+            if let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
+                let data = CachedSongData(
+                    bpm: match.song.bpm ?? 120.0,
+                    timeSignature: match.song.time_signature ?? "4/4",
+                    totalSeconds: d,
+                    cues: cs,
+                    waveform: wf
+                )
+                songCache[song.id] = data
+                return data
+            }
+        }
+        
+        // 3. Leitura direta ultrarrápida do arquivo .cues.json no disco (~5 ms)
+        let candidates = [
+            song.path + ".cues.json",
+            URL(fileURLWithPath: tracksFolderPath).appendingPathComponent(song.filename + ".cues.json").path,
+            "/Users/samysglauber/Documents/Vs/\(song.filename).cues.json"
+        ]
+        for path in candidates {
+            if FileManager.default.fileExists(atPath: path),
+               let fileData = try? Data(contentsOf: URL(fileURLWithPath: path)),
+               let json = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] {
+                
+                let bpmVal = (json["bpm"] as? Double) ?? (song.bpm ?? 120.0)
+                let tsVal = (json["time_signature"] as? String) ?? (song.time_signature ?? "4/4")
+                let wf = (json["full_waveform"] as? [Double]) ?? (song.full_waveform ?? [])
+                
+                var cues: [CueSection] = []
+                if let cuesRaw = json["cues"] as? [[String: Any]],
+                   let cData = try? JSONSerialization.data(withJSONObject: cuesRaw),
+                   let parsed = try? JSONDecoder().decode([CueSection].self, from: cData) {
+                    cues = parsed
+                }
+                
+                var dur = (json["total_duration"] as? Double) ?? (song.total_duration ?? 0.0)
+                if dur <= 0, let lastCue = cues.last {
+                    let secPerBeat = 60.0 / bpmVal
+                    let beatsPerBar = Double(tsVal.split(separator: "/").first ?? "4") ?? 4.0
+                    dur = max(lastCue.time + 10.0, lastCue.time + (secPerBeat * beatsPerBar * 4.0))
+                }
+                
+                let data = CachedSongData(
+                    bpm: bpmVal,
+                    timeSignature: tsVal,
+                    totalSeconds: dur > 0 ? dur : 180.0,
+                    cues: cues.isEmpty ? (fallbackCues ?? []) : cues,
+                    waveform: wf
+                )
+                songCache[song.id] = data
+                return data
+            }
+        }
+        
+        // 4. Cache UserDefaults
+        var localCues: [CueSection] = fallbackCues ?? (song.cues ?? [])
+        if localCues.isEmpty,
+           let cData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
+           let parsed = try? JSONDecoder().decode([CueSection].self, from: cData) {
+            localCues = parsed
+        }
+        let localWf = (UserDefaults.standard.array(forKey: "saved_waveform_\(song.id)") as? [Double]) ?? (song.full_waveform ?? [])
+        let localDur = UserDefaults.standard.double(forKey: "saved_duration_\(song.id)")
+        let dur = localDur > 0 ? localDur : (song.total_duration ?? (localCues.last.map { $0.time + 15.0 } ?? 180.0))
+        
+        let data = CachedSongData(
+            bpm: song.bpm ?? 120.0,
+            timeSignature: song.time_signature ?? "4/4",
+            totalSeconds: dur,
+            cues: localCues,
+            waveform: localWf
+        )
+        songCache[song.id] = data
+        return data
+    }
     
     var shortFolderName: String {
         if tracksFolderPath.isEmpty { return "Tracks" }
@@ -706,9 +816,9 @@ class PlaybackState: ObservableObject {
         let currentItem = setlist[currentIndex]
         let nextIndex = currentIndex + 1
         if nextIndex < setlist.count {
-            let nextSong = setlist[nextIndex].song
+            let nextItem = setlist[nextIndex]
             let shouldAutoPlay = (currentItem.transitionType == "AUTO")
-            loadSong(nextSong, autoPlay: shouldAutoPlay)
+            loadSong(nextItem.song, cues: nextItem.cues, autoPlay: shouldAutoPlay)
         }
     }
     
@@ -849,14 +959,27 @@ class PlaybackState: ObservableObject {
     func saveSetlistTo(url: URL, notify: Bool = true, completion: (() -> Void)? = nil) {
         var docItems: [SetlistDocumentItem] = []
         for item in setlist {
-            var cuesForThisSong: [CueSection]? = nil
+            var cuesForThisSong: [CueSection]? = item.cues
             if item.song.id == currentSong?.id && !currentCues.isEmpty {
                 cuesForThisSong = currentCues
-            } else if let cachedData = UserDefaults.standard.data(forKey: "saved_cues_\(item.song.id)"),
-                      let decoded = try? JSONDecoder().decode([CueSection].self, from: cachedData) {
-                cuesForThisSong = decoded
+            } else if cuesForThisSong == nil || cuesForThisSong?.isEmpty == true {
+                if let ram = songCache[item.song.id], !ram.cues.isEmpty {
+                    cuesForThisSong = ram.cues
+                } else if let cachedData = UserDefaults.standard.data(forKey: "saved_cues_\(item.song.id)"),
+                          let decoded = try? JSONDecoder().decode([CueSection].self, from: cachedData) {
+                    cuesForThisSong = decoded
+                }
             }
-            docItems.append(SetlistDocumentItem(song: item.song, transitionType: item.transitionType, cues: cuesForThisSong))
+            var songToSave = item.song
+            if let ram = songCache[item.song.id] {
+                if songToSave.total_duration == nil || songToSave.total_duration == 0 {
+                    songToSave.total_duration = ram.totalSeconds
+                }
+                if songToSave.full_waveform == nil || songToSave.full_waveform?.isEmpty == true {
+                    songToSave.full_waveform = ram.waveform
+                }
+            }
+            docItems.append(SetlistDocumentItem(song: songToSave, transitionType: item.transitionType, cues: cuesForThisSong))
         }
         
         let docName = url.deletingPathExtension().lastPathComponent
@@ -964,15 +1087,51 @@ class PlaybackState: ObservableObject {
                let cuesData = try? JSONEncoder().encode(cues) {
                 UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(it.song.id)")
             }
+            if let wf = it.song.full_waveform, !wf.isEmpty {
+                UserDefaults.standard.set(wf, forKey: "saved_waveform_\(it.song.id)")
+            }
+            if let dur = it.song.total_duration, dur > 0 {
+                UserDefaults.standard.set(dur, forKey: "saved_duration_\(it.song.id)")
+            }
             
             // Prioriza músicas da biblioteca caso estejam carregadas
-            let songToUse: SongItem
+            var songToUse: SongItem
             if let found = librarySongs.first(where: { $0.id == it.song.id }) {
                 songToUse = found
             } else {
                 songToUse = it.song
             }
-            restoredSongs.append(SetlistSong(song: songToUse, transitionType: it.transitionType))
+            if songToUse.full_waveform == nil && it.song.full_waveform != nil {
+                songToUse.full_waveform = it.song.full_waveform
+            }
+            if songToUse.total_duration == nil && it.song.total_duration != nil {
+                songToUse.total_duration = it.song.total_duration
+            }
+            if songToUse.cues == nil && it.cues != nil {
+                songToUse.cues = it.cues
+            }
+            
+            let songCues = it.cues ?? songToUse.cues
+            let songWf = songToUse.full_waveform ?? it.song.full_waveform
+            let songDur = songToUse.total_duration ?? it.song.total_duration
+            
+            let item = SetlistSong(
+                song: songToUse,
+                transitionType: it.transitionType,
+                cues: songCues,
+                totalDuration: songDur,
+                waveform: songWf
+            )
+            restoredSongs.append(item)
+            
+            // Pré-popula imediatamente a cache de RAM para transição instantânea
+            self.songCache[songToUse.id] = CachedSongData(
+                bpm: songToUse.bpm ?? 120.0,
+                timeSignature: songToUse.time_signature ?? "4/4",
+                totalSeconds: songDur ?? (songCues?.last.map { $0.time + 15.0 } ?? 180.0),
+                cues: songCues ?? [],
+                waveform: songWf ?? []
+            )
         }
         
         let applyChanges = {
@@ -989,7 +1148,7 @@ class PlaybackState: ObservableObject {
             self.saveSetlistState(writeToDisk: false)
             
             if let first = restoredSongs.first {
-                self.loadSong(first.song)
+                self.loadSong(first.song, cues: first.cues)
             } else {
                 self.currentSong = nil
                 self.currentCues = []
@@ -1067,13 +1226,32 @@ class PlaybackState: ObservableObject {
                     // Atualiza as instâncias da setlist com dados frescos do servidor
                     for (idx, item) in self.setlist.enumerated() {
                         if let updated = songs.first(where: { $0.id == item.song.id }) {
-                            self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
+                            let songCues = item.cues ?? updated.cues
+                            let songDur = item.totalDuration ?? updated.total_duration
+                            let songWf = item.waveform ?? updated.full_waveform
+                            self.setlist[idx] = SetlistSong(
+                                id: item.id,
+                                song: updated,
+                                transitionType: item.transitionType,
+                                cues: songCues,
+                                totalDuration: songDur,
+                                waveform: songWf
+                            )
+                            if let dur = songDur, let cs = songCues {
+                                self.songCache[updated.id] = CachedSongData(
+                                    bpm: updated.bpm ?? 120.0,
+                                    timeSignature: updated.time_signature ?? "4/4",
+                                    totalSeconds: dur,
+                                    cues: cs,
+                                    waveform: songWf ?? []
+                                )
+                            }
                         }
                     }
                     if let current = self.currentSong, let updated = songs.first(where: { $0.id == current.id }) {
                         self.currentSong = updated
                     } else if self.currentSong == nil, let first = self.setlist.first {
-                        self.loadSong(first.song)
+                        self.loadSong(first.song, cues: first.cues)
                     }
                 }
             } else {
@@ -1180,7 +1358,26 @@ class PlaybackState: ObservableObject {
                     // Atualiza dados de músicas que já estejam no setlist sem alterar a lista
                     for (idx, item) in self.setlist.enumerated() {
                         if let updated = songs.first(where: { $0.id == item.song.id }) {
-                            self.setlist[idx] = SetlistSong(id: item.id, song: updated, transitionType: item.transitionType)
+                            let songCues = item.cues ?? updated.cues
+                            let songDur = item.totalDuration ?? updated.total_duration
+                            let songWf = item.waveform ?? updated.full_waveform
+                            self.setlist[idx] = SetlistSong(
+                                id: item.id,
+                                song: updated,
+                                transitionType: item.transitionType,
+                                cues: songCues,
+                                totalDuration: songDur,
+                                waveform: songWf
+                            )
+                            if let dur = songDur, let cs = songCues {
+                                self.songCache[updated.id] = CachedSongData(
+                                    bpm: updated.bpm ?? 120.0,
+                                    timeSignature: updated.time_signature ?? "4/4",
+                                    totalSeconds: dur,
+                                    cues: cs,
+                                    waveform: songWf ?? []
+                                )
+                            }
                         }
                     }
                 }
@@ -1251,30 +1448,43 @@ class PlaybackState: ObservableObject {
         }.resume()
     }
     
-    func loadSong(_ song: SongItem, autoPlay: Bool = false) {
+    func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false) {
         self.undoStack.removeAll()
         self.redoStack.removeAll()
         self.undoNotificationMessage = nil
         self.focusedCueIdx = nil
-        self.currentSong = song
+        self.currentCueIdx = 0
+        self.queuedCueIdx = nil
+        self.currentSeconds = 0.0
         self.isFadingOut = false
         self.isFadedOut = false
         self.isFadingIn = false
         
-        // Carrega imediatamente cache local de waveform e cues para transição instantânea sem congelar a tela
-        if let savedW = UserDefaults.standard.array(forKey: "saved_waveform_\(song.id)") as? [Double], !savedW.isEmpty {
-            self.fullWaveform = savedW
+        // 1. OBTÉM DADOS COMPLETOS DA MÚSICA SINCRONIZADAMENTE (0.00s)
+        let cached = getOrLoadSongData(for: song, fallbackCues: cues)
+        
+        // 2. ATUALIZAÇÃO ATÔMICA DE TODOS OS ESTADOS DA TIMELINE NO MESMO FRAME
+        self.currentSong = song
+        if let d = cached {
+            self.bpm = d.bpm
+            self.timeSignature = d.timeSignature
+            if d.totalSeconds > 0 {
+                self.totalSeconds = d.totalSeconds
+            }
+            self.currentCues = d.cues
+            self.fullWaveform = d.waveform
         } else {
-            self.fullWaveform = []
-        }
-        if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
-           let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
-           !localCues.isEmpty {
-            self.currentCues = localCues
+            if let b = song.bpm { self.bpm = b }
+            if let ts = song.time_signature { self.timeSignature = ts }
+            if let dur = song.total_duration, dur > 0 { self.totalSeconds = dur }
+            if let wf = song.full_waveform { self.fullWaveform = wf }
+            if let cs = cues ?? song.cues { self.currentCues = cs }
         }
         
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
+        
+        // 3. REQUISIÇÃO AO MOTOR DE ÁUDIO NO BACKEND (EXECUTADA EM SEGUNDO PLANO)
         guard let url = URL(string: "http://127.0.0.1:8080/api/load") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -1291,41 +1501,53 @@ class PlaybackState: ObservableObject {
             let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
             var parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
             if parsedCues.isEmpty {
-                if let localData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
-                   let localCues = try? JSONDecoder().decode([CueSection].self, from: localData),
-                   !localCues.isEmpty {
-                    parsedCues = localCues
+                if let local = self?.currentCues, !local.isEmpty {
+                    parsedCues = local
                 }
             } else if let validData = cuesData {
                 UserDefaults.standard.set(validData, forKey: "saved_cues_\(song.id)")
-                UserDefaults.standard.synchronize()
             }
             let fullW = songData["full_waveform"] as? [Double] ?? []
             let totDur = songData["total_duration"] as? Double ?? (songData["total_seconds"] as? Double ?? 0.0)
             
             DispatchQueue.main.async {
-                self?.currentCues = parsedCues
+                guard let self = self, self.currentSong?.id == song.id else { return }
+                
+                if !parsedCues.isEmpty {
+                    self.currentCues = parsedCues
+                }
                 if totDur > 0 {
-                    self?.totalSeconds = totDur
+                    self.totalSeconds = totDur
+                    UserDefaults.standard.set(totDur, forKey: "saved_duration_\(song.id)")
                 }
                 if !fullW.isEmpty {
-                    self?.fullWaveform = fullW
+                    self.fullWaveform = fullW
                     UserDefaults.standard.set(fullW, forKey: "saved_waveform_\(song.id)")
                 }
-                if let b = songData["bpm"] as? Double { self?.bpm = b }
-                if let ts = songData["time_signature"] as? String { self?.timeSignature = ts }
+                if let b = songData["bpm"] as? Double { self.bpm = b }
+                if let ts = songData["time_signature"] as? String { self.timeSignature = ts }
                 if let hasC = songData["has_cover"] as? Bool {
-                    self?.currentSong?.has_cover = hasC
-                    self?.currentSong?.cover_url = songData["cover_url"] as? String
+                    self.currentSong?.has_cover = hasC
+                    self.currentSong?.cover_url = songData["cover_url"] as? String
                 }
-                self?.abletonSynced = true
-                self?.sendAction("set_guide_lead_in", body: ["bars": self?.guideLeadInBars ?? 1.0])
+                
+                // Atualiza cache em memória permanente
+                self.songCache[song.id] = CachedSongData(
+                    bpm: self.bpm,
+                    timeSignature: self.timeSignature,
+                    totalSeconds: self.totalSeconds,
+                    cues: self.currentCues,
+                    waveform: self.fullWaveform
+                )
+                
+                self.abletonSynced = true
+                self.sendAction("set_guide_lead_in", body: ["bars": self.guideLeadInBars])
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    self?.abletonSynced = false
+                    self.abletonSynced = false
                 }
                 if autoPlay {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        self?.sendAction("play")
+                        self.sendAction("play")
                     }
                 }
             }
@@ -1488,7 +1710,14 @@ class PlaybackState: ObservableObject {
                 var s = self.setlist[i].song
                 s.has_cover = hasCover
                 s.cover_url = coverUrl
-                self.setlist[i] = SetlistSong(id: self.setlist[i].id, song: s, transitionType: self.setlist[i].transitionType)
+                self.setlist[i] = SetlistSong(
+                    id: self.setlist[i].id,
+                    song: s,
+                    transitionType: self.setlist[i].transitionType,
+                    cues: self.setlist[i].cues,
+                    totalDuration: self.setlist[i].totalDuration,
+                    waveform: self.setlist[i].waveform
+                )
             }
         }
         
@@ -1539,7 +1768,21 @@ class PlaybackState: ObservableObject {
             var updatedSong = self.setlist[idx].song
             updatedSong.bpm = bpm
             updatedSong.time_signature = timeSignature
-            self.setlist[idx] = SetlistSong(id: self.setlist[idx].id, song: updatedSong, transitionType: self.setlist[idx].transitionType)
+            self.setlist[idx] = SetlistSong(
+                id: self.setlist[idx].id,
+                song: updatedSong,
+                transitionType: self.setlist[idx].transitionType,
+                cues: cues,
+                totalDuration: self.setlist[idx].totalDuration,
+                waveform: self.setlist[idx].waveform
+            )
+            self.songCache[song.id] = CachedSongData(
+                bpm: bpm,
+                timeSignature: timeSignature,
+                totalSeconds: self.totalSeconds,
+                cues: cues,
+                waveform: self.fullWaveform
+            )
             self.saveSetlistState()
         }
         
@@ -1641,7 +1884,8 @@ class PlaybackState: ObservableObject {
     // Inicia a música correspondente do Setlist pelo índice (teclas 1 a 8)
     func playSetlistSong(at index: Int) {
         guard index >= 0 && index < setlist.count else { return }
-        let target = setlist[index].song
+        let targetItem = setlist[index]
+        let target = targetItem.song
         if isFadingOut { isFadingOut = false }
         queuedCueIdx = nil
         triggerScrollToStart()
@@ -1651,7 +1895,7 @@ class PlaybackState: ObservableObject {
                 sendAction("play")
             }
         } else {
-            loadSong(target, autoPlay: true)
+            loadSong(target, cues: targetItem.cues, autoPlay: true)
         }
     }
     
@@ -2564,7 +2808,7 @@ struct SetlistCarouselView: View {
                                 // Card da Música com Capa do Álbum
                                 Button(action: {
                                     if !state.isEditMode {
-                                        state.loadSong(item.song)
+                                        state.loadSong(item.song, cues: item.cues)
                                     }
                                 }) {
                                     SongCoverView(
@@ -3323,6 +3567,8 @@ struct SpectrogramWaveformView: View {
                             }
                         }
                     }
+                    .id(state.currentSong?.id ?? "none")
+                    .animation(nil, value: state.currentSong?.id)
                     .frame(height: 195)
                     .padding(.horizontal, 20)
                     .frame(minHeight: geo.size.height)
@@ -3341,15 +3587,11 @@ struct SpectrogramWaveformView: View {
                 }
                 .onChange(of: state.scrollToStartTrigger) { _, _ in
                     lastUserScrollTime = .distantPast
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(0, anchor: .leading)
-                    }
+                    proxy.scrollTo(0, anchor: .leading)
                 }
                 .onChange(of: state.currentSong?.id) { _, _ in
                     lastUserScrollTime = .distantPast
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(0, anchor: .leading)
-                    }
+                    proxy.scrollTo(0, anchor: .leading)
                 }
                 .onChange(of: state.isPlaying) { _, playing in
                     if playing {
@@ -4453,7 +4695,23 @@ struct AddSongSheetView: View {
                         }
                         Spacer()
                         Button("Add") {
-                            state.setlist.append(SetlistSong(song: song))
+                            state.setlist.append(
+                                SetlistSong(
+                                    song: song,
+                                    cues: song.cues,
+                                    totalDuration: song.total_duration,
+                                    waveform: song.full_waveform
+                                )
+                            )
+                            if let dur = song.total_duration, let cs = song.cues {
+                                state.songCache[song.id] = CachedSongData(
+                                    bpm: song.bpm ?? 120.0,
+                                    timeSignature: song.time_signature ?? "4/4",
+                                    totalSeconds: dur,
+                                    cues: cs,
+                                    waveform: song.full_waveform ?? []
+                                )
+                            }
                             state.saveSetlistState()
                             state.autoFetchCover(for: song)
                             presentationMode.wrappedValue.dismiss()

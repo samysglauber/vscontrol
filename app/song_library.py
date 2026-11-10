@@ -210,6 +210,9 @@ class SongLibrary:
         has_cached_cues = os.path.exists(full_path + ".cues.json")
         time_sig = "4/4"
         has_cover = self.has_cover(entry)
+        total_duration = None
+        full_wf = None
+        cues_data = None
         if has_cached_cues:
             try:
                 with open(full_path + ".cues.json", "r", encoding="utf-8") as f:
@@ -219,6 +222,15 @@ class SongLibrary:
                             bpm = cdata["bpm"]
                         if cdata.get("time_signature"):
                             time_sig = cdata["time_signature"]
+                        if cdata.get("full_waveform"):
+                            full_wf = cdata["full_waveform"]
+                        if cdata.get("total_duration"):
+                            total_duration = cdata["total_duration"]
+                        if cdata.get("cues"):
+                            cues_data = cdata["cues"]
+                            if total_duration is None and cues_data:
+                                last_c = cues_data[-1]
+                                total_duration = float(last_c.get("time", 0.0)) + 15.0
                         if not has_cover and cdata.get("cover_image"):
                             cp = os.path.join(self.directory, cdata["cover_image"])
                             if os.path.exists(cp) and os.path.getsize(cp) > 0:
@@ -237,7 +249,10 @@ class SongLibrary:
             "default_key": "D",
             "has_cover": has_cover,
             "cover_url": f"/api/covers?id={urllib.parse.quote(entry)}" if has_cover else None,
-            "search_query": clean_song_title_for_search(clean_name)
+            "search_query": clean_song_title_for_search(clean_name),
+            "total_duration": total_duration,
+            "full_waveform": full_wf,
+            "cues": cues_data
         }
         self._songs_cache[entry] = item
         return item
