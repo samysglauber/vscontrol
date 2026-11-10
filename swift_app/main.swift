@@ -4589,6 +4589,14 @@ struct BottomMixerDock: View {
                         }
                     }
                 }
+                
+                Divider()
+                
+                Button(action: {
+                    state.fetchDevices()
+                }) {
+                    Label("Rescan Audio Devices", systemImage: "arrow.clockwise")
+                }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "speaker.wave.2.fill")

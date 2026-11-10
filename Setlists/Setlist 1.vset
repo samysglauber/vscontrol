@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-10T19:43:56Z",
+  "createdAt" : "2026-11-10T19:51:18Z",
   "items" : [
     {
       "cues" : [
@@ -3555,7 +3555,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Ele Vem (76bpm) - vs.mp3",
         "search_query" : "Ele Vem",
         "time_signature" : "6\/8",
-        "total_duration" : 341.84
+        "total_duration" : 369.47591836734694
       },
       "transitionType" : "AUTO"
     },
@@ -11109,7 +11109,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Cantarei Teu Amor - vs.mp3",
         "search_query" : "Cantarei Teu Amor",
         "time_signature" : "4\/4",
-        "total_duration" : 210.625306122449
+        "total_duration" : 206.49
       },
       "transitionType" : "AUTO"
     },
@@ -14375,7 +14375,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Bondade de Deus (68bpm) (com teclado) - vs.mp3",
         "search_query" : "Bondade de Deus",
         "time_signature" : "4\/4",
-        "total_duration" : 304.6661224489796
+        "total_duration" : 306.18
       },
       "transitionType" : "AUTO"
     },
@@ -21789,6 +21789,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-10T19:43:56Z",
+  "updatedAt" : "2026-11-10T19:51:18Z",
   "version" : 1
 }

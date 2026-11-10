@@ -23,7 +23,7 @@ from app.pad_generator import AmbientPadGenerator
 class LiveAudioEngine:
     def __init__(self):
         self.stream = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
         # Estado do áudio
         self.audio_data = None      # np.ndarray shape (N, 2)
@@ -118,7 +118,13 @@ class LiveAudioEngine:
         self.event_listener = None
 
     def get_output_devices(self) -> list[dict]:
-        """Lista os dispositivos de saída disponíveis no macOS."""
+        """Lista os dispositivos de saída disponíveis no macOS, atualizando o cache do PortAudio."""
+        if not self.is_playing:
+            try:
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
         devices = sd.query_devices()
         out_devs = []
         for i, d in enumerate(devices):
@@ -140,6 +146,7 @@ class LiveAudioEngine:
     def set_output_device(self, device_id: int):
         """Troca o dispositivo de saída e salva a preferência em arquivo para persistência."""
         dev_name = ""
+        was_playing = False
         with self.lock:
             try:
                 devices = sd.query_devices()
@@ -150,31 +157,37 @@ class LiveAudioEngine:
                         return False
                     was_playing = self.is_playing
                     self.is_playing = False
-                    self._stop_stream()
                     self.output_device = device_id
                     dev_name = devices[device_id].get("name", "")
                     self.output_device_name = dev_name
                     config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
                     with open(config_path, "w", encoding="utf-8") as f:
                         json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
-                    if was_playing:
-                        self.is_playing = True
-                        self._start_stream()
-                    print(f"Dispositivo de saída alterado para [{device_id}] {dev_name}")
                 else:
                     print(f"Dispositivo {device_id} inválido para saída de áudio.")
                     return False
             except Exception as e:
                 print(f"Erro ao configurar dispositivo {device_id}: {e}")
                 return False
-        self._notify_event("device_changed", {"output_device_id": self.output_device, "output_device_name": dev_name})
+
+        # Para o stream fora do lock para evitar deadlock com a thread de áudio do CoreAudio
+        self._stop_stream()
+
+        if was_playing:
+            with self.lock:
+                self.is_playing = True
+            self._start_stream()
+
+        print(f"Dispositivo de saída alterado para [{self.output_device}] {self.output_device_name}")
+        self._notify_event("device_changed", {"output_device_id": self.output_device, "output_device_name": self.output_device_name})
         return True
 
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4)):
         """Carrega uma música na memória e prepara o grid de compassos."""
         with self.lock:
             self.is_playing = False
-            self._stop_stream()
+        self._stop_stream()
+        with self.lock:
             self.filepath = filepath
             
             raw_data, sr = sf.read(filepath)
@@ -699,7 +712,18 @@ class LiveAudioEngine:
             )
             self.stream.start()
             default_out = sd.default.device[1] if sd.default.device[1] >= 0 else None
-            print(f"Áudio iniciado com sucesso usando dispositivo padrão do sistema (ID: {default_out})")
+            def_name = ""
+            if default_out is not None and 0 <= default_out < len(devs):
+                def_name = devs[default_out].get("name", "Default Output")
+            self.output_device = default_out
+            self.output_device_name = def_name
+            print(f"Áudio iniciado com fallback no dispositivo padrão do sistema (ID: {default_out}, {def_name})")
+            self._notify_event("device_changed", {
+                "output_device_id": self.output_device,
+                "output_device_name": self.output_device_name,
+                "fallback": True,
+                "requested_device": target_device
+            })
         except Exception as e2:
             print(f"Falha ao iniciar áudio no dispositivo padrão: {e2}")
 
