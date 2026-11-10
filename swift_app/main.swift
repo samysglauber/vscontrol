@@ -5488,6 +5488,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
         
+        if let iconUrl = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let iconImg = NSImage(contentsOfFile: iconUrl.path) {
+            NSApplication.shared.applicationIconImage = iconImg
+        }
+        
         let contentView = PlaybackAppView()
         
         window = NSWindow(
