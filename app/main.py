@@ -284,9 +284,13 @@ def parse_time_signature(ts_str: str) -> tuple[int, int]:
 
 class LoadSongRequest(BaseModel):
     song_id: str
+    device_id: int | None = None
 
 @app.post("/api/load")
 def load_song(req: LoadSongRequest):
+    if req.device_id is not None:
+        engine.set_output_device(req.device_id)
+
     song = library.get_song(req.song_id)
     if not song:
         return JSONResponse(status_code=404, content={"error": "Música não encontrada"})
@@ -335,8 +339,13 @@ def load_song(req: LoadSongRequest):
 # Endpoints de Transporte e Controle ao Vivo
 # ==========================
 
+class PlayRequest(BaseModel):
+    device_id: int | None = None
+
 @app.post("/api/play")
-def play():
+def play(req: PlayRequest = None):
+    if req and req.device_id is not None:
+        engine.set_output_device(req.device_id)
     if engine.audio_data is None:
         songs = library.get_all_songs()
         if songs:

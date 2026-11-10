@@ -135,10 +135,15 @@ class LiveAudioEngine:
 
     def set_output_device(self, device_id: int):
         """Troca o dispositivo de saída e salva a preferência em arquivo para persistência."""
+        dev_name = ""
         with self.lock:
             try:
                 devices = sd.query_devices()
                 if 0 <= device_id < len(devices) and devices[device_id].get("max_output_channels", 0) > 0:
+                    name_check = devices[device_id].get("name", "").lower()
+                    if "microphone" in name_check or "microfone" in name_check or "camo" in name_check:
+                        print(f"Dispositivo {device_id} é um microfone e não pode ser usado como saída.")
+                        return False
                     was_playing = self.is_playing
                     self._stop_stream()
                     self.output_device = device_id
@@ -148,13 +153,15 @@ class LiveAudioEngine:
                         json.dump({"output_device_id": device_id, "output_device_name": dev_name}, f, indent=2)
                     if was_playing:
                         self._start_stream()
-                    return True
+                    print(f"Dispositivo de saída alterado para [{device_id}] {dev_name}")
                 else:
                     print(f"Dispositivo {device_id} inválido para saída de áudio.")
                     return False
             except Exception as e:
                 print(f"Erro ao configurar dispositivo {device_id}: {e}")
                 return False
+        self._notify_event("device_changed", {"output_device_id": self.output_device, "output_device_name": dev_name})
+        return True
 
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4)):
         """Carrega uma música na memória e prepara o grid de compassos."""
@@ -600,23 +607,38 @@ class LiveAudioEngine:
     def _start_stream(self):
         self._stop_stream()
         
-        # 1. Valida se o dispositivo atual existe e possui canais de saída
+        # 1. Valida se o dispositivo atual existe, possui canais de saída e NÃO é microfone
         target_device = self.output_device
         try:
             devs = sd.query_devices()
             if target_device is not None:
-                if target_device < 0 or target_device >= len(devs) or devs[target_device].get("max_output_channels", 0) <= 0:
+                dev_name = devs[target_device]["name"].lower() if 0 <= target_device < len(devs) else ""
+                is_mic = "microphone" in dev_name or "microfone" in dev_name or "camo" in dev_name
+                if target_device < 0 or target_device >= len(devs) or devs[target_device].get("max_output_channels", 0) <= 0 or is_mic:
                     target_device = None
-                    # Tenta encontrar pelo nome salvo
-                    config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
-                    if os.path.exists(config_path):
-                        with open(config_path, "r", encoding="utf-8") as f:
-                            saved_name = json.load(f).get("output_device_name")
-                            if saved_name:
-                                for i, d in enumerate(devs):
-                                    if d.get("max_output_channels", 0) > 0 and d["name"] == saved_name:
-                                        target_device = i
-                                        break
+            
+            if target_device is None:
+                # Tenta encontrar pelo nome salvo (se não for microfone)
+                config_path = os.path.join(os.path.dirname(__file__), "device_config.json")
+                if os.path.exists(config_path):
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        saved_name = json.load(f).get("output_device_name", "")
+                        if saved_name and "microph" not in saved_name.lower() and "microf" not in saved_name.lower():
+                            for i, d in enumerate(devs):
+                                if d.get("max_output_channels", 0) > 0 and d["name"] == saved_name:
+                                    target_device = i
+                                    break
+                # Se não encontrou, prioriza BlackHole para Ableton Live
+                if target_device is None:
+                    for i, d in enumerate(devs):
+                        if d.get("max_output_channels", 0) > 0 and "blackhole" in d["name"].lower():
+                            target_device = i
+                            break
+                # Se não tem BlackHole, usa a saída padrão do sistema
+                if target_device is None:
+                    def_out = sd.default.device[1]
+                    if 0 <= def_out < len(devs) and devs[def_out].get("max_output_channels", 0) > 0:
+                        target_device = def_out
         except Exception as e:
             print(f"Erro ao consultar dispositivos de áudio: {e}")
             target_device = None

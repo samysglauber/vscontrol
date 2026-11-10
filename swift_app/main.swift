@@ -805,6 +805,15 @@ class PlaybackState: ObservableObject {
             } else if event == "loop_state" {
                 if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
                 if let lIdx = eventData["loop_cue_idx"] as? Int { self.loopCueIdx = lIdx } else { self.loopCueIdx = nil }
+            } else if event == "device_changed" {
+                if let devId = eventData["output_device_id"] as? Int {
+                    self.selectedDeviceId = devId
+                    if let devName = eventData["output_device_name"] as? String {
+                        self.selectedDeviceName = devName
+                    } else if let found = self.devices.first(where: { $0.id == devId }) {
+                        self.selectedDeviceName = found.name
+                    }
+                }
             } else if event == "song_ended" {
                 self.isPlaying = false
                 if self.autoAdvance {
@@ -1395,34 +1404,41 @@ class PlaybackState: ObservableObject {
         fetchSetlistSongs(retryCount: retryCount)
     }
     
-    func fetchDevices() {
+    func fetchDevices(retryCount: Int = 0) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/devices") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data = data, let devs = try? JSONDecoder().decode([AudioDeviceItem].self, from: data) else { return }
-            DispatchQueue.main.async {
-                self?.devices = devs
-                
-                let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
-                
-                // 1. Tenta restaurar pelo nome exato do dispositivo salvo
-                if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
-                    self?.selectedDeviceId = match.id
-                    self?.selectedDeviceName = match.name
-                    self?.setAudioDevice(id: match.id, save: false)
-                } else if let def = devs.first(where: { $0.is_default }) {
-                    // 2. Se o salvo não estiver conectado, usa a saída padrão atual do macOS (fones/alto-falante)
-                    self?.selectedDeviceId = def.id
-                    self?.selectedDeviceName = def.name
-                    self?.setAudioDevice(id: def.id, save: true)
-                } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
-                    // 3. Fallback BlackHole
-                    self?.selectedDeviceId = blackhole.id
-                    self?.selectedDeviceName = blackhole.name
-                    self?.setAudioDevice(id: blackhole.id, save: true)
-                } else if let first = devs.first {
-                    self?.selectedDeviceId = first.id
-                    self?.selectedDeviceName = first.name
-                    self?.setAudioDevice(id: first.id, save: true)
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            if let data = data, let devs = try? JSONDecoder().decode([AudioDeviceItem].self, from: data), !devs.isEmpty {
+                DispatchQueue.main.async {
+                    self?.devices = devs
+                    
+                    let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
+                    
+                    // 1. Tenta restaurar pelo nome exato do dispositivo salvo
+                    if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
+                        self?.selectedDeviceId = match.id
+                        self?.selectedDeviceName = match.name
+                        self?.setAudioDevice(id: match.id, save: false)
+                    } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
+                        // 2. Se não houver preferência salva, prioriza BlackHole para Ableton Live
+                        self?.selectedDeviceId = blackhole.id
+                        self?.selectedDeviceName = blackhole.name
+                        self?.setAudioDevice(id: blackhole.id, save: true)
+                    } else if let def = devs.first(where: { $0.is_default }) {
+                        // 3. Saída padrão atual do macOS (fones/alto-falante)
+                        self?.selectedDeviceId = def.id
+                        self?.selectedDeviceName = def.name
+                        self?.setAudioDevice(id: def.id, save: true)
+                    } else if let first = devs.first {
+                        self?.selectedDeviceId = first.id
+                        self?.selectedDeviceName = first.name
+                        self?.setAudioDevice(id: first.id, save: true)
+                    }
+                }
+            } else {
+                if retryCount < 15 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.fetchDevices(retryCount: retryCount + 1)
+                    }
                 }
             }
         }.resume()
@@ -1492,7 +1508,7 @@ class PlaybackState: ObservableObject {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["song_id": song.id]
+        let body: [String: Any] = ["song_id": song.id, "device_id": self.selectedDeviceId]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
@@ -1879,9 +1895,10 @@ class PlaybackState: ObservableObject {
         if isPlaying {
             // Cancelar salto enfileirado ao pausar
             queuedCueIdx = nil
+            sendAction("pause")
+        } else {
+            sendAction("play", body: ["device_id": self.selectedDeviceId])
         }
-        let action = isPlaying ? "pause" : "play"
-        sendAction(action)
     }
     
     // Inicia a música correspondente do Setlist pelo índice (teclas 1 a 8)
@@ -4532,24 +4549,43 @@ struct BottomMixerDock: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1, height: 22)
             
-            // Seletor de Saída de Áudio (Minimalista)
+            // Seletor de Saída de Áudio (Minimalista e Confiável)
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 12))
                     .foregroundColor(Color.cyan)
                 
-                Picker("", selection: $state.selectedDeviceId) {
+                Menu {
                     ForEach(state.devices) { dev in
-                        Text(dev.name)
-                            .tag(dev.id)
+                        Button(action: {
+                            state.setAudioDevice(id: dev.id, save: true)
+                        }) {
+                            HStack {
+                                Text(dev.name)
+                                if dev.id == state.selectedDeviceId {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
                     }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(state.selectedDeviceName.isEmpty ? "BlackHole 2ch" : state.selectedDeviceName)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                            .foregroundColor(.gray)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.12), lineWidth: 1))
                 }
-                .labelsHidden()
-                .pickerStyle(MenuPickerStyle())
-                .frame(width: 150)
-                .onChange(of: state.selectedDeviceId) { _, newId in
-                    state.setAudioDevice(id: newId, save: true)
-                }
+                .menuStyle(BorderlessButtonMenuStyle())
+                .frame(minWidth: 120, maxWidth: 170)
             }
         }
         .padding(.horizontal, 22)

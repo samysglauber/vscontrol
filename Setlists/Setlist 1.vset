@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-10T15:11:30Z",
+  "createdAt" : "2026-11-10T15:35:24Z",
   "items" : [
     {
       "cues" : [
@@ -8135,7 +8135,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/A Alegria - O Exército de Deus - Caiam Por Terra - Autoridade e Poder - vs.mp3",
         "search_query" : "A Alegria - O Exército de Deus - Caiam Por Terra - Autoridade e Poder",
         "time_signature" : "4\/4",
-        "total_duration" : 233.43020408163267
+        "total_duration" : 245.14
       },
       "transitionType" : "AUTO"
     },
@@ -11328,7 +11328,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Bondade de Deus (68bpm) (com teclado) - vs.mp3",
         "search_query" : "Bondade de Deus",
         "time_signature" : "4\/4",
-        "total_duration" : 304.6661224489796
+        "total_duration" : 306.18
       },
       "transitionType" : "AUTO"
     },
@@ -14594,7 +14594,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/A Ele a Glória (68bpm) - vs.mp3",
         "search_query" : "A Ele a Glória",
         "time_signature" : "4\/4",
-        "total_duration" : 416.47020408163263
+        "total_duration" : 290.29
       },
       "transitionType" : "AUTO"
     },
@@ -17568,7 +17568,7 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Cantarei Teu Amor - vs.mp3",
         "search_query" : "Cantarei Teu Amor",
         "time_signature" : "4\/4",
-        "total_duration" : 210.625306122449
+        "total_duration" : 207.49
       },
       "transitionType" : "AUTO"
     },
@@ -21710,12 +21710,12 @@
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Eu falo Jesus (74 bpm) - vs.mp3",
         "search_query" : "Eu falo Jesus",
         "time_signature" : "4\/4",
-        "total_duration" : 415.89551020408163
+        "total_duration" : 417.16
       },
       "transitionType" : "AUTO"
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-10T15:11:30Z",
+  "updatedAt" : "2026-11-10T15:35:24Z",
   "version" : 1
 }
