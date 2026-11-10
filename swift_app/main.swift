@@ -2270,33 +2270,100 @@ struct TopBarView: View {
             .background(WindowTitlebarDragView())
             
             // Linha 2: Métricas, Controles Centrais de Transporte e Remote
-            HStack(spacing: 20) {
-                // Métricas (BPM com decimal e Compasso)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(formatBpm(state.bpm))
-                        .font(.system(size: 18, weight: .black, design: .monospaced))
-                        .foregroundColor(.white)
-                    Text(state.timeSignature)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.gray)
+            ZStack {
+                // Camada 1: Laterais (Esquerda: Métricas + Clock; Direita: Botão EDIT / DONE ao lado do Remote)
+                HStack(spacing: 20) {
+                    // Métricas (BPM com decimal e Compasso)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(formatBpm(state.bpm))
+                            .font(.system(size: 18, weight: .black, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text(state.timeSignature)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.gray)
+                    }
+                    .frame(minWidth: 48, alignment: .leading)
+                    
+                    // Clock Principal (Sem contador duplicado)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(formatTime(state.currentSeconds))
+                            .font(.system(size: 26, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text("/ \(formatTime(state.totalSeconds))")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    // Área Direita: Botão EDIT / DONE ao lado do Botão Remote Celular (QR)
+                    HStack(spacing: 10) {
+                        // Botão EDIT / DONE (ao lado do remote)
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                state.isEditMode.toggle()
+                            }
+                        }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
+                                    .frame(width: 36, height: 36)
+                                Text(state.isEditMode ? "DONE" : "EDIT")
+                                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                                    .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
+                            }
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
+                        
+                        // Botão Remote Celular (QR) sóbrio com mesmo padrão dos botões centrais
+                        Button(action: { state.isQrModalPresented = true }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(state.isQrModalPresented ? Color.white.opacity(0.18) : Color.white.opacity(0.06))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "iphone")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(state.isQrModalPresented ? Color.white : Color.white.opacity(0.75))
+                            }
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(state.isQrModalPresented ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Connect smartphone remote control via QR Code")
+                    }
                 }
-                .frame(minWidth: 48, alignment: .leading)
                 
-                // Clock Principal (Sem contador duplicado)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(formatTime(state.currentSeconds))
-                        .font(.system(size: 26, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                    Text("/ \(formatTime(state.totalSeconds))")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                // Botões de Transporte Padronizados (Quadrados com cantos levemente arredondados 36x36, cornerRadius 8)
+                // Camada 2: 5 Botões de Transporte Perfeitamente Centralizados na Janela
                 HStack(spacing: 10) {
-                    // 1. Botão Restart (Branco)
+                    // 1. Botão AUTO (Auto-Advance do Setlist) - colocado à esquerda do botão retroceder
+                    Button(action: { state.autoAdvance.toggle() }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
+                                .frame(width: 36, height: 36)
+                            Text("AUTO")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
+                        }
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Auto-Advance: automatically play next track when current song finishes")
+                    
+                    // 2. Botão Retroceder / Restart (Branco)
                     Button(action: { state.restart() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
@@ -2312,7 +2379,7 @@ struct TopBarView: View {
                     .buttonStyle(PlainButtonStyle())
                     .help("Restart song from beginning")
                     
-                    // 2. Botão Play / Pause
+                    // 3. Botão Play / Pause
                     Button(action: { state.playPause() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
@@ -2332,7 +2399,7 @@ struct TopBarView: View {
                     .keyboardShortcut(.space, modifiers: [])
                     .help("Play / Pause [Espaço]")
                     
-                    // 3. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In quando atenuado)
+                    // 4. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In quando atenuado)
                     let isFadeActive = state.isFadingOut || state.isFadedOut || state.isFadingIn
                     let isInverted = state.isFadedOut || state.isFadingIn
                     Button(action: { state.toggleFadeTracks(duration: 3.0) }) {
@@ -2356,7 +2423,7 @@ struct TopBarView: View {
                     .disabled(!state.isPlaying && !isFadeActive)
                     .help(isInverted ? "Fade In Tracks (3s) [Atalho: Tecla 0]" : "Fade Out Tracks (3s) [Atalho: Tecla 0]")
                     
-                    // 4. Botão Loop da Seção Atual
+                    // 5. Botão Loop da Seção Atual
                     Button(action: { state.toggleLoop() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
@@ -2374,70 +2441,7 @@ struct TopBarView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Loop current section (L)")
-                    
-                    // 5. Botão AUTO (Auto-Advance do Setlist)
-                    Button(action: { state.autoAdvance.toggle() }) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
-                                .frame(width: 36, height: 36)
-                            Text("AUTO")
-                                .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
-                        }
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Auto-Advance: automatically play next track when current song finishes")
-                    
-                    // 6. Botão EDIT / DONE (No centro, ao lado do AUTO, sem ícones e em caixa alta)
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            state.isEditMode.toggle()
-                        }
-                    }) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
-                                .frame(width: 36, height: 36)
-                            Text(state.isEditMode ? "DONE" : "EDIT")
-                                .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
-                        }
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
                 }
-                
-                Spacer()
-                
-                // Área Direita: Botão Remote Celular (QR) sóbrio com mesmo padrão dos botões centrais
-                Button(action: { state.isQrModalPresented = true }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(state.isQrModalPresented ? Color.white.opacity(0.18) : Color.white.opacity(0.06))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "iphone")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(state.isQrModalPresented ? Color.white : Color.white.opacity(0.75))
-                    }
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(state.isQrModalPresented ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Connect smartphone remote control via QR Code")
             }
             .padding(.horizontal, 20)
             .padding(.top, 2)
