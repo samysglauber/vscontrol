@@ -3529,11 +3529,15 @@ struct WaveformSectionBlock: View, Equatable {
                     if width >= 44 {
                         Button(action: onLoopToggle) {
                             Image(systemName: "repeat")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(isLoopActive ? Color.cyan : Color.white.opacity(0.85))
+                                .font(.system(size: 10, weight: .heavy))
+                                .foregroundColor(isLoopActive ? Color.black : Color.white.opacity(0.85))
                                 .padding(4)
-                                .background(isLoopActive ? Color.cyan.opacity(0.35) : Color.black.opacity(0.55))
+                                .background(isLoopActive ? Color.cyan : Color.black.opacity(0.55))
                                 .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(isLoopActive ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
+                                )
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help("Loop this section (L)")
