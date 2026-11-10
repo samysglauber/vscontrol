@@ -936,7 +936,7 @@ class PlaybackState: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "saved_setlist_full_songs")
         UserDefaults.standard.removeObject(forKey: "saved_last_loaded_song_id")
         UserDefaults.standard.synchronize()
-        showUndoFeedback("Novo Setlist criado. Adicione músicas pelo card '+ Add a Song'.")
+        showUndoFeedback("New Setlist created. Add songs via '+ Add a Song'.")
     }
     
     func saveSetlist(completion: (() -> Void)? = nil) {
@@ -950,7 +950,7 @@ class PlaybackState: ObservableObject {
     func saveSetlistAs(completion: (() -> Void)? = nil) {
         let panel = NSSavePanel()
         panel.title = "Save Setlist"
-        panel.message = "Escolha o nome e local para salvar este Setlist"
+        panel.message = "Choose a name and location to save this Setlist"
         panel.canCreateDirectories = true
         panel.allowsOtherFileTypes = true
         if let vsetType = UTType(filenameExtension: "vset") {
@@ -1022,14 +1022,14 @@ class PlaybackState: ObservableObject {
                 UserDefaults.standard.synchronize()
                 
                 if notify {
-                    self.showUndoFeedback("Setlist '\(docName)' salva com sucesso!")
+                    self.showUndoFeedback("Setlist '\(docName)' saved successfully!")
                 }
                 completion?()
             }
         } catch {
             DispatchQueue.main.async {
                 if notify {
-                    self.showUndoFeedback("Erro ao salvar Setlist: \(error.localizedDescription)")
+                    self.showUndoFeedback("Error saving Setlist: \(error.localizedDescription)")
                 }
                 completion?()
             }
@@ -1039,7 +1039,7 @@ class PlaybackState: ObservableObject {
     func openSetlistDialog(completion: (() -> Void)? = nil) {
         let panel = NSOpenPanel()
         panel.title = "Open Setlist"
-        panel.message = "Selecione um arquivo de Setlist (.vset ou .json) para abrir"
+        panel.message = "Select a Setlist file (.vset or .json) to open"
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -1066,7 +1066,7 @@ class PlaybackState: ObservableObject {
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url) else {
             if !isInitialRestore {
-                showUndoFeedback("Arquivo de setlist não encontrado.")
+                showUndoFeedback("Setlist file not found.")
             }
             return false
         }
@@ -1086,7 +1086,7 @@ class PlaybackState: ObservableObject {
             loadedItems = legacyItems.map { SetlistDocumentItem(song: $0.song, transitionType: $0.transitionType, cues: nil) }
         } else {
             if !isInitialRestore {
-                showUndoFeedback("Formato de setlist inválido.")
+                showUndoFeedback("Invalid setlist format.")
             }
             return false
         }
@@ -1173,7 +1173,7 @@ class PlaybackState: ObservableObject {
             self.fetchSetlistSongs()
             
             if !isInitialRestore {
-                self.showUndoFeedback("Setlist '\(docName)' carregada!")
+                self.showUndoFeedback("Setlist '\(docName)' loaded!")
             }
         }
         
@@ -1206,7 +1206,7 @@ class PlaybackState: ObservableObject {
     func clearRecentSetlists() {
         UserDefaults.standard.removeObject(forKey: "recent_setlist_paths")
         UserDefaults.standard.synchronize()
-        showUndoFeedback("Histórico de setlists recentes limpo.")
+        showUndoFeedback("Recent setlists cleared.")
     }
     
     func getAvailableSetlists() -> [URL] {
@@ -1599,7 +1599,7 @@ class PlaybackState: ObservableObject {
             DispatchQueue.main.async {
                 self?.isSearchingCovers = false
                 if let error = error {
-                    self?.coverPickerError = "Falha ao buscar: \(error.localizedDescription)"
+                    self?.coverPickerError = "Search failed: \(error.localizedDescription)"
                     return
                 }
                 guard let data = data,
@@ -1644,8 +1644,8 @@ class PlaybackState: ObservableObject {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.image, .jpeg, .png]
-        panel.message = "Escolha uma imagem de capa para \(song.name)"
-        panel.prompt = "Escolher Capa"
+        panel.message = "Choose a cover image for \(song.name)"
+        panel.prompt = "Choose Cover"
         
         if panel.runModal() == .OK, let fileUrl = panel.url {
             guard let url = URL(string: "http://127.0.0.1:8080/api/covers/upload") else { return }
@@ -1770,7 +1770,7 @@ class PlaybackState: ObservableObject {
     
     func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection]) {
         guard let song = currentSong else { return }
-        pushUndoSnapshot(description: "Edição no Editor")
+        pushUndoSnapshot(description: "Song Editor Edit")
         self.bpm = bpm
         self.timeSignature = timeSignature
         self.currentCues = cues
@@ -1848,7 +1848,7 @@ class PlaybackState: ObservableObject {
     
     func reprocessWithAI() {
         guard let song = currentSong else { return }
-        pushUndoSnapshot(description: "Re-análise IA")
+        pushUndoSnapshot(description: "AI Re-analysis")
         self.isReprocessing = true
         
         let body: [String: Any] = [
@@ -2033,7 +2033,7 @@ class PlaybackState: ObservableObject {
         }
         
         let deltaStr = deltaBars > 0 ? "+\(formatBars(deltaBars))" : "\(formatBars(deltaBars))"
-        pushUndoSnapshot(description: "Ajuste de Compasso (\(deltaStr) comp)")
+        pushUndoSnapshot(description: "Bar Adjustment (\(deltaStr) bars)")
         
         let secPerBeat = 60.0 / bpm
         let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
@@ -2052,7 +2052,7 @@ class PlaybackState: ObservableObject {
         guard index >= 0 && index < currentCues.count else { return }
         let oldName = currentCues[index].name
         if oldName == newType { return }
-        pushUndoSnapshot(description: "Tipo de Seção (\(newType))")
+        pushUndoSnapshot(description: "Section Type (\(newType))")
         currentCues[index].name = newType
         currentCues[index].color = colorForCue(name: newType)
         saveCurrentCues()
@@ -2061,7 +2061,7 @@ class PlaybackState: ObservableObject {
     func splitSection(at index: Int) {
         guard index >= 0 && index < currentCues.count else { return }
         let cur = currentCues[index]
-        pushUndoSnapshot(description: "Divisão de Seção (\(cur.cleanFullName))")
+        pushUndoSnapshot(description: "Split Section (\(cur.cleanFullName))")
         let totalBars = calculateDurationBars(for: index)
         
         let secPerBeat = 60.0 / bpm
@@ -2102,7 +2102,7 @@ class PlaybackState: ObservableObject {
     func deleteSection(at index: Int) {
         guard currentCues.count > 1, index >= 0 && index < currentCues.count else { return }
         let cur = currentCues[index]
-        pushUndoSnapshot(description: "Exclusão de Seção (\(cur.cleanFullName))")
+        pushUndoSnapshot(description: "Delete Section (\(cur.cleanFullName))")
         currentCues.remove(at: index)
         if index == 0 && !currentCues.isEmpty {
             currentCues[0].bar = 1.0
@@ -2161,7 +2161,7 @@ class PlaybackState: ObservableObject {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     
-    func pushUndoSnapshot(description: String = "Edição") {
+    func pushUndoSnapshot(description: String = "Edit") {
         let snapshot = CueHistorySnapshot(
             cues: self.currentCues,
             bpm: self.bpm,
@@ -2177,7 +2177,7 @@ class PlaybackState: ObservableObject {
     
     func undo() {
         guard let previous = undoStack.popLast() else {
-            showUndoFeedback("Nada para desfazer")
+            showUndoFeedback("Nothing to undo")
             return
         }
         let currentSnapshot = CueHistorySnapshot(
@@ -2195,12 +2195,12 @@ class PlaybackState: ObservableObject {
             self.currentCueIdx = max(0, self.currentCues.count - 1)
         }
         saveCurrentCues()
-        showUndoFeedback("Desfeito: \(previous.description)")
+        showUndoFeedback("Undone: \(previous.description)")
     }
     
     func redo() {
         guard let next = redoStack.popLast() else {
-            showUndoFeedback("Nada para refazer")
+            showUndoFeedback("Nothing to redo")
             return
         }
         let currentSnapshot = CueHistorySnapshot(
@@ -2218,7 +2218,7 @@ class PlaybackState: ObservableObject {
             self.currentCueIdx = max(0, self.currentCues.count - 1)
         }
         saveCurrentCues()
-        showUndoFeedback("Refeito: \(next.description)")
+        showUndoFeedback("Redone: \(next.description)")
     }
     
     func showUndoFeedback(_ message: String) {
@@ -2552,10 +2552,10 @@ struct TopBarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
                 Menu {
-                    Section("SETLISTS SALVOS") {
+                    Section("SAVED SETLISTS") {
                         let available = state.getAvailableSetlists()
                         if available.isEmpty {
-                            Text("Nenhum setlist salvo").foregroundColor(.secondary)
+                            Text("No saved setlists").foregroundColor(.secondary)
                         } else {
                             ForEach(available, id: \.path) { url in
                                 let name = url.deletingPathExtension().lastPathComponent
@@ -2578,19 +2578,19 @@ struct TopBarView: View {
                     Divider()
                     
                     Button(action: { state.newSetlist() }) {
-                        Label("Novo Setlist", systemImage: "doc.badge.plus")
+                        Label("New Setlist", systemImage: "doc.badge.plus")
                     }
                     
                     Button(action: { state.openSetlistDialog() }) {
-                        Label("Abrir Setlist...", systemImage: "folder")
+                        Label("Open Setlist...", systemImage: "folder")
                     }
                     
                     Button(action: { state.saveSetlist() }) {
-                        Label("Salvar Setlist", systemImage: "square.and.arrow.down")
+                        Label("Save Setlist", systemImage: "square.and.arrow.down")
                     }
                     
                     Button(action: { state.saveSetlistAs() }) {
-                        Label("Salvar Como...", systemImage: "square.and.arrow.down.on.square")
+                        Label("Save Setlist As...", systemImage: "square.and.arrow.down.on.square")
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -2749,7 +2749,7 @@ struct TopBarView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .keyboardShortcut(.space, modifiers: [])
-                    .help("Play / Pause [Espaço]")
+                    .help("Play / Pause [Space]")
                     
                     // 4. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In quando atenuado)
                     let isFadeActive = state.isFadingOut || state.isFadedOut || state.isFadingIn
@@ -2773,7 +2773,7 @@ struct TopBarView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .disabled(!state.isPlaying && !isFadeActive)
-                    .help(isInverted ? "Fade In Tracks (3s) [Atalho: Tecla 0]" : "Fade Out Tracks (3s) [Atalho: Tecla 0]")
+                    .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
                     
                     // 5. Botão Loop da Seção Atual
                     Button(action: { state.toggleLoop() }) {
@@ -2845,14 +2845,14 @@ struct SetlistCarouselView: View {
                                     Button(action: {
                                         state.openCoverPicker(for: item.song)
                                     }) {
-                                        Label("Buscar / Alterar Capa...", systemImage: "photo.badge.plus")
+                                        Label("Find / Change Cover...", systemImage: "photo.badge.plus")
                                     }
                                     
                                     if item.song.has_cover == true {
                                         Button(role: .destructive, action: {
                                             state.removeCover(for: item.song)
                                         }) {
-                                            Label("Remover Capa", systemImage: "trash")
+                                            Label("Remove Cover", systemImage: "trash")
                                         }
                                     }
                                     
@@ -3001,7 +3001,7 @@ struct CoverPickerSheetView: View {
                         Image(systemName: "photo.stack")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.cyan)
-                        Text("Buscar Capa do Álbum")
+                        Text("Search Album Cover")
                             .font(.headline)
                             .foregroundColor(.white)
                     }
@@ -3020,7 +3020,7 @@ struct CoverPickerSheetView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "folder")
                                 .font(.system(size: 11, weight: .bold))
-                            Text("Escolher do Mac...")
+                            Text("Choose from Mac...")
                                 .font(.system(size: 11, weight: .semibold))
                         }
                         .foregroundColor(.white)
@@ -3030,7 +3030,7 @@ struct CoverPickerSheetView: View {
                         .cornerRadius(6)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Escolher arquivo de imagem do computador")
+                    .help("Choose image file from computer")
                     
                     if song.has_cover == true {
                         Button(action: {
@@ -3040,7 +3040,7 @@ struct CoverPickerSheetView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "trash")
                                     .font(.system(size: 10, weight: .bold))
-                                Text("Remover")
+                                Text("Remove")
                                     .font(.system(size: 11, weight: .semibold))
                             }
                             .foregroundColor(.red.opacity(0.9))
@@ -3050,7 +3050,7 @@ struct CoverPickerSheetView: View {
                             .cornerRadius(6)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Remover capa atribuída")
+                        .help("Remove assigned cover")
                     }
                 }
                 
@@ -3061,7 +3061,9 @@ struct CoverPickerSheetView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(18)
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
             .background(Color(red: 0.12, green: 0.12, blue: 0.14))
             
             Divider().background(Color.white.opacity(0.1))
@@ -3073,7 +3075,7 @@ struct CoverPickerSheetView: View {
                         .foregroundColor(.gray)
                         .font(.system(size: 13))
                     
-                    TextField("Digite o nome da música, artista ou álbum...", text: $queryText, onCommit: {
+                    TextField("Enter song name, artist, or album...", text: $queryText, onCommit: {
                         state.searchCovers(query: queryText)
                     })
                     .textFieldStyle(PlainTextFieldStyle())
@@ -3104,7 +3106,7 @@ struct CoverPickerSheetView: View {
                         } else {
                             Image(systemName: "arrow.right.circle.fill")
                         }
-                        Text("Buscar")
+                        Text("Search")
                     }
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(.white)
@@ -3116,8 +3118,8 @@ struct CoverPickerSheetView: View {
                 .buttonStyle(PlainButtonStyle())
                 .disabled(state.isSearchingCovers || queryText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
             .background(Color(red: 0.10, green: 0.10, blue: 0.12))
             
             Divider().background(Color.white.opacity(0.08))
@@ -3128,7 +3130,7 @@ struct CoverPickerSheetView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                             .scaleEffect(1.2)
-                        Text("Buscando versões e capas na Apple Music...")
+                        Text("Searching covers on Apple Music...")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.gray)
                     }
@@ -3137,7 +3139,7 @@ struct CoverPickerSheetView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                             .scaleEffect(1.2)
-                        Text("Otimizando e salvando capa (300x300 JPEG leve)...")
+                        Text("Optimizing and saving cover...")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.cyan)
                     }
@@ -3150,7 +3152,7 @@ struct CoverPickerSheetView: View {
                         Text(error)
                             .font(.system(size: 13))
                             .foregroundColor(.white.opacity(0.8))
-                        Button("Tentar Novamente") {
+                        Button("Try Again") {
                             state.searchCovers(query: queryText)
                         }
                         .foregroundColor(.cyan)
@@ -3161,10 +3163,10 @@ struct CoverPickerSheetView: View {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 40))
                             .foregroundColor(.gray.opacity(0.4))
-                        Text("Nenhum resultado para esta busca.")
+                        Text("No results found.")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(.gray)
-                        Text("Tente digitar o nome do artista ou versão (ex: 'Bondade de Deus Isaias Saad')")
+                        Text("Try typing the artist name or version (e.g. 'Goodness of God Bethel')")
                             .font(.system(size: 12))
                             .foregroundColor(.gray.opacity(0.8))
                     }
@@ -4954,7 +4956,7 @@ struct QuickSectionEditPopoverView: View {
                                 Text(t).tag(t)
                             }
                             Divider()
-                            Text("Custom (Personalizado)...").tag("__custom__")
+                            Text("Custom...").tag("__custom__")
                         }
                         .pickerStyle(MenuPickerStyle())
                     }
@@ -5097,7 +5099,7 @@ struct QuickSectionEditPopoverView: View {
                             .overlay(Circle().stroke(Color.red.opacity(0.35), lineWidth: 1.5))
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(cueIndex == 0 ? "Unir seção com a próxima" : "Unir com o bloco à esquerda")
+                        .help(cueIndex == 0 ? "Merge section with next" : "Merge with section to the left")
                     }
                     
                     Spacer()
@@ -5191,8 +5193,9 @@ struct SongEditorSheetView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 16)
             .background(Color(red: 0.12, green: 0.12, blue: 0.13))
             
             Divider().background(Color.white.opacity(0.1))
@@ -5229,7 +5232,7 @@ struct SongEditorSheetView: View {
                                     HStack(spacing: 5) {
                                         Image(systemName: "photo.badge.plus")
                                             .font(.system(size: 11))
-                                        Text(song.has_cover == true ? "Alterar Capa" : "Buscar Capa")
+                                        Text(song.has_cover == true ? "Change Cover" : "Add Cover")
                                             .font(.system(size: 11, weight: .semibold))
                                     }
                                     .foregroundColor(.cyan)
@@ -5247,7 +5250,7 @@ struct SongEditorSheetView: View {
                                         HStack(spacing: 5) {
                                             Image(systemName: "trash")
                                                 .font(.system(size: 11))
-                                            Text("Remover Capa")
+                                            Text("Remove Cover")
                                                 .font(.system(size: 11, weight: .medium))
                                         }
                                         .foregroundColor(.red.opacity(0.85))
@@ -5378,10 +5381,10 @@ struct SongEditorSheetView: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Re-análise com Inteligência Artificial")
+                        Text("AI Re-Analysis")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(.white)
-                        Text("Detecta seções dinâmicas, voz guia e grid de compassos automaticamente.")
+                        Text("Automatically detects dynamic sections, voice guide cues, and bar grid.")
                             .font(.system(size: 11))
                             .foregroundColor(.gray)
                     }
@@ -5400,12 +5403,12 @@ struct SongEditorSheetView: View {
                                 ProgressView()
                                     .scaleEffect(0.75)
                                     .colorInvert()
-                                Text("Analisando...")
+                                Text("Analyzing...")
                                     .font(.system(size: 12, weight: .bold))
                             } else {
                                 Image(systemName: "sparkles")
                                     .font(.system(size: 11, weight: .bold))
-                                Text("Reprocessar com IA")
+                                Text("Reprocess with AI")
                                     .font(.system(size: 12, weight: .bold))
                             }
                         }
@@ -5424,7 +5427,9 @@ struct SongEditorSheetView: View {
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.purple.opacity(0.3), lineWidth: 1))
             }
-            .padding(20)
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 20)
             
             Spacer()
             
@@ -5432,7 +5437,7 @@ struct SongEditorSheetView: View {
             
             // Footer: Cancelar e Salvar
             HStack {
-                Button("Cancelar") {
+                Button("Cancel") {
                     presentationMode.wrappedValue.dismiss()
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -5448,7 +5453,7 @@ struct SongEditorSheetView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark")
-                        Text("Salvar Alterações")
+                        Text("Save Changes")
                     }
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
@@ -5459,10 +5464,12 @@ struct SongEditorSheetView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(16)
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            .padding(.bottom, 22)
             .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
-        .frame(width: 620, height: 430)
+        .frame(width: 660, height: 490)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .sheet(isPresented: $state.isCoverPickerPresented) {
             CoverPickerSheetView(state: state)
