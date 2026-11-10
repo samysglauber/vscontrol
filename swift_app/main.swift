@@ -2930,6 +2930,58 @@ class WaveformScrollController {
         return nil
     }
     
+    /// Centraliza a visualização da timeline no ponteiro vermelho de reprodução durante o zoom
+    func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat, animated: Bool = false) {
+        guard let sv = getScrollView() else { return }
+        let clip = sv.contentView
+        let viewportWidth = clip.bounds.width
+        guard viewportWidth > 0 else { return }
+        
+        let docWidth = max(viewportWidth, totalTrackWidth + 40.0)
+        let maxOffsetX = max(0, docWidth - viewportWidth)
+        guard maxOffsetX > 0 else {
+            var origin = clip.bounds.origin
+            origin.x = 0
+            clip.scroll(to: origin)
+            sv.reflectScrolledClipView(clip)
+            return
+        }
+        
+        // Posição absoluta do ponteiro vermelho dentro do documentView (20px de padding lateral esquerdo)
+        let playheadDocX = 20.0 + (CGFloat(max(0.0, currentSeconds)) * scale)
+        // Centraliza o ponteiro vermelho exatamente na metade da janela visível
+        let targetX = max(0, min(maxOffsetX, playheadDocX - (viewportWidth / 2.0)))
+        
+        let applyScroll = { (anim: Bool) in
+            if let doc = sv.documentView, doc.frame.width < docWidth {
+                var f = doc.frame
+                f.size.width = docWidth
+                doc.frame = f
+            }
+            var origin = clip.bounds.origin
+            origin.x = targetX
+            if anim {
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.20
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    clip.animator().setBoundsOrigin(origin)
+                }, completionHandler: {
+                    sv.reflectScrolledClipView(clip)
+                })
+            } else {
+                clip.scroll(to: origin)
+                sv.reflectScrolledClipView(clip)
+            }
+        }
+        
+        applyScroll(animated)
+        
+        // Reforça após o próximo ciclo de layout do SwiftUI para garantir ancoragem exata
+        DispatchQueue.main.async {
+            applyScroll(false)
+        }
+    }
+    
     func onDragChanged(translationX: CGFloat) {
         guard let sv = getScrollView() else { return }
         if !isDragging {
@@ -2968,6 +3020,7 @@ struct WaveformMouseTrackingView: NSViewRepresentable {
 
 struct HorizontalScrollWheelHook: NSViewRepresentable {
     var onUserScrolled: (() -> Void)? = nil
+    var onZoomChange: ((Double) -> Void)? = nil
     var resetTrigger: Int = 0
     
     func makeCoordinator() -> Coordinator {
@@ -2977,11 +3030,13 @@ struct HorizontalScrollWheelHook: NSViewRepresentable {
     func makeNSView(context: Context) -> HorizontalScrollNSView {
         let view = HorizontalScrollNSView()
         view.onUserScrolled = onUserScrolled
+        view.onZoomChange = onZoomChange
         return view
     }
     
     func updateNSView(_ nsView: HorizontalScrollNSView, context: Context) {
         nsView.onUserScrolled = onUserScrolled
+        nsView.onZoomChange = onZoomChange
         if context.coordinator.lastResetTrigger != resetTrigger {
             context.coordinator.lastResetTrigger = resetTrigger
             nsView.scrollToStart()
@@ -2997,6 +3052,7 @@ class HorizontalScrollNSView: NSView {
     weak var targetScrollView: NSScrollView?
     var monitor: Any?
     var onUserScrolled: (() -> Void)?
+    var onZoomChange: ((Double) -> Void)?
     
     override var mouseDownCanMoveWindow: Bool { false }
     
@@ -3041,7 +3097,7 @@ class HorizontalScrollNSView: NSView {
     
     func setupMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
             guard let self = self, let window = self.window, event.window == window else {
                 return event
             }
@@ -3053,9 +3109,34 @@ class HorizontalScrollNSView: NSView {
             let mouseInWindow = event.locationInWindow
             let mouseInSV = sv.convert(mouseInWindow, from: nil)
             let isInsideSV = sv.bounds.contains(mouseInSV)
+            guard isInsideSV else { return event }
             
-            // Roda do Mouse e Trackpad
-            if event.type == .scrollWheel && isInsideSV {
+            // 1. Gesto de Pinça (Pinch-to-zoom no Trackpad)
+            if event.type == .magnify {
+                let delta = Double(event.magnification)
+                if abs(delta) > 0.001 {
+                    DispatchQueue.main.async {
+                        self.onZoomChange?(delta * 1.5)
+                    }
+                    return nil
+                }
+            }
+            
+            // 2. Roda do Mouse e Trackpad
+            if event.type == .scrollWheel {
+                // Se estiver segurando Option (Alt) ou Command: faz ZOOM em direção ao ponteiro vermelho!
+                if event.modifierFlags.contains(.option) || event.modifierFlags.contains(.command) {
+                    let deltaY = event.scrollingDeltaY
+                    if abs(deltaY) > 0.01 {
+                        let zoomFactor = event.hasPreciseScrollingDeltas ? 0.005 : 0.03
+                        DispatchQueue.main.async {
+                            self.onZoomChange?(Double(deltaY * zoomFactor))
+                        }
+                        return nil
+                    }
+                }
+                
+                // Rolagem horizontal comum
                 let deltaY = event.scrollingDeltaY
                 let deltaX = event.scrollingDeltaX
                 
@@ -3121,10 +3202,13 @@ struct SpectrogramWaveformView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     ZStack(alignment: .leading) {
-                        // Hook de Rolagem com Rodinha do Mouse e Trackpad
+                        // Hook de Rolagem com Rodinha do Mouse e Trackpad (e Zoom com Option/Pinça)
                         HorizontalScrollWheelHook(
                             onUserScrolled: {
                                 lastUserScrollTime = Date()
+                            },
+                            onZoomChange: { delta in
+                                state.zoomLevel = max(0.0, min(1.0, state.zoomLevel + delta))
                             },
                             resetTrigger: state.scrollToStartTrigger
                         )
@@ -3238,6 +3322,17 @@ struct SpectrogramWaveformView: View {
                             proxy.scrollTo(idx, anchor: .center)
                         }
                     }
+                }
+                .onChange(of: state.zoomLevel) { oldZoom, newZoom in
+                    let newScale = calculateScale(totalAvailableWidth: totalAvailableWidth)
+                    let newTotalTrackWidth = max(totalAvailableWidth, CGFloat(max(1.0, state.totalSeconds)) * newScale)
+                    let animated = abs(newZoom - oldZoom) >= 0.15
+                    WaveformScrollController.shared.scrollToPlayhead(
+                        currentSeconds: state.currentSeconds,
+                        scale: newScale,
+                        totalTrackWidth: newTotalTrackWidth,
+                        animated: animated
+                    )
                 }
             }
         }
