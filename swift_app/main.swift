@@ -3312,6 +3312,7 @@ struct SpectrogramWaveformView: View {
         let isPlaying = (idx == state.currentCueIdx)
         let isQueued = (idx == state.queuedCueIdx)
         let isFocused = (idx == state.focusedCueIdx)
+        let isEditing = (idx == state.quickEditingCueIdx)
         let isLoop = isLooping(idx: idx, isPlaying: isPlaying)
         let w: CGFloat = (idx < blockWidths.count) ? blockWidths[idx] : 90.0
         
@@ -3319,6 +3320,7 @@ struct SpectrogramWaveformView: View {
             state: state,
             index: idx,
             section: section,
+            isEditing: isEditing,
             isPlaying: isPlaying,
             isQueued: isQueued,
             isFocused: isFocused,
@@ -3394,7 +3396,9 @@ struct RightClickRepresentable: NSViewRepresentable {
         }
         
         override func rightMouseDown(with event: NSEvent) {
-            action?()
+            DispatchQueue.main.async { [weak self] in
+                self?.action?()
+            }
         }
         
         override func rightMouseUp(with event: NSEvent) {
@@ -3495,6 +3499,7 @@ struct WaveformSectionBlock: View, Equatable {
     let state: PlaybackState
     let index: Int
     let section: CueSection
+    let isEditing: Bool
     let isPlaying: Bool
     let isQueued: Bool
     let isFocused: Bool
@@ -3508,6 +3513,7 @@ struct WaveformSectionBlock: View, Equatable {
     static func == (lhs: WaveformSectionBlock, rhs: WaveformSectionBlock) -> Bool {
         lhs.index == rhs.index &&
         lhs.section.id == rhs.section.id &&
+        lhs.isEditing == rhs.isEditing &&
         lhs.isPlaying == rhs.isPlaying &&
         lhs.isQueued == rhs.isQueued &&
         lhs.isFocused == rhs.isFocused &&
@@ -3644,11 +3650,13 @@ struct WaveformSectionBlock: View, Equatable {
         .frame(width: width, height: 175)
         .clipped()
         .modifier(RightClickModifier(action: {
-            state.quickEditingCueIdx = index
+            DispatchQueue.main.async {
+                state.quickEditingCueIdx = index
+            }
         }))
         .popover(
             isPresented: Binding(
-                get: { state.quickEditingCueIdx == index },
+                get: { isEditing },
                 set: { if !$0 { state.quickEditingCueIdx = nil } }
             ),
             arrowEdge: .top
