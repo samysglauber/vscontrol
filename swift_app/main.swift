@@ -3806,14 +3806,17 @@ struct ChannelHeaderView: View {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(accentColor)
+                .frame(width: 16)
             
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(Color.gray)
+                    .lineLimit(1)
             }
         }
         .frame(width: 85, alignment: .leading)
@@ -3970,7 +3973,7 @@ struct BottomMixerDock: View {
             PlaybackFaderView(
                 title: "CLICK",
                 subtitle: "Guide (L)",
-                icon: "headphones",
+                icon: "metronome",
                 accentColor: Color.cyan,
                 volume: $state.clickVol,
                 isMuted: $state.clickMute,
@@ -3983,9 +3986,9 @@ struct BottomMixerDock: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1, height: 22)
             
-            // Canal R: VS INSTRUMENTOS
+            // Canal R: TRACKS
             PlaybackFaderView(
-                title: "VS TRACKS",
+                title: "TRACKS",
                 subtitle: "Audio (R)",
                 icon: "waveform",
                 accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
