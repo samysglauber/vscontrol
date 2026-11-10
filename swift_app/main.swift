@@ -733,8 +733,8 @@ class PlaybackState: ObservableObject {
         }
         UserDefaults.standard.synchronize()
         
-        // Auto-salvamento no arquivo de setlist ativo (se houver um arquivo aberto) com proteção contra reentrância
-        if !isSavingSetlistDoc, let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
+        // Auto-salvamento no arquivo de setlist ativo (apenas se houver itens no setlist para evitar apagar arquivos)
+        if !isSavingSetlistDoc, !setlist.isEmpty, let filePath = currentSetlistFilePath, FileManager.default.fileExists(atPath: filePath) {
             isSavingSetlistDoc = true
             saveSetlistTo(url: URL(fileURLWithPath: filePath), notify: false) { [weak self] in
                 self?.isSavingSetlistDoc = false
@@ -960,7 +960,7 @@ class PlaybackState: ObservableObject {
             restoredSongs.append(SetlistSong(song: songToUse, transitionType: it.transitionType))
         }
         
-        DispatchQueue.main.async {
+        let applyChanges = {
             self.setlist = restoredSongs
             self.autoFetchCoversIfNeeded()
             self.currentSetlistFilePath = url.path
@@ -982,6 +982,14 @@ class PlaybackState: ObservableObject {
             
             if !isInitialRestore {
                 self.showUndoFeedback("Setlist '\(docName)' carregada!")
+            }
+        }
+        
+        if Thread.isMainThread {
+            applyChanges()
+        } else {
+            DispatchQueue.main.async {
+                applyChanges()
             }
         }
         return true
@@ -2911,27 +2919,11 @@ class WaveformScrollController {
     var isDragging: Bool = false
     
     func getScrollView() -> NSScrollView? {
-        if let sv = scrollView { return sv }
-        if let win = NSApp.keyWindow ?? NSApp.windows.first {
-            func findSV(in view: NSView) -> NSScrollView? {
-                if let sv = view as? NSScrollView { return sv }
-                for sub in view.subviews {
-                    if let found = findSV(in: sub) { return found }
-                }
-                return nil
-            }
-            if let root = win.contentView {
-                if let found = findSV(in: root) {
-                    self.scrollView = found
-                    return found
-                }
-            }
-        }
-        return nil
+        return scrollView
     }
     
     /// Centraliza a visualização da timeline no ponteiro vermelho de reprodução durante o zoom
-    func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat, animated: Bool = false) {
+    func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat) {
         guard let sv = getScrollView() else { return }
         let clip = sv.contentView
         let viewportWidth = clip.bounds.width
@@ -2940,10 +2932,12 @@ class WaveformScrollController {
         let docWidth = max(viewportWidth, totalTrackWidth + 40.0)
         let maxOffsetX = max(0, docWidth - viewportWidth)
         guard maxOffsetX > 0 else {
-            var origin = clip.bounds.origin
-            origin.x = 0
-            clip.scroll(to: origin)
-            sv.reflectScrolledClipView(clip)
+            if clip.bounds.origin.x != 0 {
+                var origin = clip.bounds.origin
+                origin.x = 0
+                clip.scroll(to: origin)
+                sv.reflectScrolledClipView(clip)
+            }
             return
         }
         
@@ -2952,33 +2946,11 @@ class WaveformScrollController {
         // Centraliza o ponteiro vermelho exatamente na metade da janela visível
         let targetX = max(0, min(maxOffsetX, playheadDocX - (viewportWidth / 2.0)))
         
-        let applyScroll = { (anim: Bool) in
-            if let doc = sv.documentView, doc.frame.width < docWidth {
-                var f = doc.frame
-                f.size.width = docWidth
-                doc.frame = f
-            }
+        if abs(clip.bounds.origin.x - targetX) > 0.5 {
             var origin = clip.bounds.origin
             origin.x = targetX
-            if anim {
-                NSAnimationContext.runAnimationGroup({ ctx in
-                    ctx.duration = 0.20
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    clip.animator().setBoundsOrigin(origin)
-                }, completionHandler: {
-                    sv.reflectScrolledClipView(clip)
-                })
-            } else {
-                clip.scroll(to: origin)
-                sv.reflectScrolledClipView(clip)
-            }
-        }
-        
-        applyScroll(animated)
-        
-        // Reforça após o próximo ciclo de layout do SwiftUI para garantir ancoragem exata
-        DispatchQueue.main.async {
-            applyScroll(false)
+            clip.scroll(to: origin)
+            sv.reflectScrolledClipView(clip)
         }
     }
     
@@ -3323,15 +3295,13 @@ struct SpectrogramWaveformView: View {
                         }
                     }
                 }
-                .onChange(of: state.zoomLevel) { oldZoom, newZoom in
+                .onChange(of: state.zoomLevel) { _, _ in
                     let newScale = calculateScale(totalAvailableWidth: totalAvailableWidth)
                     let newTotalTrackWidth = max(totalAvailableWidth, CGFloat(max(1.0, state.totalSeconds)) * newScale)
-                    let animated = abs(newZoom - oldZoom) >= 0.15
                     WaveformScrollController.shared.scrollToPlayhead(
                         currentSeconds: state.currentSeconds,
                         scale: newScale,
-                        totalTrackWidth: newTotalTrackWidth,
-                        animated: animated
+                        totalTrackWidth: newTotalTrackWidth
                     )
                 }
             }
