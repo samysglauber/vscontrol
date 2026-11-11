@@ -2192,9 +2192,11 @@ class PlaybackState: ObservableObject {
         if targetDirection == "in" {
             isFadingIn = true
             isFadingOut = false
+            isFadedOut = false
         } else {
             isFadingOut = true
             isFadingIn = false
+            isFadedOut = false
         }
         sendAction("fade_tracks", body: ["direction": targetDirection, "duration": duration])
     }
@@ -3100,9 +3102,9 @@ struct TopBarView: View {
                     .keyboardShortcut(.space, modifiers: [])
                     .help("Play / Pause [Space]")
                     
-                    // 4. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In quando atenuado)
+                    // 4. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In imediatamente no clique)
                     let isFadeActive = state.isFadingOut || state.isFadedOut || state.isFadingIn
-                    let isInverted = state.isFadedOut || state.isFadingIn
+                    let isInverted = state.isFadingOut || state.isFadedOut
                     Button(action: { state.toggleFadeTracks(duration: 3.0) }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
