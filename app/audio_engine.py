@@ -343,7 +343,8 @@ class LiveAudioEngine:
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
-            self._stop_stream()
+            if not self.pad_active:
+                self._stop_stream()
         self._notify_event("play_state", {"is_playing": False})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
 
@@ -364,7 +365,8 @@ class LiveAudioEngine:
             self.tracks_fade_gain = 1.0
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
-            self._stop_stream()
+            if not self.pad_active:
+                self._stop_stream()
         self._notify_event("play_state", {"is_playing": False, "pos_frame": 0})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
 
@@ -582,13 +584,24 @@ class LiveAudioEngine:
 
     def set_pad(self, active: bool, key: str | None = None, volume: float | None = None):
         """Liga/desliga ou altera o tom do Pad contínuo de sustentação."""
+        was_active = False
         with self.lock:
+            was_active = self.pad_active
             self.pad_active = active
             if key:
                 self.pad_key = key.upper()
                 self.pad_buffer = self.pad_gen.get_pad_chunk(self.pad_key, duration_sec=10.0)
             if volume is not None:
                 self.pad_vol = max(0.0, min(1.0, volume))
+        
+        # Gerencia o ciclo de vida do stream de acordo com o Pad
+        if active and not was_active:
+            if self.stream is None:
+                self._start_stream()
+        elif not active and was_active:
+            if not self.is_playing:
+                self._stop_stream()
+
         self._notify_event("pad_state", {
             "pad_active": self.pad_active,
             "pad_key": self.pad_key,
@@ -1142,6 +1155,15 @@ class LiveAudioEngine:
                 break
 
     def _notify_event(self, event_type: str, data: dict):
+        # Se a música terminou naturalmente e não há Pad ativo, fecha o stream para liberar o CoreAudio
+        if event_type == "song_ended" and not self.pad_active:
+            def _close_idle():
+                time.sleep(0.3)
+                with self.lock:
+                    if not self.is_playing and not self.pad_active:
+                        self._stop_stream()
+            threading.Thread(target=_close_idle, daemon=True).start()
+
         if self.event_listener:
             try:
                 self.event_listener(event_type, data)

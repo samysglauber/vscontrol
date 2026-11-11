@@ -5829,15 +5829,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func applicationWillTerminate(_ notification: Notification) {
         PlaybackState.shared.saveSetlistState()
         let semaphore = DispatchSemaphore(value: 0)
-        if let url = URL(string: "http://127.0.0.1:8080/api/action") {
+        if let url = URL(string: "http://127.0.0.1:8080/api/quit") {
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: ["action": "pause"])
+            req.timeoutInterval = 0.5
             URLSession.shared.dataTask(with: req) { _, _, _ in
                 semaphore.signal()
             }.resume()
-            _ = semaphore.wait(timeout: .now() + 0.3)
+            _ = semaphore.wait(timeout: .now() + 0.35)
         }
     }
     

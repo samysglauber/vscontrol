@@ -411,6 +411,16 @@ def stop():
     engine.stop()
     return {"status": "stopped"}
 
+@app.post("/api/quit")
+def quit_backend():
+    engine._stop_stream()
+    def _do_exit():
+        time.sleep(0.08)
+        os._exit(0)
+    import threading
+    threading.Thread(target=_do_exit, daemon=True).start()
+    return {"status": "ok"}
+
 class FadeStopRequest(BaseModel):
     duration: float = 3.0
     direction: str = "toggle"

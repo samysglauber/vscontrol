@@ -16,6 +16,7 @@ if ! nc -z 127.0.0.1 8080 2>/dev/null; then
         PYTHON_BIN="$(which python3)"
     fi
     "$PYTHON_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level warning > /tmp/vs_server.log 2>&1 &
+    UVICORN_PID=$!
     for i in {1..35}; do
         if nc -z 127.0.0.1 8080 2>/dev/null; then
             break
@@ -24,9 +25,20 @@ if ! nc -z 127.0.0.1 8080 2>/dev/null; then
     done
 fi
 
-# 2. Executa a aplicação substituindo o processo bash (permite fechamento limpo via Cmd+Q)
+cleanup() {
+    curl -s -X POST http://127.0.0.1:8080/api/quit 2>/dev/null || true
+    if [ -n "$UVICORN_PID" ]; then
+        kill -9 "$UVICORN_PID" 2>/dev/null || true
+    fi
+    pkill -f "uvicorn app.main:app" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+# 2. Executa a aplicação e garante que ao fechar tudo é liberado
 if [ -f "$WORKSPACE_DIR/VS Control.app/Contents/MacOS/VSControl" ]; then
-    exec "$WORKSPACE_DIR/VS Control.app/Contents/MacOS/VSControl"
+    "$WORKSPACE_DIR/VS Control.app/Contents/MacOS/VSControl"
 else
-    exec "$WORKSPACE_DIR/swift_app/VSControl"
+    "$WORKSPACE_DIR/swift_app/VSControl"
 fi
+
+cleanup
