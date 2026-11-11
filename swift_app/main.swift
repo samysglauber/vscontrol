@@ -4523,9 +4523,8 @@ struct WaveformSectionBlock: View, Equatable {
                                 TablerIcon(
                                     name: isLoopInfinite ? "infinity-2" : "loop",
                                     size: isLoopInfinite ? 20 : 15,
-                                    color: isLoopActive ? Color.cyan : Color.white.opacity(0.50)
+                                    color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
                                 )
-                                .shadow(color: isLoopActive ? Color.cyan.opacity(0.8) : Color.black.opacity(0.5), radius: isLoopActive ? 4 : 1, x: 0, y: 1)
                                 .frame(width: 22, height: 22)
                                 .contentShape(Rectangle())
                             }
@@ -4558,9 +4557,8 @@ struct WaveformSectionBlock: View, Equatable {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
                                 size: isLoopInfinite ? 22 : 16,
-                                color: isLoopActive ? Color.cyan : Color.white.opacity(0.50)
+                                color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
                             )
-                            .shadow(color: isLoopActive ? Color.cyan.opacity(0.8) : Color.black.opacity(0.5), radius: isLoopActive ? 4 : 1, x: 0, y: 1)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                         }
