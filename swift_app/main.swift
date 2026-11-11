@@ -3051,7 +3051,7 @@ struct TopBarView: View {
                                 .frame(width: 36, height: 36)
                             TablerIcon(
                                 name: "infinity-2",
-                                size: 19,
+                                size: 24,
                                 color: state.isInfiniteActive ? Color.cyan : Color.white.opacity(0.65)
                             )
                         }
@@ -4519,7 +4519,7 @@ struct WaveformSectionBlock: View, Equatable {
                         Button(action: onLoopToggle) {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
-                                size: 17,
+                                size: isLoopInfinite ? 22 : 16,
                                 color: isLoopActive ? Color.cyan : Color.white.opacity(0.50)
                             )
                             .shadow(color: isLoopActive ? Color.cyan.opacity(0.8) : Color.black.opacity(0.5), radius: isLoopActive ? 4 : 1, x: 0, y: 1)
