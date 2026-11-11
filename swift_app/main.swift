@@ -5363,8 +5363,8 @@ struct WheelPicker<Item: Hashable>: View {
                     ForEach(items, id: \.self) { item in
                         HStack(spacing: 10) {
                             Text(format(item))
-                                .font(.system(size: 16, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(.white)
+                                .font(.system(size: 16, weight: .regular).monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.65))
                                 .frame(width: valueWidth, alignment: .trailing)
                             
                             // Espaço reservado para o label
@@ -5414,7 +5414,7 @@ struct WheelPicker<Item: Hashable>: View {
                     .frame(width: valueWidth)
 
                 Text(label)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: labelWidth, alignment: .leading)
             }
@@ -5492,7 +5492,7 @@ struct MetronomeModalView: View {
     @State private var isProcessing: Bool = false
     @State private var errorMessage: String? = nil
     
-    let timeSignatures = ["2/4", "3/4", "4/4", "5/4", "6/4", "6/8", "7/8", "9/8", "12/8"]
+    let timeSignatures = ["2/4", "3/4", "4/4", "6/4", "6/8"]
     
     var selectedTimeSig: String {
         guard timeSigIndex >= 0 && timeSigIndex < timeSignatures.count else { return "4/4" }
