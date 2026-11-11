@@ -5330,134 +5330,90 @@ struct BottomMixerDock: View {
 // ==========================================
 // 9. COMPONENTES DE WHEEL PICKER 3D
 // ==========================================
-struct WheelPicker: View {
-    @Binding var value: Int
-    let range: ClosedRange<Int>
+struct WheelPicker<Item: Hashable>: View {
+    @Binding var selection: Item
+    let items: [Item]
     let label: String
-    private let rowHeight: CGFloat = 24
+    var valueWidth: CGFloat = 48
+    var labelWidth: CGFloat = 64
+    let format: (Item) -> String
 
-    @State private var scrolledID: Int?
+    private let rowHeight: CGFloat = 26
+    private let visibleRows = 5
+    @State private var scrolledID: Item?
+
+    private var viewportHeight: CGFloat { rowHeight * CGFloat(visibleRows) }
 
     var body: some View {
         ZStack {
-            // Faixa de destaque no item central
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor.opacity(0.25))
+            // Faixa de destaque (largura total, atrás do valor + rótulo)
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(height: rowHeight)
 
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(range), id: \.self) { n in
-                        Text("\(n)")
-                            .font(.system(.body, design: .monospaced))
-                            .frame(height: rowHeight)
-                            .id(n)
-                            .scrollTransition(.animated) { content, phase in
-                                content
-                                    .opacity(phase.isIdentity ? 1 : 0.35)
-                                    .scaleEffect(phase.isIdentity ? 1 : 0.85)
-                                    // efeito 3D de cilindro:
-                                    .rotation3DEffect(
-                                        .degrees(phase.value * 45),
-                                        axis: (x: 1, y: 0, z: 0)
-                                    )
-                            }
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $scrolledID, anchor: .center)
-            .contentMargins(.vertical, rowHeight * 2, for: .scrollContent)
-            .frame(height: rowHeight * 5)
-            .mask(
-                LinearGradient(
-                    colors: [.clear, .black, .black, .black, .clear],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .onAppear { scrolledID = value }
-            .onChange(of: scrolledID) { _, new in
-                if let new { value = new }
-            }
-            .onChange(of: value) { _, new in
-                if scrolledID != new { withAnimation { scrolledID = new } }
-            }
+            HStack(spacing: 10) {
+                wheel
+                    .frame(width: valueWidth)
 
-            // Rótulo fixo ao lado do número central
-            HStack {
-                Spacer()
+                // Rótulo em coluna própria, sempre alinhado à esquerda
                 Text(label)
-                    .font(.headline)
-                    .padding(.trailing, 12)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: labelWidth, alignment: .leading)
             }
-            .allowsHitTesting(false)
+            .padding(.horizontal, 12)
         }
-        .frame(width: 140)
+        .frame(width: valueWidth + labelWidth + 10 + 24, height: viewportHeight)
     }
-}
 
-struct StringWheelPicker: View {
-    @Binding var selectedIndex: Int
-    let items: [String]
-    let label: String
-    private let rowHeight: CGFloat = 24
+    private var wheel: some View {
+        let rh = rowHeight
+        let center = viewportHeight / 2
 
-    @State private var scrolledID: Int?
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor.opacity(0.25))
-                .frame(height: rowHeight)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
-                    ForEach(0..<items.count, id: \.self) { idx in
-                        Text(items[idx])
-                            .font(.system(.body, design: .monospaced))
-                            .frame(height: rowHeight)
-                            .id(idx)
-                            .scrollTransition(.animated) { content, phase in
-                                content
-                                    .opacity(phase.isIdentity ? 1 : 0.35)
-                                    .scaleEffect(phase.isIdentity ? 1 : 0.85)
-                                    .rotation3DEffect(
-                                        .degrees(phase.value * 45),
-                                        axis: (x: 1, y: 0, z: 0)
-                                    )
-                            }
-                    }
+        return ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 0) {
+                ForEach(items, id: \.self) { item in
+                    Text(format(item))
+                        .font(.system(size: 16, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .frame(height: rh)
+                        .id(item)
+                        .visualEffect { content, proxy in
+                            // distância da linha até o centro: -1 (topo) ... 0 (centro) ... 1 (base)
+                            let midY = proxy.frame(in: .named("wheel")).midY
+                            let d = max(-1, min(1, (midY - center) / (rh * 2.5)))
+                            return content
+                                .opacity(1 - abs(d) * 0.75)
+                                .scaleEffect(1 - abs(d) * 0.18)
+                                .rotation3DEffect(
+                                    .degrees(-d * 65),
+                                    axis: (x: 1, y: 0, z: 0),
+                                    perspective: 0.5
+                                )
+                        }
                 }
-                .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $scrolledID, anchor: .center)
-            .contentMargins(.vertical, rowHeight * 2, for: .scrollContent)
-            .frame(height: rowHeight * 5)
-            .mask(
-                LinearGradient(
-                    colors: [.clear, .black, .black, .black, .clear],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .onAppear { scrolledID = selectedIndex }
-            .onChange(of: scrolledID) { _, new in
-                if let new { selectedIndex = new }
-            }
-            .onChange(of: selectedIndex) { _, new in
-                if scrolledID != new { withAnimation { scrolledID = new } }
-            }
-
-            HStack {
-                Spacer()
-                Text(label)
-                    .font(.headline)
-                    .padding(.trailing, 12)
-            }
-            .allowsHitTesting(false)
+            .scrollTargetLayout()
         }
-        .frame(width: 140)
+        .coordinateSpace(name: "wheel")
+        .scrollTargetBehavior(.viewAligned)
+        .scrollPosition(id: $scrolledID, anchor: .center)
+        .contentMargins(.vertical, rh * 2, for: .scrollContent)
+        .frame(height: viewportHeight)
+        .mask(
+            LinearGradient(
+                colors: [.clear, .black, .black, .black, .clear],
+                startPoint: .top, endPoint: .bottom
+            )
+        )
+        .onAppear { scrolledID = selection }
+        .onChange(of: scrolledID) { _, new in
+            if let new { selection = new }
+        }
+        .onChange(of: selection) { _, new in
+            if scrolledID != new { withAnimation { scrolledID = new } }
+        }
     }
 }
 
@@ -5564,16 +5520,18 @@ struct MetronomeModalView: View {
                     Spacer()
                     
                     WheelPicker(
-                        value: $bpm,
-                        range: 40...260,
-                        label: "Tempo"
-                    )
+                        selection: $bpm,
+                        items: Array(40...260),
+                        label: "Tempo",
+                        valueWidth: 44
+                    ) { "\($0)" }
                     
-                    StringWheelPicker(
-                        selectedIndex: $timeSigIndex,
-                        items: timeSignatures,
-                        label: "Time Sig"
-                    )
+                    WheelPicker(
+                        selection: $timeSigIndex,
+                        items: Array(timeSignatures.indices),
+                        label: "Time Sig",
+                        valueWidth: 36
+                    ) { timeSignatures[$0] }
                     
                     Spacer()
                 }
