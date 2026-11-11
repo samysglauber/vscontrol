@@ -5328,90 +5328,136 @@ struct BottomMixerDock: View {
 }
 
 // ==========================================
-// 9. COMPONENTE DE ROLETA 3D (CILÍNDRICA)
+// 9. COMPONENTES DE WHEEL PICKER 3D
 // ==========================================
-struct Roulette3DColumn: View {
-    @Binding var selectedIndex: Int
-    let count: Int
-    let itemTitle: (Int) -> String
-    let centerSuffix: String
-    
-    @State private var dragAccumulator: CGFloat = 0
-    private let stepHeight: CGFloat = 26.0
-    
+struct WheelPicker: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let label: String
+    private let rowHeight: CGFloat = 24
+
+    @State private var scrolledID: Int?
+
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(-3...3, id: \.self) { offset in
-                let targetIndex = selectedIndex + offset
-                slotRow(offset: offset, targetIndex: targetIndex)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    let delta = -(value.translation.height - dragAccumulator)
-                    if abs(delta) >= stepHeight {
-                        let steps = Int(delta / stepHeight)
-                        let newIdx = max(0, min(count - 1, selectedIndex + steps))
-                        if newIdx != selectedIndex {
-                            withAnimation(.spring(response: 0.20, dampingFraction: 0.85)) {
-                                selectedIndex = newIdx
+        ZStack {
+            // Faixa de destaque no item central
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(0.25))
+                .frame(height: rowHeight)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(range), id: \.self) { n in
+                        Text("\(n)")
+                            .font(.system(.body, design: .monospaced))
+                            .frame(height: rowHeight)
+                            .id(n)
+                            .scrollTransition(.animated) { content, phase in
+                                content
+                                    .opacity(phase.isIdentity ? 1 : 0.35)
+                                    .scaleEffect(phase.isIdentity ? 1 : 0.85)
+                                    // efeito 3D de cilindro:
+                                    .rotation3DEffect(
+                                        .degrees(phase.value * 45),
+                                        axis: (x: 1, y: 0, z: 0)
+                                    )
                             }
-                        }
-                        dragAccumulator = value.translation.height
                     }
                 }
-                .onEnded { _ in
-                    dragAccumulator = 0
-                }
-        )
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $scrolledID, anchor: .center)
+            .contentMargins(.vertical, rowHeight * 2, for: .scrollContent)
+            .frame(height: rowHeight * 5)
+            .mask(
+                LinearGradient(
+                    colors: [.clear, .black, .black, .black, .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+            .onAppear { scrolledID = value }
+            .onChange(of: scrolledID) { _, new in
+                if let new { value = new }
+            }
+            .onChange(of: value) { _, new in
+                if scrolledID != new { withAnimation { scrolledID = new } }
+            }
+
+            // Rótulo fixo ao lado do número central
+            HStack {
+                Spacer()
+                Text(label)
+                    .font(.headline)
+                    .padding(.trailing, 12)
+            }
+            .allowsHitTesting(false)
+        }
+        .frame(width: 140)
     }
-    
-    @ViewBuilder
-    private func slotRow(offset: Int, targetIndex: Int) -> some View {
-        let isCenter = (offset == 0)
-        let absOffset = abs(offset)
-        
-        // Curvatura cilíndrica 3D autêntica (fiel à imagem de referência)
-        let angle = Double(offset) * 19.0
-        let scale = max(0.72, 1.0 - Double(absOffset) * 0.08)
-        let opacity = isCenter ? 1.0 : max(0.15, cos(angle * .pi / 180.0) * (1.0 - Double(absOffset) * 0.22))
-        
-        HStack(spacing: 6) {
-            if targetIndex >= 0 && targetIndex < count {
-                Text(itemTitle(targetIndex))
-                    .font(.system(size: isCenter ? 18 : 15, weight: isCenter ? .bold : .medium))
-                    .foregroundColor(.white)
-                
-                if isCenter {
-                    Text(centerSuffix)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
+}
+
+struct StringWheelPicker: View {
+    @Binding var selectedIndex: Int
+    let items: [String]
+    let label: String
+    private let rowHeight: CGFloat = 24
+
+    @State private var scrolledID: Int?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(0.25))
+                .frame(height: rowHeight)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(0..<items.count, id: \.self) { idx in
+                        Text(items[idx])
+                            .font(.system(.body, design: .monospaced))
+                            .frame(height: rowHeight)
+                            .id(idx)
+                            .scrollTransition(.animated) { content, phase in
+                                content
+                                    .opacity(phase.isIdentity ? 1 : 0.35)
+                                    .scaleEffect(phase.isIdentity ? 1 : 0.85)
+                                    .rotation3DEffect(
+                                        .degrees(phase.value * 45),
+                                        axis: (x: 1, y: 0, z: 0)
+                                    )
+                            }
+                    }
                 }
-            } else {
-                Text(" ")
-                    .font(.system(size: isCenter ? 18 : 15))
+                .scrollTargetLayout()
             }
-        }
-        .frame(height: stepHeight)
-        .opacity(opacity)
-        .scaleEffect(scale)
-        .rotation3DEffect(
-            Angle(degrees: angle),
-            axis: (x: 1.0, y: 0.0, z: 0.0),
-            anchor: .center,
-            perspective: 0.38
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if targetIndex >= 0 && targetIndex < count && !isCenter {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                    selectedIndex = targetIndex
-                }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $scrolledID, anchor: .center)
+            .contentMargins(.vertical, rowHeight * 2, for: .scrollContent)
+            .frame(height: rowHeight * 5)
+            .mask(
+                LinearGradient(
+                    colors: [.clear, .black, .black, .black, .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+            .onAppear { scrolledID = selectedIndex }
+            .onChange(of: scrolledID) { _, new in
+                if let new { selectedIndex = new }
             }
+            .onChange(of: selectedIndex) { _, new in
+                if scrolledID != new { withAnimation { scrolledID = new } }
+            }
+
+            HStack {
+                Spacer()
+                Text(label)
+                    .font(.headline)
+                    .padding(.trailing, 12)
+            }
+            .allowsHitTesting(false)
         }
+        .frame(width: 140)
     }
 }
 
@@ -5425,18 +5471,12 @@ struct MetronomeModalView: View {
     var onDismiss: () -> Void
     
     @State private var songName: String = ""
-    @State private var bpmIndex: Int = 80 // 120 BPM (40 + 80 = 120)
+    @State private var bpm: Int = 120
     @State private var timeSigIndex: Int = 2 // "4/4"
     @State private var isProcessing: Bool = false
     @State private var errorMessage: String? = nil
     
     let timeSignatures = ["2/4", "3/4", "4/4", "5/4", "6/4", "6/8", "7/8", "9/8", "12/8"]
-    let minBpm = 40
-    let maxBpm = 260
-    
-    var currentBpm: Int {
-        minBpm + bpmIndex
-    }
     
     var selectedTimeSig: String {
         guard timeSigIndex >= 0 && timeSigIndex < timeSignatures.count else { return "4/4" }
@@ -5502,7 +5542,7 @@ struct MetronomeModalView: View {
                 
                 Spacer()
                 
-                TextField("Click (\(currentBpm) BPM)", text: $songName)
+                TextField("Click (\(bpm) BPM)", text: $songName)
                     .textFieldStyle(PlainTextFieldStyle())
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
@@ -5514,40 +5554,30 @@ struct MetronomeModalView: View {
             .background(Color.white.opacity(0.05))
             .cornerRadius(8)
             
-            // 3. Seção Click (Dual Roleta 3D com Tempo e Time Sig)
-            VStack(alignment: .leading, spacing: 6) {
+            // 3. Seção Click (WheelPickers lado a lado)
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Click")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
                 
-                ZStack {
-                    // Barra de destaque central translúcida
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.white.opacity(0.12))
-                        .frame(height: 32)
+                HStack(spacing: 24) {
+                    Spacer()
                     
-                    HStack(spacing: 0) {
-                        // Roleta 3D: Tempo (BPM)
-                        Roulette3DColumn(
-                            selectedIndex: $bpmIndex,
-                            count: (maxBpm - minBpm + 1),
-                            itemTitle: { idx in "\(minBpm + idx)" },
-                            centerSuffix: "Tempo"
-                        )
-                        .frame(maxWidth: .infinity)
-                        
-                        // Roleta 3D: Time Sig
-                        Roulette3DColumn(
-                            selectedIndex: $timeSigIndex,
-                            count: timeSignatures.count,
-                            itemTitle: { idx in timeSignatures[idx] },
-                            centerSuffix: "Time Sig"
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
+                    WheelPicker(
+                        value: $bpm,
+                        range: 40...260,
+                        label: "Tempo"
+                    )
+                    
+                    StringWheelPicker(
+                        selectedIndex: $timeSigIndex,
+                        items: timeSignatures,
+                        label: "Time Sig"
+                    )
+                    
+                    Spacer()
                 }
-                .frame(height: 182)
-                .clipped()
+                .padding(.vertical, 4)
             }
             
             if let err = errorMessage {
@@ -5558,25 +5588,24 @@ struct MetronomeModalView: View {
             }
         }
         .padding(20)
-        .frame(width: 440, height: 340)
+        .frame(width: 440, height: 320)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
                 songName = item.song.name
-                let b = Int(item.song.bpm ?? 120)
-                bpmIndex = max(0, min(maxBpm - minBpm, b - minBpm))
+                bpm = Int(item.song.bpm ?? 120)
                 if let ts = item.song.time_signature, let idx = timeSignatures.firstIndex(of: ts) {
                     timeSigIndex = idx
                 }
             } else {
                 if songName.isEmpty {
-                    songName = "Click (\(currentBpm) BPM)"
+                    songName = "Click (\(bpm) BPM)"
                 }
             }
         }
-        .onChange(of: bpmIndex) { _, newIdx in
+        .onChange(of: bpm) { _, newBpm in
             if !isEditing && (songName.isEmpty || songName.hasPrefix("Click (")) {
-                songName = "Click (\(minBpm + newIdx) BPM)"
+                songName = "Click (\(newBpm) BPM)"
             }
         }
     }
@@ -5585,14 +5614,13 @@ struct MetronomeModalView: View {
         isProcessing = true
         errorMessage = nil
         let trimmedName = songName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmedName.isEmpty ? "Click (\(currentBpm) BPM)" : trimmedName
+        let finalName = trimmedName.isEmpty ? "Click (\(bpm) BPM)" : trimmedName
         
         if let item = editingItem {
-            // Atualiza metrônomo existente
             state.updateMetronome(
                 item: item,
                 name: finalName,
-                bpm: Double(currentBpm),
+                bpm: Double(bpm),
                 timeSignature: selectedTimeSig
             ) { result in
                 isProcessing = false
@@ -5604,10 +5632,9 @@ struct MetronomeModalView: View {
                 }
             }
         } else {
-            // Gera novo metrônomo (~10 minutos)
             state.generateMetronome(
                 name: finalName,
-                bpm: Double(currentBpm),
+                bpm: Double(bpm),
                 timeSignature: selectedTimeSig
             ) { result in
                 isProcessing = false
