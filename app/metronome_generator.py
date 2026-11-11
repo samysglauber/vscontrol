@@ -1,8 +1,8 @@
 """
-Módulo Gerador de Metrônomo (Click & Pad)
-Gera faixas de áudio estéreo com:
-- Canal L (In-Ear): Click rítmico (Downbeat acentuado + Sub-beats)
-- Canal R (PA / VS): Pad ambiente contínuo afinado ou silêncio (se Pad estiver desligado)
+Módulo Gerador de Metrônomo (Click Track)
+Gera faixas de metrônomo estéreo (~10 minutos) com:
+- Canal L (In-Ear): Click rítmico de estúdio (Downbeat acentuado + Sub-beats)
+- Canal R (PA / VS): Silêncio (áudio limpo para palco)
 Estruturado com contagem (Count-In de 2 compassos) e seções de 8 compassos para loop quantizado.
 """
 
@@ -10,11 +10,10 @@ import os
 import re
 import numpy as np
 import soundfile as sf
-from app.pad_generator import AmbientPadGenerator
 from app.cue_detector import compute_full_waveform, compute_real_waveform_peaks
 from app.song_library import atomic_save_json, get_saved_tracks_dir
 
-# Cores vibrantes elegantes para seções de 8 compassos
+# Cores vibrantes elegantes para blocos de seções de 8 compassos
 SECTION_COLORS = [
     "#38bdf8",  # Ciano suave
     "#3b82f6",  # Azul Royal
@@ -76,35 +75,31 @@ def parse_time_signature(time_sig: str) -> tuple[int, int]:
         return int(match.group(1)), int(match.group(2))
     return 4, 4
 
-def generate_click_and_pad(
-    name: str = "Click & Pad",
+def generate_metronome_track(
+    name: str = "Click",
     bpm: float = 120.0,
     time_signature: str = "4/4",
-    pad_key: str = "Off",
-    duration_sec: float = 300.0,
-    output_dir: str | None = None
+    duration_sec: float = 600.0,
+    output_dir: str | None = None,
+    existing_filepath: str | None = None
 ) -> dict:
     """
-    Gera arquivo de áudio stereo completo (.wav) e metadados (.cues.json).
-    Retorna o dicionário SongItem pronto para uso imediato no Setlist e na Biblioteca.
+    Gera ou atualiza uma faixa de metrônomo estéreo (~10 minutos) e seus metadados (.cues.json).
+    Retorna o dicionário SongItem com is_metronome=True pronto para uso imediato.
     """
     sr = 44100
     bpm = max(30.0, min(300.0, float(bpm)))
     time_sig = (time_signature or "4/4").strip()
     beats_per_bar, denom = parse_time_signature(time_sig)
     
-    pad_key = (pad_key or "Off").strip()
-    has_pad = pad_key.upper() not in ("OFF", "NONE", "NO", "")
-    
     # Cálculo temporal
-    # Em 6/8: se bpm for semínima pontuada ou colcheia, tratamos beats_per_bar como número de pulsos de click por compasso
     beat_sec = 60.0 / bpm
     bar_sec = beats_per_bar * beat_sec
 
-    # Estrutura: 2 compassos de Count-In + N seções de 8 compassos (~300 segundos no total)
+    # Estrutura: 2 compassos de Count-In + seções de 8 compassos (~600 segundos no total = 10 minutos)
     count_in_bars = 2
     section_bars = 8
-    target_sec = max(120.0, float(duration_sec))
+    target_sec = max(180.0, float(duration_sec))
     num_sections = max(2, int(np.ceil((target_sec - (count_in_bars * bar_sec)) / (section_bars * bar_sec))))
     total_bars = count_in_bars + num_sections * section_bars
     total_samples = int(total_bars * bar_sec * sr)
@@ -122,56 +117,42 @@ def generate_click_and_pad(
             if avail > 0:
                 audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
 
-    # 2. Geração do Pad no Canal R (PA / FOH) se ativado
-    if has_pad:
-        pad_gen = AmbientPadGenerator(sample_rate=sr)
-        pad_chunk = pad_gen.get_pad_chunk(pad_key, duration_sec=10.0)[:, 0] * 0.70
-        chunk_len = len(pad_chunk)
-        for offset in range(0, total_samples, chunk_len):
-            chunk_take = min(chunk_len, total_samples - offset)
-            audio[offset:offset + chunk_take, 1] = pad_chunk[:chunk_take]
+    # Canal R é mantido como silêncio absoluto (zeros) para uso profissional ao vivo
 
-        # Envoltória suave nas extremidades (1.5s fade-in, 2.0s fade-out)
-        fade_in_len = min(int(sr * 1.5), total_samples // 4)
-        if fade_in_len > 0:
-            audio[:fade_in_len, 1] *= np.linspace(0.0, 1.0, fade_in_len, dtype=np.float32)
-
-        fade_out_len = min(int(sr * 2.0), total_samples // 4)
-        if fade_out_len > 0:
-            audio[-fade_out_len:, 1] *= np.linspace(1.0, 0.0, fade_out_len, dtype=np.float32)
-
-    # 3. Determinação do Diretório de Saída
+    # 2. Determinação do Caminho do Arquivo
     out_dir = output_dir or get_saved_tracks_dir()
     os.makedirs(out_dir, exist_ok=True)
 
-    # 4. Nome amigável e Sanitização do Arquivo
-    raw_name = (name or "Click & Pad").strip()
-    # Remove extensões antigas se o usuário digitou
+    raw_name = (name or "Click").strip()
     raw_name = re.sub(r'\.(wav|mp3|m4a)$', '', raw_name, flags=re.IGNORECASE).strip()
     if not raw_name:
-        raw_name = "Click & Pad"
+        raw_name = "Click"
 
     clean_base = re.sub(r'[\\/*?:"<>|]', '_', raw_name)
-    # Se o nome não tiver o BPM explícito, adiciona para clareza
-    if not re.search(r'\b\d+\s*bpm\b', clean_base, re.IGNORECASE):
-        filename_base = f"{clean_base} ({int(bpm)} BPM)"
+
+    if existing_filepath and os.path.exists(existing_filepath):
+        filepath = existing_filepath
+        filename = os.path.basename(filepath)
     else:
-        filename_base = clean_base
+        # Se o nome não contiver o BPM, adiciona para organização clara na pasta
+        if not re.search(r'\b\d+\s*bpm\b', clean_base, re.IGNORECASE):
+            filename_base = f"{clean_base} ({int(bpm)} BPM)"
+        else:
+            filename_base = clean_base
 
-    filename = f"{filename_base}.wav"
-    filepath = os.path.join(out_dir, filename)
-
-    # Se já existir arquivo com o mesmo nome exato, adiciona numeração sequencial
-    counter = 1
-    while os.path.exists(filepath):
-        filename = f"{filename_base} ({counter}).wav"
+        filename = f"{filename_base}.wav"
         filepath = os.path.join(out_dir, filename)
-        counter += 1
 
-    # 5. Salva arquivo WAV estéreo 16-bit
+        counter = 1
+        while os.path.exists(filepath):
+            filename = f"{filename_base} ({counter}).wav"
+            filepath = os.path.join(out_dir, filename)
+            counter += 1
+
+    # 3. Salva arquivo WAV estéreo 16-bit
     sf.write(filepath, audio, sr, subtype='PCM_16')
 
-    # 6. Geração das Seções / Cues (Count-In + Seções de 8 compassos)
+    # 4. Geração das Seções / Cues (Count-In + Seções de 8 compassos)
     cues = []
     # Cue 0: Count-In (2 compassos)
     cues.append({
@@ -182,7 +163,7 @@ def generate_click_and_pad(
         "color": "#64748b"  # Slate
     })
 
-    # Seções de 8 compassos numeradas
+    # Seções numeradas de 8 compassos
     for s in range(num_sections):
         start_bar = count_in_bars + 1 + s * section_bars
         time_sec = (start_bar - 1) * bar_sec
@@ -195,15 +176,13 @@ def generate_click_and_pad(
             "color": color
         })
 
-    # 7. Cálculo das Formas de Onda (Waveform)
-    # Se o Pad estiver desligado, espelhamos o canal L no cálculo da forma de onda para mostrar os pulsos do click!
+    # 5. Cálculo das Formas de Onda (Waveform)
+    # Espelha o canal L no canal R virtual para que o renderizador de waveform mostre os pulsos rítmicos do metrônomo
     waveform_audio = audio.copy()
-    if not has_pad:
-        waveform_audio[:, 1] = waveform_audio[:, 0]
+    waveform_audio[:, 1] = waveform_audio[:, 0]
 
     full_wf = compute_full_waveform(waveform_audio, sr, n_peaks=1200)
 
-    # Waveforms individuais para cada bloco de seção
     step_r = max(1, len(waveform_audio[:, 1]) // 2000)
     global_r_max = float(np.max(np.abs(waveform_audio[:, 1][::step_r])))
     if global_r_max < 0.01:
@@ -218,20 +197,21 @@ def generate_click_and_pad(
             waveform_audio, sr, start_t, end_t, n_peaks=64, global_r_max=global_r_max
         )
 
-    # 8. Salva arquivo .cues.json atômico
+    # 6. Salva arquivo .cues.json atômico com flag is_metronome=True
     cues_payload = {
         "version": 6,
-        "channel": "R" if has_pad else "L",
+        "channel": "L",
         "bpm": bpm,
         "time_signature": time_sig,
         "total_duration": total_duration,
         "cues": cues,
         "full_waveform": full_wf,
-        "default_key": pad_key if has_pad else "D"
+        "default_key": "",
+        "is_metronome": True
     }
     atomic_save_json(filepath + ".cues.json", cues_payload, backup=True)
 
-    # 9. Retorna SongItem estruturado
+    # 7. Retorna SongItem estruturado
     display_title = raw_name
     return {
         "id": filename,
@@ -241,11 +221,15 @@ def generate_click_and_pad(
         "bpm": bpm,
         "time_signature": time_sig,
         "has_cached_cues": True,
-        "default_key": pad_key if has_pad else "D",
+        "default_key": "",
         "has_cover": False,
         "cover_url": None,
         "search_query": display_title,
         "total_duration": total_duration,
         "full_waveform": full_wf,
-        "cues": cues
+        "cues": cues,
+        "is_metronome": True
     }
+
+# Compatibilidade retroativa
+generate_click_and_pad = generate_metronome_track

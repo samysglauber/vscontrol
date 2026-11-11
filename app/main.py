@@ -16,7 +16,7 @@ import qrcode
 
 from app.audio_engine import LiveAudioEngine
 from app.song_library import SongLibrary
-from app.metronome_generator import generate_click_and_pad
+from app.metronome_generator import generate_metronome_track, parse_time_signature
 
 from pythonosc import udp_client
 
@@ -582,25 +582,69 @@ def reprocess_song(req: ReprocessRequest):
     return {"status": "reprocessed", "song": song}
 
 class MetronomeGenerateRequest(BaseModel):
-    name: str = "Click & Pad"
+    name: str = "Click"
     bpm: float = 120.0
     time_signature: str = "4/4"
-    pad_key: str = "Off"
-    duration_sec: float = 300.0
+    duration_sec: float = 600.0
+
+class MetronomeUpdateRequest(BaseModel):
+    song_id: str
+    name: str
+    bpm: float
+    time_signature: str
+    duration_sec: float = 600.0
 
 @app.post("/api/metronome/generate")
 def api_generate_metronome(req: MetronomeGenerateRequest):
     try:
         out_dir = library.directory or get_saved_tracks_dir()
-        song = generate_click_and_pad(
+        song = generate_metronome_track(
             name=req.name,
             bpm=req.bpm,
             time_signature=req.time_signature,
-            pad_key=req.pad_key,
             duration_sec=req.duration_sec,
             output_dir=out_dir
         )
         library.refresh()
+        return {"status": "success", "song": song}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+@app.post("/api/metronome/update")
+def api_update_metronome(req: MetronomeUpdateRequest):
+    try:
+        out_dir = library.directory or get_saved_tracks_dir()
+        existing_path = os.path.join(out_dir, req.song_id)
+        if not os.path.exists(existing_path):
+            match = next((s for s in library.get_all_songs() if s["id"] == req.song_id or s["filename"] == req.song_id), None)
+            if match and os.path.exists(match.get("path", "")):
+                existing_path = match["path"]
+            else:
+                existing_path = None
+
+        song = generate_metronome_track(
+            name=req.name,
+            bpm=req.bpm,
+            time_signature=req.time_signature,
+            duration_sec=req.duration_sec,
+            output_dir=out_dir,
+            existing_filepath=existing_path
+        )
+        library.refresh()
+
+        if engine.filepath and (engine.filepath == song["path"] or os.path.basename(engine.filepath) == song["filename"]):
+            ts = parse_time_signature(song.get("time_signature", "4/4"))
+            engine.load_song(
+                filepath=song["path"],
+                bpm=song["bpm"],
+                cues=song["cues"],
+                time_signature=ts
+            )
+            if song.get("bpm"):
+                sync_tempo_to_ableton(song["bpm"])
+
         return {"status": "success", "song": song}
     except Exception as e:
         import traceback

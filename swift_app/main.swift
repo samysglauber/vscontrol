@@ -202,6 +202,14 @@ struct SongItem: Identifiable, Codable, Hashable {
     var search_query: String?
     var total_duration: Double?
     var cues: [CueSection]?
+    var is_metronome: Bool?
+    
+    var isMetronomeTrack: Bool {
+        if is_metronome == true { return true }
+        let lower = name.lowercased()
+        let fileLower = filename.lowercased()
+        return lower.contains("click") || lower.contains("metr") || fileLower.contains("click") || fileLower.contains("metr")
+    }
     
     var displayKey: String {
         return default_key ?? "D"
@@ -262,7 +270,9 @@ struct SongCoverView: View {
             let shadowColor = isSelected ? Color.white.opacity(isDimmed ? 0.05 : 0.35) : Color.clear
             
             ZStack {
-                if let img = CoverImageCache.shared.image(for: song) {
+                if song.isMetronomeTrack {
+                    fallbackGradient
+                } else if let img = CoverImageCache.shared.image(for: song) {
                     Image(nsImage: img)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -301,7 +311,7 @@ struct SongCoverView: View {
         }
         .id("\(song.id)_\(refreshId)")
         .onAppear {
-            if song.has_cover != true {
+            if !song.isMetronomeTrack && song.has_cover != true {
                 PlaybackState.shared.autoFetchCover(for: song)
             }
         }
@@ -320,9 +330,9 @@ struct SongCoverView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-            Image(systemName: (song.name.localizedCaseInsensitiveContains("click") || song.name.localizedCaseInsensitiveContains("metr")) ? "metronome" : "music.note")
-                .font(.system(size: 22, weight: .light))
-                .foregroundColor(Color.white.opacity(0.25))
+            Image(systemName: song.isMetronomeTrack ? "metronome" : "music.note")
+                .font(.system(size: width > 100 ? 32 : 22, weight: song.isMetronomeTrack ? .semibold : .light))
+                .foregroundColor(song.isMetronomeTrack ? Color.cyan.opacity(0.9) : Color.white.opacity(0.25))
         }
     }
 }
@@ -667,6 +677,8 @@ class PlaybackState: ObservableObject {
     @Published var isAddSongSheetPresented: Bool = false
     @Published var isQrModalPresented: Bool = false
     @Published var isSongEditorPresented: Bool = false
+    @Published var isShowingMetronomeEditor: Bool = false
+    @Published var editingMetronomeItem: SetlistSong? = nil
     @Published var serverUrl: String = "http://localhost:8080"
     
     // Estado de Capas de Álbuns / Músicas
@@ -1559,7 +1571,12 @@ class PlaybackState: ObservableObject {
         fetchSetlistSongs(retryCount: retryCount)
     }
     
-    func generateMetronome(name: String, bpm: Double, timeSignature: String, padKey: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
+    func openMetronomeEditor(for item: SetlistSong) {
+        self.editingMetronomeItem = item
+        self.isShowingMetronomeEditor = true
+    }
+    
+    func generateMetronome(name: String, bpm: Double, timeSignature: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/generate") else {
             completion(.failure(NSError(domain: "Invalid URL", code: 400)))
             return
@@ -1573,8 +1590,7 @@ class PlaybackState: ObservableObject {
             "name": name,
             "bpm": bpm,
             "time_signature": timeSignature,
-            "pad_key": padKey,
-            "duration_sec": 300.0
+            "duration_sec": 600.0
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         
@@ -1625,6 +1641,83 @@ class PlaybackState: ObservableObject {
                 
                 self.saveSetlistState()
                 completion(.success(song))
+            }
+        }.resume()
+    }
+    
+    func updateMetronome(item: SetlistSong, name: String, bpm: Double, timeSignature: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/update") else {
+            completion(.failure(NSError(domain: "Invalid URL", code: 400)))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "song_id": item.song.id,
+            "name": name,
+            "bpm": bpm,
+            "time_signature": timeSignature,
+            "duration_sec": 600.0
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            guard let data = data,
+                  let resp = try? JSONDecoder().decode(MetronomeGenerateResponse.self, from: data) else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "DecodeError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Falha ao atualizar metrônomo"])))
+                }
+                return
+            }
+            
+            let updatedSong = resp.song
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                
+                // 1. Atualiza no setlist atual
+                if let idx = self.setlist.firstIndex(where: { $0.id == item.id }) {
+                    self.setlist[idx].song = updatedSong
+                    self.setlist[idx].cues = updatedSong.cues
+                    self.setlist[idx].totalDuration = updatedSong.total_duration
+                    self.setlist[idx].waveform = updatedSong.full_waveform
+                }
+                
+                // 2. Atualiza na biblioteca
+                if let idx = self.librarySongs.firstIndex(where: { $0.id == updatedSong.id }) {
+                    self.librarySongs[idx] = updatedSong
+                }
+                if let idx = self.songs.firstIndex(where: { $0.id == updatedSong.id }) {
+                    self.songs[idx] = updatedSong
+                }
+                
+                // 3. Atualiza cache
+                if let dur = updatedSong.total_duration, let cs = updatedSong.cues {
+                    self.songCache[updatedSong.id] = CachedSongData(
+                        bpm: updatedSong.bpm ?? bpm,
+                        timeSignature: updatedSong.time_signature ?? timeSignature,
+                        totalSeconds: dur,
+                        cues: cs,
+                        waveform: updatedSong.full_waveform ?? []
+                    )
+                }
+                
+                // 4. Se a música editada for a que está carregada no player, atualiza os dados em tempo real
+                if self.currentSong?.id == item.song.id {
+                    self.currentSong = updatedSong
+                    self.bpm = updatedSong.bpm ?? bpm
+                    self.timeSignature = updatedSong.time_signature ?? timeSignature
+                    if let cs = updatedSong.cues { self.currentCues = cs }
+                }
+                
+                self.saveSetlistState()
+                completion(.success(updatedSong))
             }
         }.resume()
     }
@@ -1837,6 +1930,7 @@ class PlaybackState: ObservableObject {
     // CAPAS DE ÁLBUNS / MÚSICAS (APPLE MUSIC & LOCAL)
     // ==========================================
     func openCoverPicker(for song: SongItem) {
+        guard !song.isMetronomeTrack else { return }
         self.coverPickerSong = song
         let cleanQuery = song.search_query ?? cleanSongTitleForSearch(song.name)
         self.coverSearchQuery = cleanQuery
@@ -1958,6 +2052,7 @@ class PlaybackState: ObservableObject {
     }
     
     func autoFetchCover(for song: SongItem) {
+        guard !song.isMetronomeTrack else { return }
         guard !attemptedCoverAutoFetchSongIds.contains(song.id) else { return }
         attemptedCoverAutoFetchSongIds.insert(song.id)
         
@@ -2693,6 +2788,18 @@ struct PlaybackAppView: View {
         .sheet(isPresented: $state.isSongEditorPresented) {
             SongEditorSheetView(state: state)
         }
+        .sheet(isPresented: $state.isShowingMetronomeEditor) {
+            if let item = state.editingMetronomeItem {
+                MetronomeModalView(
+                    state: state,
+                    editingItem: item,
+                    onDismiss: {
+                        state.isShowingMetronomeEditor = false
+                        state.editingMetronomeItem = nil
+                    }
+                )
+            }
+        }
         .onAppear {
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 if let window = NSApp.keyWindow,
@@ -2714,7 +2821,7 @@ struct PlaybackAppView: View {
                 // Atalho Cmd+Z / Cmd+Shift+Z (Desfazer / Refazer)
                 let isZ = event.keyCode == 6 || event.charactersIgnoringModifiers?.lowercased() == "z"
                 if event.modifierFlags.contains(.command) && isZ {
-                    if state.isSongEditorPresented {
+                    if state.isSongEditorPresented || state.isShowingMetronomeEditor {
                         return nil
                     } else if !state.isAddSongSheetPresented && !state.isQrModalPresented {
                         if event.modifierFlags.contains(.shift) {
@@ -2727,7 +2834,7 @@ struct PlaybackAppView: View {
                 }
                 
                 // Se algum modal ou popover estiver aberto, não processa atalhos globais de playback
-                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented || state.quickEditingCueIdx != nil {
+                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented || state.isShowingMetronomeEditor || state.quickEditingCueIdx != nil {
                     return event
                 }
                 if event.keyCode == 49 { // 49 = Barra de Espaço
@@ -3303,21 +3410,30 @@ struct SetlistCarouselView: View {
                                 .buttonStyle(PlainButtonStyle())
                                 .frame(width: 160, height: 88)
                                 .contextMenu {
-                                    Button(action: {
-                                        state.openCoverPicker(for: item.song)
-                                    }) {
-                                        Label("Change Cover...", systemImage: "photo.badge.plus")
-                                    }
-                                    
-                                    if item.song.has_cover == true {
-                                        Button(role: .destructive, action: {
-                                            state.removeCover(for: item.song)
+                                    if item.song.isMetronomeTrack {
+                                        Button(action: {
+                                            state.openMetronomeEditor(for: item)
                                         }) {
-                                            Label("Remove Cover", systemImage: "trash")
+                                            Label("Edit Metronome...", systemImage: "metronome")
                                         }
+                                        Divider()
+                                    } else {
+                                        Button(action: {
+                                            state.openCoverPicker(for: item.song)
+                                        }) {
+                                            Label("Change Cover...", systemImage: "photo.badge.plus")
+                                        }
+                                        
+                                        if item.song.has_cover == true {
+                                            Button(role: .destructive, action: {
+                                                state.removeCover(for: item.song)
+                                            }) {
+                                                Label("Remove Cover", systemImage: "trash")
+                                            }
+                                        }
+                                        
+                                        Divider()
                                     }
-                                    
-                                    Divider()
                                     
                                     Button(action: {
                                         state.openSongEditor(for: item.song)
@@ -5212,39 +5328,137 @@ struct BottomMixerDock: View {
 }
 
 // ==========================================
-// 9. MODAL PARA CLICK & PAD (METRÔNOMO)
+// 9. COMPONENTE DE ROLETA 3D (CILÍNDRICA)
 // ==========================================
-struct ClickAndPadView: View {
-    @ObservedObject var state: PlaybackState
-    var onBack: () -> Void
-    var onSongAdded: () -> Void
+struct Roulette3DColumn: View {
+    @Binding var selectedIndex: Int
+    let count: Int
+    let itemTitle: (Int) -> String
+    let centerSuffix: String
     
-    @State private var songName: String = "Click & Pad"
-    @State private var bpm: Int = 120
+    @State private var dragAccumulator: CGFloat = 0
+    private let stepHeight: CGFloat = 26.0
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(-3...3, id: \.self) { offset in
+                let targetIndex = selectedIndex + offset
+                slotRow(offset: offset, targetIndex: targetIndex)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let delta = -(value.translation.height - dragAccumulator)
+                    if abs(delta) >= stepHeight {
+                        let steps = Int(delta / stepHeight)
+                        let newIdx = max(0, min(count - 1, selectedIndex + steps))
+                        if newIdx != selectedIndex {
+                            withAnimation(.spring(response: 0.20, dampingFraction: 0.85)) {
+                                selectedIndex = newIdx
+                            }
+                        }
+                        dragAccumulator = value.translation.height
+                    }
+                }
+                .onEnded { _ in
+                    dragAccumulator = 0
+                }
+        )
+    }
+    
+    @ViewBuilder
+    private func slotRow(offset: Int, targetIndex: Int) -> some View {
+        let isCenter = (offset == 0)
+        let absOffset = abs(offset)
+        
+        // Curvatura cilíndrica 3D autêntica (fiel à imagem de referência)
+        let angle = Double(offset) * 19.0
+        let scale = max(0.72, 1.0 - Double(absOffset) * 0.08)
+        let opacity = isCenter ? 1.0 : max(0.15, cos(angle * .pi / 180.0) * (1.0 - Double(absOffset) * 0.22))
+        
+        HStack(spacing: 6) {
+            if targetIndex >= 0 && targetIndex < count {
+                Text(itemTitle(targetIndex))
+                    .font(.system(size: isCenter ? 18 : 15, weight: isCenter ? .bold : .medium))
+                    .foregroundColor(.white)
+                
+                if isCenter {
+                    Text(centerSuffix)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            } else {
+                Text(" ")
+                    .font(.system(size: isCenter ? 18 : 15))
+            }
+        }
+        .frame(height: stepHeight)
+        .opacity(opacity)
+        .scaleEffect(scale)
+        .rotation3DEffect(
+            Angle(degrees: angle),
+            axis: (x: 1.0, y: 0.0, z: 0.0),
+            anchor: .center,
+            perspective: 0.38
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if targetIndex >= 0 && targetIndex < count && !isCenter {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                    selectedIndex = targetIndex
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// MODAL DE METRÔNOMO / CLICK (CRIAÇÃO & EDIÇÃO)
+// ==========================================
+struct MetronomeModalView: View {
+    @ObservedObject var state: PlaybackState
+    var editingItem: SetlistSong? = nil
+    var onBack: (() -> Void)? = nil
+    var onDismiss: () -> Void
+    
+    @State private var songName: String = ""
+    @State private var bpmIndex: Int = 80 // 120 BPM (40 + 80 = 120)
     @State private var timeSigIndex: Int = 2 // "4/4"
-    @State private var selectedKey: String = "Off"
-    @State private var isGenerating: Bool = false
+    @State private var isProcessing: Bool = false
     @State private var errorMessage: String? = nil
     
-    // Suporte a arrasto fluido no wheel
-    @State private var dragBpmStart: Int? = nil
-    @State private var dragTimeSigStart: Int? = nil
-    
     let timeSignatures = ["2/4", "3/4", "4/4", "5/4", "6/4", "6/8", "7/8", "9/8", "12/8"]
-    let padKeysRow1 = ["Off", "C", "C#", "D", "Eb", "E", "F"]
-    let padKeysRow2 = ["F#", "G", "Ab", "A", "Bb", "B"]
+    let minBpm = 40
+    let maxBpm = 260
+    
+    var currentBpm: Int {
+        minBpm + bpmIndex
+    }
     
     var selectedTimeSig: String {
         guard timeSigIndex >= 0 && timeSigIndex < timeSignatures.count else { return "4/4" }
         return timeSignatures[timeSigIndex]
     }
     
+    var isEditing: Bool {
+        editingItem != nil
+    }
+    
     var body: some View {
-        VStack(spacing: 14) {
-            // 1. Header (Voltar < , Título, Botão Add azul)
+        VStack(spacing: 16) {
+            // 1. Header (Back/Close, Título, Botão Add/Update)
             HStack {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
+                Button(action: {
+                    if let back = onBack {
+                        back()
+                    } else {
+                        onDismiss()
+                    }
+                }) {
+                    Image(systemName: onBack != nil ? "chevron.left" : "xmark")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .frame(width: 32, height: 32)
@@ -5255,19 +5469,19 @@ struct ClickAndPadView: View {
                 
                 Spacer()
                 
-                Text("Click & Pad")
+                Text(isEditing ? "Edit Metronome" : "Click / Metrônomo")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(.white)
                 
                 Spacer()
                 
-                Button(action: generateMetronome) {
-                    if isGenerating {
+                Button(action: handleAction) {
+                    if isProcessing {
                         ProgressView()
                             .scaleEffect(0.65)
-                            .frame(width: 52, height: 28)
+                            .frame(width: 58, height: 28)
                     } else {
-                        Text("Add")
+                        Text(isEditing ? "Update" : "Add")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
@@ -5277,7 +5491,7 @@ struct ClickAndPadView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(isGenerating)
+                .disabled(isProcessing)
             }
             
             // 2. Linha Name
@@ -5288,7 +5502,7 @@ struct ClickAndPadView: View {
                 
                 Spacer()
                 
-                TextField("Click & Pad", text: $songName)
+                TextField("Click (\(currentBpm) BPM)", text: $songName)
                     .textFieldStyle(PlainTextFieldStyle())
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
@@ -5300,50 +5514,40 @@ struct ClickAndPadView: View {
             .background(Color.white.opacity(0.05))
             .cornerRadius(8)
             
-            // 3. Seção Click (Wheel Picker com Tempo e Time Sig)
+            // 3. Seção Click (Dual Roleta 3D com Tempo e Time Sig)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Click")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
                 
                 ZStack {
-                    // Barra de seleção central com cantos arredondados
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.10))
-                        .frame(height: 34)
+                    // Barra de destaque central translúcida
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.12))
+                        .frame(height: 32)
                     
                     HStack(spacing: 0) {
-                        // Coluna da Esquerda: Tempo (BPM)
-                        tempoWheelColumn
-                            .frame(maxWidth: .infinity)
+                        // Roleta 3D: Tempo (BPM)
+                        Roulette3DColumn(
+                            selectedIndex: $bpmIndex,
+                            count: (maxBpm - minBpm + 1),
+                            itemTitle: { idx in "\(minBpm + idx)" },
+                            centerSuffix: "Tempo"
+                        )
+                        .frame(maxWidth: .infinity)
                         
-                        // Coluna da Direita: Time Sig
-                        timeSigWheelColumn
-                            .frame(maxWidth: .infinity)
+                        // Roleta 3D: Time Sig
+                        Roulette3DColumn(
+                            selectedIndex: $timeSigIndex,
+                            count: timeSignatures.count,
+                            itemTitle: { idx in timeSignatures[idx] },
+                            centerSuffix: "Time Sig"
+                        )
+                        .frame(maxWidth: .infinity)
                     }
                 }
-                .frame(height: 145)
+                .frame(height: 182)
                 .clipped()
-            }
-            
-            // 4. Seção Pad (Seleção de Tom em pílulas)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Pad")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white)
-                
-                VStack(spacing: 6) {
-                    HStack(spacing: 6) {
-                        ForEach(padKeysRow1, id: \.self) { key in
-                            padKeyPill(key)
-                        }
-                    }
-                    HStack(spacing: 6) {
-                        ForEach(padKeysRow2, id: \.self) { key in
-                            padKeyPill(key)
-                        }
-                    }
-                }
             }
             
             if let err = errorMessage {
@@ -5354,249 +5558,72 @@ struct ClickAndPadView: View {
             }
         }
         .padding(20)
-        .frame(width: 450, height: 440)
+        .frame(width: 440, height: 340)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
-    }
-    
-    // Coluna interativa de Tempo (BPM)
-    private var tempoWheelColumn: some View {
-        VStack(spacing: 4) {
-            // -3
-            if bpm - 3 >= 40 {
-                Text("\(bpm - 3)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.15))
-                    .frame(height: 16)
-                    .onTapGesture { bpm = max(40, bpm - 3) }
+        .onAppear {
+            if let item = editingItem {
+                songName = item.song.name
+                let b = Int(item.song.bpm ?? 120)
+                bpmIndex = max(0, min(maxBpm - minBpm, b - minBpm))
+                if let ts = item.song.time_signature, let idx = timeSignatures.firstIndex(of: ts) {
+                    timeSigIndex = idx
+                }
             } else {
-                Spacer().frame(height: 16)
-            }
-            
-            // -2
-            if bpm - 2 >= 40 {
-                Text("\(bpm - 2)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.30))
-                    .frame(height: 18)
-                    .onTapGesture { bpm = max(40, bpm - 2) }
-            } else {
-                Spacer().frame(height: 18)
-            }
-            
-            // -1
-            if bpm - 1 >= 40 {
-                Text("\(bpm - 1)")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.60))
-                    .frame(height: 20)
-                    .onTapGesture { bpm = max(40, bpm - 1) }
-            } else {
-                Spacer().frame(height: 20)
-            }
-            
-            // Centro Selecionado: "120 Tempo"
-            HStack(spacing: 6) {
-                Text("\(bpm)")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.white)
-                Text("Tempo")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white)
-            }
-            .frame(height: 34)
-            
-            // +1
-            if bpm + 1 <= 260 {
-                Text("\(bpm + 1)")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.60))
-                    .frame(height: 20)
-                    .onTapGesture { bpm = min(260, bpm + 1) }
-            } else {
-                Spacer().frame(height: 20)
-            }
-            
-            // +2
-            if bpm + 2 <= 260 {
-                Text("\(bpm + 2)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.30))
-                    .frame(height: 18)
-                    .onTapGesture { bpm = min(260, bpm + 2) }
-            } else {
-                Spacer().frame(height: 18)
-            }
-            
-            // +3
-            if bpm + 3 <= 260 {
-                Text("\(bpm + 3)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.15))
-                    .frame(height: 16)
-                    .onTapGesture { bpm = min(260, bpm + 3) }
-            } else {
-                Spacer().frame(height: 16)
+                if songName.isEmpty {
+                    songName = "Click (\(currentBpm) BPM)"
+                }
             }
         }
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 3)
-                .onChanged { value in
-                    if dragBpmStart == nil {
-                        dragBpmStart = bpm
-                    }
-                    let delta = -Int(value.translation.height / 10.0)
-                    bpm = max(40, min(260, (dragBpmStart ?? bpm) + delta))
-                }
-                .onEnded { _ in
-                    dragBpmStart = nil
-                }
-        )
-    }
-    
-    // Coluna interativa de Time Signature
-    private var timeSigWheelColumn: some View {
-        VStack(spacing: 4) {
-            // -3
-            if timeSigIndex - 3 >= 0 {
-                Text(timeSignatures[timeSigIndex - 3])
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.15))
-                    .frame(height: 16)
-                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 3) }
-            } else {
-                Spacer().frame(height: 16)
-            }
-            
-            // -2
-            if timeSigIndex - 2 >= 0 {
-                Text(timeSignatures[timeSigIndex - 2])
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.30))
-                    .frame(height: 18)
-                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 2) }
-            } else {
-                Spacer().frame(height: 18)
-            }
-            
-            // -1
-            if timeSigIndex - 1 >= 0 {
-                Text(timeSignatures[timeSigIndex - 1])
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.60))
-                    .frame(height: 20)
-                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 1) }
-            } else {
-                Spacer().frame(height: 20)
-            }
-            
-            // Centro Selecionado: "4/4 Time Sig"
-            HStack(spacing: 6) {
-                Text(selectedTimeSig)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.white)
-                Text("Time Sig")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white)
-            }
-            .frame(height: 34)
-            
-            // +1
-            if timeSigIndex + 1 < timeSignatures.count {
-                Text(timeSignatures[timeSigIndex + 1])
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.60))
-                    .frame(height: 20)
-                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 1) }
-            } else {
-                Spacer().frame(height: 20)
-            }
-            
-            // +2
-            if timeSigIndex + 2 < timeSignatures.count {
-                Text(timeSignatures[timeSigIndex + 2])
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.30))
-                    .frame(height: 18)
-                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 2) }
-            } else {
-                Spacer().frame(height: 18)
-            }
-            
-            // +3
-            if timeSigIndex + 3 < timeSignatures.count {
-                Text(timeSignatures[timeSigIndex + 3])
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.15))
-                    .frame(height: 16)
-                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 3) }
-            } else {
-                Spacer().frame(height: 16)
+        .onChange(of: bpmIndex) { _, newIdx in
+            if !isEditing && (songName.isEmpty || songName.hasPrefix("Click (")) {
+                songName = "Click (\(minBpm + newIdx) BPM)"
             }
         }
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 3)
-                .onChanged { value in
-                    if dragTimeSigStart == nil {
-                        dragTimeSigStart = timeSigIndex
-                    }
-                    let delta = -Int(value.translation.height / 20.0)
-                    timeSigIndex = max(0, min(timeSignatures.count - 1, (dragTimeSigStart ?? timeSigIndex) + delta))
-                }
-                .onEnded { _ in
-                    dragTimeSigStart = nil
-                }
-        )
     }
     
-    // Pílula para seleção de tom do Pad
-    private func padKeyPill(_ key: String) -> some View {
-        let isSelected = (selectedKey == key)
-        return Button(action: {
-            selectedKey = key
-        }) {
-            Text(key)
-                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
-                .foregroundColor(isSelected ? .white : .white.opacity(0.75))
-                .frame(maxWidth: .infinity)
-                .frame(height: 26)
-                .background(
-                    isSelected
-                        ? Color(red: 0.0, green: 0.55, blue: 1.0)
-                        : Color.white.opacity(0.08)
-                )
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.06), lineWidth: 1)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-    
-    private func generateMetronome() {
-        isGenerating = true
+    private func handleAction() {
+        isProcessing = true
         errorMessage = nil
         let trimmedName = songName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmedName.isEmpty ? "Click & Pad" : trimmedName
+        let finalName = trimmedName.isEmpty ? "Click (\(currentBpm) BPM)" : trimmedName
         
-        state.generateMetronome(
-            name: finalName,
-            bpm: Double(bpm),
-            timeSignature: selectedTimeSig,
-            padKey: selectedKey
-        ) { result in
-            isGenerating = false
-            switch result {
-            case .success(_):
-                onSongAdded()
-            case .failure(let err):
-                errorMessage = err.localizedDescription
+        if let item = editingItem {
+            // Atualiza metrônomo existente
+            state.updateMetronome(
+                item: item,
+                name: finalName,
+                bpm: Double(currentBpm),
+                timeSignature: selectedTimeSig
+            ) { result in
+                isProcessing = false
+                switch result {
+                case .success(_):
+                    onDismiss()
+                case .failure(let err):
+                    errorMessage = err.localizedDescription
+                }
+            }
+        } else {
+            // Gera novo metrônomo (~10 minutos)
+            state.generateMetronome(
+                name: finalName,
+                bpm: Double(currentBpm),
+                timeSignature: selectedTimeSig
+            ) { result in
+                isProcessing = false
+                switch result {
+                case .success(_):
+                    onDismiss()
+                case .failure(let err):
+                    errorMessage = err.localizedDescription
+                }
             }
         }
     }
 }
+
+// Compatibilidade de nome
+typealias ClickAndPadView = MetronomeModalView
 
 // ==========================================
 // 10. MODAL PARA ADICIONAR MÚSICAS AO SETLIST
@@ -5622,10 +5649,12 @@ struct AddSongSheetView: View {
     var body: some View {
         Group {
             if isShowingClickAndPad {
-                ClickAndPadView(
+                MetronomeModalView(
                     state: state,
+                    editingItem: nil,
                     onBack: { isShowingClickAndPad = false },
-                    onSongAdded: {
+                    onDismiss: {
+                        isShowingClickAndPad = false
                         presentationMode.wrappedValue.dismiss()
                     }
                 )
@@ -5683,7 +5712,7 @@ struct AddSongSheetView: View {
                         .cornerRadius(5)
                     }
                     
-                    // Botão para Gerar Metrônomo (Click & Pad)
+                    // Botão para Gerar Metrônomo (Click)
                     Button(action: {
                         isShowingClickAndPad = true
                     }) {
@@ -5691,7 +5720,7 @@ struct AddSongSheetView: View {
                             Image(systemName: "metronome")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(Color(red: 0.0, green: 0.55, blue: 1.0))
-                            Text("Create Click & Pad (Metrônomo)")
+                            Text("Create Click (Metrônomo)")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(.white)
                             Spacer()
