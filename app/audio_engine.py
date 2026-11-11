@@ -57,6 +57,7 @@ class LiveAudioEngine:
         self.outgoing_total_frames = 0
         self.incoming_xfade_frames = 0
         self.incoming_xfade_pos = 0
+        self._audio_cache = {}  # filepath -> (audio_data, sr) para crossfade instantâneo (0.00ms)
 
         # Fade Stop & Tracks Fade (Fade Out / Fade In suave sem pausar a música e mantendo o Click)
         self.fade_stop_active = False
@@ -187,8 +188,8 @@ class LiveAudioEngine:
                         resolved_id = device_id
 
                 if resolved_id is not None and 0 <= resolved_id < len(devices):
-                    # Se o dispositivo já é o atual e o stream está ativo, não interrompe nada!
-                    if self.output_device == resolved_id and self.stream is not None:
+                    # Se o dispositivo já é o atual, não interrompe nada!
+                    if self.output_device == resolved_id:
                         return True
                     was_playing = self.is_playing
                     self.is_playing = False
@@ -217,18 +218,50 @@ class LiveAudioEngine:
         self._notify_event("device_changed", {"output_device_id": self.output_device, "output_device_name": self.output_device_name})
         return True
 
+    def preload(self, filepath: str):
+        """Pré-decodifica uma música em background para crossfade sem latência de disco (0.00ms)."""
+        if not filepath or not os.path.exists(filepath):
+            return
+        with self.lock:
+            if filepath in self._audio_cache:
+                return
+        def _bg_decode():
+            try:
+                raw_data, sr = sf.read(filepath)
+                if len(raw_data.shape) == 1:
+                    audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
+                else:
+                    audio = raw_data[:, :2].astype(np.float32)
+                with self.lock:
+                    if len(self._audio_cache) >= 3:
+                        self._audio_cache.clear()
+                    self._audio_cache[filepath] = (audio, sr)
+                print(f"[preload] Música pré-decodificada em memória: {os.path.basename(filepath)}")
+            except Exception as e:
+                print(f"[preload] Erro ao pré-carregar áudio {filepath}: {e}")
+        import threading
+        threading.Thread(target=_bg_decode, daemon=True).start()
+
     def load_song(self, filepath: str, bpm: float, cues: list[dict], time_signature: tuple[int, int] = (4, 4), crossfade: bool = False, crossfade_duration: float = 4.0):
         """Carrega uma música na memória e prepara o grid de compassos."""
-        # 1. Lê a nova faixa do disco ANTES de mexer no playback para não pausar nem travar o áudio atual
-        raw_data, sr = sf.read(filepath)
-        if len(raw_data.shape) == 1:
-            new_audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
+        # 1. Obtém áudio pré-decodificado do cache ou lê do disco se ainda não estiver em cache
+        cached = None
+        with self.lock:
+            if filepath in self._audio_cache:
+                cached = self._audio_cache[filepath]
+
+        if cached is not None:
+            new_audio, sr = cached
         else:
-            new_audio = raw_data[:, :2].astype(np.float32)
+            raw_data, sr = sf.read(filepath)
+            if len(raw_data.shape) == 1:
+                new_audio = np.column_stack((raw_data, raw_data)).astype(np.float32)
+            else:
+                new_audio = raw_data[:, :2].astype(np.float32)
 
         # 2. No momento exato da troca, captura a cauda de saída de Song A sem interrupção
         with self.lock:
-            if crossfade and self.audio_data is not None and self.is_playing:
+            if crossfade and self.audio_data is not None and (self.is_playing or self.stream is not None):
                 rem_frames = int(max(0.5, crossfade_duration) * self.sample_rate)
                 start_frame = self.pos_frame
                 end_frame = min(self.total_frames, start_frame + rem_frames)
@@ -284,12 +317,14 @@ class LiveAudioEngine:
         with self.lock:
             if self.audio_data is None:
                 return
+            if self.is_playing and self.stream is not None:
+                return
             self.fade_stop_active = False
             self.tracks_fade_gain = 1.0
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
-            if not self.is_playing:
-                self.is_playing = True
+            self.is_playing = True
+            if self.stream is None:
                 self._start_stream()
         self._notify_event("play_state", {"is_playing": True})
 
@@ -763,12 +798,15 @@ class LiveAudioEngine:
                 self.stream = sd.OutputStream(**kwargs)
                 self.stream.start()
                 self.output_device = target_device
+                if 0 <= target_device < len(devs):
+                    self.output_device_name = devs[target_device].get("name", "")
                 print(f"OutputStream iniciado no dispositivo [{target_device}] (sr={sr}, blocksize={bs})")
                 return
             except Exception as e:
                 print(f"Tentativa com dispositivo {target_device} falhou (sr={sr}, blocksize={bs}): {type(e).__name__}: {e}")
+                time.sleep(0.04)
 
-        # 3. Fallback automático para o dispositivo de saída padrão do sistema
+        # 3. Fallback temporário de emergência para o dispositivo de saída padrão do sistema
         try:
             self.stream = sd.OutputStream(
                 samplerate=self.sample_rate,
@@ -779,19 +817,7 @@ class LiveAudioEngine:
                 blocksize=512
             )
             self.stream.start()
-            default_out = sd.default.device[1] if sd.default.device[1] >= 0 else None
-            def_name = ""
-            if default_out is not None and 0 <= default_out < len(devs):
-                def_name = devs[default_out].get("name", "Default Output")
-            self.output_device = default_out
-            self.output_device_name = def_name
-            print(f"Áudio iniciado com fallback no dispositivo padrão do sistema (ID: {default_out}, {def_name})")
-            self._notify_event("device_changed", {
-                "output_device_id": self.output_device,
-                "output_device_name": self.output_device_name,
-                "fallback": True,
-                "requested_device": target_device
-            })
+            print(f"Áudio iniciado com fallback de emergência no dispositivo padrão do sistema")
         except Exception as e2:
             print(f"Falha ao iniciar áudio no dispositivo padrão: {e2}")
 
@@ -803,6 +829,8 @@ class LiveAudioEngine:
             except Exception:
                 pass
             self.stream = None
+            # Pausa breve para permitir que o driver Core Audio AUHAL libere os descritores de hardware
+            time.sleep(0.04)
 
     def _audio_callback(self, outdata, frames, time_info, status):
         """Callback executado pela thread de tempo real do CoreAudio a cada ~11ms."""
@@ -1064,6 +1092,15 @@ class LiveAudioEngine:
         else:
             outdata[:, 1] = chunk[:, 1] * (r_base * self.tracks_fade_gain)
 
+        # Adiciona o Pad no Canal R (Mix dos instrumentos/PA)
+        if self.pad_active and self.pad_buffer is not None:
+            buf_len = len(self.pad_buffer)
+            pad_slice = np.zeros((frames, 2), dtype=np.float32)
+            for i in range(frames):
+                pad_slice[i] = self.pad_buffer[self.pad_pos]
+                self.pad_pos = (self.pad_pos + 1) % buf_len
+            outdata[:, 1] += pad_slice[:, 1] * self.pad_vol
+
         # 2. Automação de Volume da MÚSICA ANTERIOR (Song A): FADE OUT (1.0 -> 0.0)
         # Ambas as músicas tocam SIMULTANEAMENTE no Canal R durante o crossfade!
         if self.outgoing_audio is not None and self.outgoing_total_frames > 0:
@@ -1081,6 +1118,9 @@ class LiveAudioEngine:
             else:
                 self.outgoing_audio = None
                 self.outgoing_pos = 0
+
+        # Evita distorção digital no PA se a soma de ambas as músicas ultrapassar 0 dBFS
+        np.clip(outdata[:, 1], -1.0, 1.0, out=outdata[:, 1])
 
     def _render_pad_only(self, outdata: np.ndarray, frames: int):
         """Toca apenas o Pad contínuo com a música parada."""

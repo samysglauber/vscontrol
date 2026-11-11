@@ -299,10 +299,23 @@ class LoadSongRequest(BaseModel):
     crossfade: bool = False
     crossfade_duration: float = 4.0
 
+class PreloadRequest(BaseModel):
+    song_id: str
+
+@app.post("/api/preload")
+def preload_song(req: PreloadRequest):
+    song = library.get_song(req.song_id)
+    if song and "path" in song:
+        engine.preload(song["path"])
+    return {"status": "ok"}
+
 @app.post("/api/load")
 def load_song(req: LoadSongRequest):
     if not req.crossfade and (req.device_id is not None or req.device_name is not None):
-        engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
+        if req.device_name and req.device_name.strip().lower() != (engine.output_device_name or "").strip().lower():
+            engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
+        elif req.device_id is not None and req.device_id != engine.output_device:
+            engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
 
     song = library.get_song(req.song_id)
     if not song:
@@ -364,7 +377,10 @@ class PlayRequest(BaseModel):
 @app.post("/api/play")
 def play(req: PlayRequest = None):
     if req and (req.device_id is not None or req.device_name is not None):
-        engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
+        if req.device_name and req.device_name.strip().lower() != (engine.output_device_name or "").strip().lower():
+            engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
+        elif req.device_id is not None and req.device_id != engine.output_device:
+            engine.set_output_device(device_id=req.device_id, device_name=req.device_name)
     if engine.audio_data is None:
         songs = library.get_all_songs()
         if songs:

@@ -17,3 +17,6 @@ cp swift_app/VSControl "VS Control.app/Contents/MacOS/VSControl"
 
 echo "✅ Build concluído com sucesso!"
 echo "   Binário: $DIR/VS Control.app/Contents/MacOS/VSControl"
+
+# Reinicia o servidor Python para recarregar qualquer alteração de backend
+pkill -f "uvicorn app.main:app" 2>/dev/null || true

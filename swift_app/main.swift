@@ -937,22 +937,14 @@ class PlaybackState: ObservableObject {
         let nextItem = setlist[currentIndex + 1]
         let countInDuration = calculateCountInDuration(for: nextItem)
         
-        // Identifica o início do último bloco (Ending/Outro) da música atual
-        let lastCueTime: Double
-        if let cues = currentItem.cues ?? current.cues, !cues.isEmpty {
-            lastCueTime = cues.last?.time ?? 0.0
-        } else {
-            lastCueTime = 0.0
-        }
-        
         // Opção A: A contagem da próxima música termina exatamente quando a música atual termina
-        // O disparo ocorre na reta final do Ending: max(lastCueTime, totalSeconds - countInDuration)
-        let triggerTime = max(lastCueTime, totalSeconds - countInDuration)
+        // O disparo ocorre quando restam exatamente `countInDuration` segundos para o fim da música atual
+        let triggerTime = max(0.0, totalSeconds - countInDuration)
         
         if currentSeconds >= triggerTime && totalSeconds > countInDuration {
             self.hasTriggeredCrossfade = true
             let effectiveDuration = totalSeconds - currentSeconds
-            let xfadeDuration = max(countInDuration, effectiveDuration)
+            let xfadeDuration = max(1.5, min(countInDuration, max(0.5, effectiveDuration)))
             self.loadSong(nextItem.song, cues: nextItem.cues, autoPlay: true, crossfade: true, crossfadeDuration: xfadeDuration)
         }
     }
@@ -1726,10 +1718,16 @@ class PlaybackState: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                     self.abletonSynced = false
                 }
-                if autoPlay {
+                if autoPlay && !crossfade {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                         self.sendAction("play")
                     }
+                }
+                
+                // Pré-carrega a próxima música em background para transição com zero latência (0.00ms)
+                if let nextIdx = self.setlist.firstIndex(where: { $0.song.id == song.id }), nextIdx + 1 < self.setlist.count {
+                    let nextSong = self.setlist[nextIdx + 1].song
+                    self.sendAction("preload", body: ["song_id": nextSong.id])
                 }
             }
         }.resume()
