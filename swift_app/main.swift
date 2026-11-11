@@ -5378,10 +5378,10 @@ struct WheelPicker<Item: Hashable>: View {
     var labelWidth: CGFloat
     let format: (Item) -> String
 
-    private let viewportHeight: CGFloat = 190
-    private let cylinderRadius: CGFloat = 105
-    private let stepAngle: CGFloat = 21          // graus de cilindro por item
-    private let rowHeight: CGFloat = 32
+    private let viewportHeight: CGFloat = 150
+    private let cylinderRadius: CGFloat = 88
+    private let stepAngle: CGFloat = 16          // graus de cilindro por item
+    private let rowHeight: CGFloat = 26
 
     // Pontos de arraste equivalentes a 1 item (bate com o deslocamento visual no centro)
     private var stepHeight: CGFloat { cylinderRadius * stepAngle * .pi / 180 }
@@ -5416,13 +5416,13 @@ struct WheelPicker<Item: Hashable>: View {
     private var visibleIndices: [Int] {
         guard !items.isEmpty else { return [] }
         let c = nearestIndex
-        return Array(max(0, c - 4)...min(items.count - 1, c + 4))
+        return Array(max(0, c - 3)...min(items.count - 1, c + 3))
     }
 
     var body: some View {
         ZStack {
             // Faixa de destaque central
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 7)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(width: totalWidth, height: rowHeight)
 
@@ -5437,10 +5437,10 @@ struct WheelPicker<Item: Hashable>: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .black.opacity(0.4), location: 0.10),
-                        .init(color: .black, location: 0.22),
-                        .init(color: .black, location: 0.78),
-                        .init(color: .black.opacity(0.4), location: 0.90),
+                        .init(color: .black.opacity(0.3), location: 0.12),
+                        .init(color: .black, location: 0.25),
+                        .init(color: .black, location: 0.75),
+                        .init(color: .black.opacity(0.3), location: 0.88),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .top,
@@ -5452,7 +5452,7 @@ struct WheelPicker<Item: Hashable>: View {
             HStack(spacing: 10) {
                 Color.clear.frame(width: valueWidth)
                 Text(label)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: labelWidth, alignment: .leading)
             }
@@ -5499,12 +5499,11 @@ struct WheelPicker<Item: Hashable>: View {
         let angleDeg = step * stepAngle
         let rad = angleDeg * .pi / 180
         let cosVal = max(0, cos(rad))
-        let nearCenter = max(0, 1 - abs(step))
 
         return HStack(spacing: 10) {
             Text(format(items[idx]))
-                .font(.system(size: 17, weight: .regular).monospacedDigit())
-                .foregroundStyle(Color.white.opacity(0.55 + 0.45 * nearCenter))
+                .font(.system(size: 16, weight: .regular).monospacedDigit())
+                .foregroundStyle(Color.white.opacity(0.65))
                 .frame(width: valueWidth, alignment: .trailing)
 
             Color.clear.frame(width: labelWidth)
@@ -5513,7 +5512,7 @@ struct WheelPicker<Item: Hashable>: View {
         .frame(width: totalWidth, height: rowHeight)
         // IMPORTANTE: efeitos ANTES do offset, para girar/escalar em torno do centro da PRÓPRIA linha
         .opacity(pow(cosVal, 1.8))
-        .scaleEffect(0.80 + 0.20 * cosVal)
+        .scaleEffect(0.82 + 0.18 * cosVal)
         .rotation3DEffect(
             .degrees(-angleDeg),   // linhas abaixo: parte de baixo recua; acima: parte de cima recua
             axis: (x: 1, y: 0, z: 0),
@@ -5685,7 +5684,7 @@ struct MetronomeModalView: View {
             }
         }
         .padding(20)
-        .frame(width: 440, height: 380)
+        .frame(width: 440, height: 340)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
