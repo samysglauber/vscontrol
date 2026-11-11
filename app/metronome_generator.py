@@ -109,22 +109,28 @@ def generate_metronome_track(
     audio = np.zeros((total_samples, 2), dtype=np.float32)
 
     # 1. Geração do Click no Canal L (In-Ear)
-    click_regular, click_accent = get_click_samples(sample_rate=sr)
-    click_subdivision = (click_regular * 0.70).astype(np.float32)
+    click_track1, click_track2 = get_click_samples(sample_rate=sr)
     for bar in range(total_bars):
         for beat in range(beats_per_bar):
             sample_pos = int((bar * beats_per_bar + beat) * beat_sec * sr)
-            click_sample = click_accent if beat == 0 else click_regular
-            avail = min(len(click_sample), total_samples - sample_pos)
-            if avail > 0:
-                audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
             
-            # Duplicação do click somando colcheias (1/8) entre os tempos
             if subdivide:
+                # Click 1/8 (2x): Click Track-1 no tempo e Click Track-2 no contratempo,
+                # se repetindo continuamente sem marcação de início de compasso
+                avail1 = min(len(click_track1), total_samples - sample_pos)
+                if avail1 > 0:
+                    audio[sample_pos:sample_pos + avail1, 0] = click_track1[:avail1]
+                
                 sample_pos_sub = int((bar * beats_per_bar + beat + 0.5) * beat_sec * sr)
-                avail_sub = min(len(click_subdivision), total_samples - sample_pos_sub)
-                if avail_sub > 0:
-                    audio[sample_pos_sub:sample_pos_sub + avail_sub, 0] = click_subdivision[:avail_sub]
+                avail2 = min(len(click_track2), total_samples - sample_pos_sub)
+                if avail2 > 0:
+                    audio[sample_pos_sub:sample_pos_sub + avail2, 0] = click_track2[:avail2]
+            else:
+                # Click padrão 1/4: acento de início de compasso (Track-2 no beat 0) e Track-1 nos demais
+                click_sample = click_track2 if beat == 0 else click_track1
+                avail = min(len(click_sample), total_samples - sample_pos)
+                if avail > 0:
+                    audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
 
     # Canal R é mantido como silêncio absoluto (zeros) para uso profissional ao vivo
 

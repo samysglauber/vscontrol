@@ -5678,7 +5678,7 @@ struct MetronomeModalView: View {
                     Spacer()
                     
                     HStack(spacing: 4) {
-                        Text("Subdivisão:")
+                        Text("Subdivision:")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.white.opacity(0.55))
                         
@@ -5693,7 +5693,7 @@ struct MetronomeModalView: View {
                                     .clipShape(Capsule())
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help("Click padrão em 1/4 (semínimas)")
+                            .help("Standard 1/4 click")
                             
                             Button(action: { subdivide = true }) {
                                 HStack(spacing: 2) {
@@ -5711,13 +5711,14 @@ struct MetronomeModalView: View {
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help("Duplicar click somando colcheias em 1/8")
+                            .help("Duplicate click (1/8 notes)")
                         }
                         .padding(2)
                         .background(Color.white.opacity(0.08))
                         .clipShape(Capsule())
                     }
                 }
+                .padding(.horizontal, 6)
                 
                 HStack(spacing: 12) {
                     Spacer()
@@ -5750,8 +5751,10 @@ struct MetronomeModalView: View {
                     .lineLimit(2)
             }
         }
-        .padding(14)
-        .frame(width: 320, height: 270)
+        .padding(.top, 18)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
+        .frame(width: 320, height: 282)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
