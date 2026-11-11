@@ -2846,6 +2846,48 @@ struct WindowTitlebarDragView: NSViewRepresentable {
     }
 }
 
+// Ícones Vetoriais Oficiais Tabler (Infinity-2 e Loop)
+struct TablerIcon: View {
+    let name: String
+    var size: CGFloat = 16
+    var color: Color = .white
+    
+    private static let infinity2Image: NSImage? = {
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.94 9.39a10 10 0 0 1 .232 -.218a4 4 0 1 1 0 5.656a10 10 0 0 1 -2.172 -2.828a10 10 0 0 0 -2.172 -2.828a4 4 0 1 0 0 5.656a10 10 0 0 0 .234 -.219" />
+        </svg>
+        """
+        guard let data = svg.data(using: .utf8), let img = NSImage(data: data) else { return nil }
+        img.isTemplate = true
+        return img
+    }()
+    
+    private static let loopImage: NSImage? = {
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 7c-1.267 -1.268 -3.066 -2 -5 -2a7 7 0 1 0 0 14c1.934 0 3.75 -.75 5 -2l7 -7" />
+          <path d="M17 10h5v5" />
+        </svg>
+        """
+        guard let data = svg.data(using: .utf8), let img = NSImage(data: data) else { return nil }
+        img.isTemplate = true
+        return img
+    }()
+    
+    var body: some View {
+        let targetImg = (name == "infinity-2") ? TablerIcon.infinity2Image : TablerIcon.loopImage
+        if let img = targetImg {
+            Image(nsImage: img)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .foregroundColor(color)
+                .frame(width: size, height: size)
+        }
+    }
+}
+
 struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
@@ -3007,9 +3049,11 @@ struct TopBarView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(state.isInfiniteActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
                                 .frame(width: 36, height: 36)
-                            Image(systemName: "infinity")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(state.isInfiniteActive ? Color.cyan : Color.white.opacity(0.65))
+                            TablerIcon(
+                                name: "infinity-2",
+                                size: 19,
+                                color: state.isInfiniteActive ? Color.cyan : Color.white.opacity(0.65)
+                            )
                         }
                         .frame(width: 36, height: 36)
                         .overlay(
@@ -3086,9 +3130,11 @@ struct TopBarView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(state.isLoopOnceActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
                                 .frame(width: 36, height: 36)
-                            Image(systemName: "repeat")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(state.isLoopOnceActive ? Color.cyan : Color.white.opacity(0.65))
+                            TablerIcon(
+                                name: "loop",
+                                size: 18,
+                                color: state.isLoopOnceActive ? Color.cyan : Color.white.opacity(0.65)
+                            )
                         }
                         .frame(width: 36, height: 36)
                         .overlay(
@@ -4471,16 +4517,18 @@ struct WaveformSectionBlock: View, Equatable {
                     
                     if width >= 44 {
                         Button(action: onLoopToggle) {
-                            Image(systemName: isLoopInfinite ? "infinity" : "repeat")
-                                .font(.system(size: isLoopInfinite ? 11 : 10, weight: .heavy))
-                                .foregroundColor(isLoopActive ? Color.black : Color.white.opacity(0.85))
-                                .padding(4)
-                                .background(isLoopActive ? Color.cyan : Color.black.opacity(0.55))
-                                .clipShape(Circle())
-                                .overlay(
-                                    Circle()
-                                        .stroke(isLoopActive ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
-                                )
+                            TablerIcon(
+                                name: isLoopInfinite ? "infinity-2" : "loop",
+                                size: isLoopInfinite ? 13 : 13,
+                                color: isLoopActive ? Color.black : Color.white.opacity(0.85)
+                            )
+                            .padding(4)
+                            .background(isLoopActive ? Color.cyan : Color.black.opacity(0.55))
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(isLoopActive ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
+                            )
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
