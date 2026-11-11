@@ -5599,7 +5599,7 @@ struct MetronomeModalView: View {
     }
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // 1. Header (Back/Close, Título, Botão Add/Update)
             HStack {
                 Button(action: {
@@ -5610,9 +5610,9 @@ struct MetronomeModalView: View {
                     }
                 }) {
                     Image(systemName: onBack != nil ? "chevron.left" : "xmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 26, height: 26)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Circle())
                 }
@@ -5621,7 +5621,7 @@ struct MetronomeModalView: View {
                 Spacer()
                 
                 Text(isEditing ? "Edit Metronome" : "Click / Metrônomo")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white)
                 
                 Spacer()
@@ -5629,14 +5629,14 @@ struct MetronomeModalView: View {
                 Button(action: handleAction) {
                     if isProcessing {
                         ProgressView()
-                            .scaleEffect(0.65)
-                            .frame(width: 58, height: 28)
+                            .scaleEffect(0.6)
+                            .frame(width: 52, height: 24)
                     } else {
                         Text(isEditing ? "Update" : "Add")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 5)
                             .background(Color(red: 0.0, green: 0.55, blue: 1.0))
                             .clipShape(Capsule())
                     }
@@ -5648,7 +5648,7 @@ struct MetronomeModalView: View {
             // 2. Linha Name
             HStack {
                 Text("Name")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                 
                 Spacer()
@@ -5658,39 +5658,41 @@ struct MetronomeModalView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
                     .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 220)
+                    .frame(maxWidth: 180)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .background(Color.white.opacity(0.05))
-            .cornerRadius(8)
+            .cornerRadius(7)
             
             // 3. Seção Click (WheelPickers lado a lado)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Click")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
                 
-                HStack(spacing: 24) {
+                HStack(spacing: 12) {
                     Spacer()
                     
                     WheelPicker(
                         selection: $bpm,
                         items: Array(40...260),
                         label: "Tempo",
-                        valueWidth: 48
+                        valueWidth: 44,
+                        labelWidth: 56
                     ) { "\($0)" }
                     
                     WheelPicker(
                         selection: $timeSigIndex,
                         items: Array(timeSignatures.indices),
                         label: "Time Sig",
-                        valueWidth: 42
+                        valueWidth: 38,
+                        labelWidth: 56
                     ) { timeSignatures[$0] }
                     
                     Spacer()
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 2)
             }
             
             if let err = errorMessage {
@@ -5700,8 +5702,8 @@ struct MetronomeModalView: View {
                     .lineLimit(2)
             }
         }
-        .padding(20)
-        .frame(width: 440, height: 335)
+        .padding(14)
+        .frame(width: 320, height: 270)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
