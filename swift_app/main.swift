@@ -3051,7 +3051,7 @@ struct TopBarView: View {
                                 .frame(width: 36, height: 36)
                             TablerIcon(
                                 name: "infinity-2",
-                                size: 24,
+                                size: 25,
                                 color: state.isInfiniteActive ? Color.cyan : Color.white.opacity(0.65)
                             )
                         }
@@ -3132,7 +3132,7 @@ struct TopBarView: View {
                                 .frame(width: 36, height: 36)
                             TablerIcon(
                                 name: "loop",
-                                size: 18,
+                                size: 20,
                                 color: state.isLoopOnceActive ? Color.cyan : Color.white.opacity(0.65)
                             )
                         }
@@ -4522,10 +4522,10 @@ struct WaveformSectionBlock: View, Equatable {
                             Button(action: onLoopToggle) {
                                 TablerIcon(
                                     name: isLoopInfinite ? "infinity-2" : "loop",
-                                    size: isLoopInfinite ? 20 : 15,
+                                    size: isLoopInfinite ? 26 : 20,
                                     color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
                                 )
-                                .frame(width: 22, height: 22)
+                                .frame(width: 26, height: 26)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -4556,10 +4556,10 @@ struct WaveformSectionBlock: View, Equatable {
                         Button(action: onLoopToggle) {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
-                                size: isLoopInfinite ? 22 : 16,
+                                size: isLoopInfinite ? 26 : 20,
                                 color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
                             )
-                            .frame(width: 22, height: 22)
+                            .frame(width: 26, height: 26)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(PlainButtonStyle())
