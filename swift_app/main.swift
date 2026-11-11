@@ -5352,7 +5352,7 @@ struct BottomMixerDock: View {
 // 9. COMPONENTES DE WHEEL PICKER 3D
 // ==========================================
 struct ScrollWheelHandler: NSViewRepresentable {
-    var onScroll: (CGFloat) -> Void
+    var onScroll: (CGFloat, Bool) -> Void
     var onEnd: () -> Void
 
     func makeNSView(context: Context) -> ScrollEventView {
@@ -5368,22 +5368,32 @@ struct ScrollWheelHandler: NSViewRepresentable {
     }
 
     class ScrollEventView: NSView {
-        var onScroll: ((CGFloat) -> Void)?
+        var onScroll: ((CGFloat, Bool) -> Void)?
         var onEnd: (() -> Void)?
         private var endTimer: Timer?
 
         override func scrollWheel(with event: NSEvent) {
-            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 8.0
-            onScroll?(delta)
+            let isPrecise = event.hasPreciseScrollingDeltas
+            if isPrecise {
+                // Trackpad / Magic Mouse: rolagem contínua fluida e ágil
+                let delta = event.scrollingDeltaY * 1.5
+                onScroll?(delta, true)
+            } else {
+                // Mouse tradicional com roda dentada (notches):
+                // Cada notch é uma intenção clara do usuário de avançar 1 item completo
+                let raw = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
+                let sign: CGFloat = raw > 0 ? 1.0 : -1.0
+                let notches = max(1.0, abs(raw).rounded())
+                onScroll?(sign * notches, false)
+            }
 
             endTimer?.invalidate()
             if event.momentumPhase == .ended {
                 // Fim da inércia do trackpad
                 onEnd?()
             } else {
-                // Roda de mouse, ou dedo levantado: se nenhum evento novo (inclusive de inércia)
-                // chegar em 150ms, considera que o gesto terminou.
-                endTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                // Roda de mouse ou fim do gesto: snap em 120ms
+                endTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
                     self?.onEnd?()
                 }
             }
@@ -5496,7 +5506,9 @@ struct WheelPicker<Item: Hashable>: View {
         .frame(width: totalWidth, height: viewportHeight)
         .background(
             ScrollWheelHandler(
-                onScroll: { delta in move(by: delta) },
+                onScroll: { delta, isContinuous in
+                    handleScroll(delta: delta, isContinuous: isContinuous)
+                },
                 onEnd: { snap() }
             )
         )
@@ -5568,7 +5580,31 @@ struct WheelPicker<Item: Hashable>: View {
 
     // MARK: - Movimento
 
-    /// `delta` em pontos, positivo = conteúdo descendo (dedo/rolagem para baixo).
+    /// Trata eventos da roda do mouse ou trackpad
+    private func handleScroll(delta: CGFloat, isContinuous: Bool) {
+        guard !items.isEmpty else { return }
+        if isContinuous {
+            // Movimento contínuo por pixel (Trackpad / Magic Mouse)
+            let next = position - (delta / stepHeight)
+            position = max(-0.4, min(CGFloat(items.count - 1) + 0.4, next))
+            syncSelection()
+        } else {
+            // Movimento discreto por notch de roda de mouse tradicional (1 notch = 1 item)
+            // delta > 0: rodou para cima -> diminuir valor (ex: 75 -> 74)
+            // delta < 0: rodou para baixo -> aumentar valor (ex: 75 -> 76)
+            let base = position.rounded()
+            let target = max(0, min(CGFloat(items.count - 1), base - delta))
+            withAnimation(.spring(response: 0.20, dampingFraction: 0.88)) {
+                position = target
+            }
+            let snapped = Int(target)
+            if items.indices.contains(snapped), selection != items[snapped] {
+                selection = items[snapped]
+            }
+        }
+    }
+
+    /// `delta` em pontos, positivo = conteúdo descendo (dedo/arraste para baixo via DragGesture).
     private func move(by delta: CGFloat) {
         guard !items.isEmpty else { return }
         let next = position - delta / stepHeight

@@ -53,8 +53,8 @@ def sync_tempo_to_ableton(bpm: float):
     except Exception as e:
         print(f"Erro ao enviar BPM para AbletonOSC: {e}")
 
-def sync_time_signature_to_ableton(time_sig: str):
-    """Envia a nova fórmula de compasso (numerador e denominador) para o Ableton Live via protocolo OSC."""
+def sync_time_signature_to_ableton(time_sig: str, insert_change: bool = True):
+    """Envia a nova fórmula de compasso (numerador e denominador) para o Ableton Live via protocolo OSC e opcionalmente insere um Time Signature Change na timeline."""
     if not time_sig:
         return
     try:
@@ -62,8 +62,48 @@ def sync_time_signature_to_ableton(time_sig: str):
         osc_client.send_message("/live/song/set/signature_numerator", int(num))
         osc_client.send_message("/live/song/set/signature_denominator", int(denom))
         print(f"🎵 AbletonOSC: Time Signature sincronizado para {num}/{denom}")
+        if insert_change:
+            trigger_ableton_time_signature_change()
     except Exception as e:
         print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
+
+def trigger_ableton_time_signature_change():
+    """Aciona a inserção de um marcador de Time Signature Change no Arrangement View do Ableton Live via AppleScript."""
+    def _run():
+        import time, subprocess
+        # Aguarda 50ms para que o Ableton aplique os novos valores de numerador/denominador recebidos via OSC
+        time.sleep(0.05)
+        apple_script = '''
+        tell application "System Events"
+            if exists (first process whose name contains "Live") then
+                tell (first process whose name contains "Live")
+                    try
+                        tell menu bar 1
+                            tell menu bar item "Create"
+                                tell menu 1
+                                    if exists (menu item "Insert Time Signature Change") then
+                                        if enabled of menu item "Insert Time Signature Change" then
+                                            click menu item "Insert Time Signature Change"
+                                        end if
+                                    end if
+                                end tell
+                            end tell
+                        end tell
+                    end try
+                end tell
+            end if
+        end tell
+        '''
+        try:
+            res = subprocess.run(["osascript", "-e", apple_script], capture_output=True, timeout=2.0)
+            if res.returncode == 0:
+                print("🎵 Ableton: 'Insert Time Signature Change' executado com sucesso no Arrangement")
+            else:
+                print(f"Ableton Time Sig Change stderr: {res.stderr.decode('utf-8', errors='ignore')}")
+        except Exception as e:
+            print(f"Erro ao disparar 'Insert Time Signature Change' via AppleScript: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 # Gerenciador de conexões WebSocket para sincronia Mac <-> Android
 class ConnectionManager:
@@ -379,7 +419,7 @@ def load_song(req: LoadSongRequest):
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
     if song.get("time_signature"):
-        sync_time_signature_to_ableton(song["time_signature"])
+        sync_time_signature_to_ableton(song["time_signature"], insert_change=False)
 
     # Se a música não tiver capa, busca automaticamente em segundo plano
     if not song.get("has_cover"):
