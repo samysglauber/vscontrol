@@ -5668,57 +5668,47 @@ struct MetronomeModalView: View {
             .background(Color.white.opacity(0.05))
             .cornerRadius(7)
             
-            // 3. Seção Click (WheelPickers lado a lado + Seletor de Subdivisão)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .center) {
-                    Text("Click")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white)
-                    
+            // 3. Seção Click (Seletor de Subdivisão centralizado + WheelPickers)
+            VStack(spacing: 4) {
+                HStack(alignment: .center, spacing: 6) {
                     Spacer()
                     
-                    HStack(spacing: 4) {
-                        Text("Subdivision:")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
-                        
-                        HStack(spacing: 2) {
-                            Button(action: { subdivide = false }) {
-                                Text("1/4")
-                                    .font(.system(size: 10, weight: !subdivide ? .bold : .medium))
-                                    .foregroundColor(!subdivide ? .white : .white.opacity(0.5))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(!subdivide ? Color.white.opacity(0.18) : Color.clear)
-                                    .clipShape(Capsule())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .help("Standard 1/4 click")
-                            
-                            Button(action: { subdivide = true }) {
-                                HStack(spacing: 2) {
-                                    Text("1/8")
-                                        .font(.system(size: 10, weight: subdivide ? .bold : .medium))
-                                    if subdivide {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 7, weight: .bold))
-                                    }
-                                }
-                                .foregroundColor(subdivide ? .white : .white.opacity(0.5))
-                                .padding(.horizontal, 7)
+                    Text("Subdivision:")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                    
+                    HStack(spacing: 2) {
+                        Button(action: { subdivide = false }) {
+                            Text("1/4")
+                                .font(.system(size: 11, weight: !subdivide ? .bold : .medium))
+                                .foregroundColor(!subdivide ? .white : .white.opacity(0.5))
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(subdivide ? Color(red: 0.0, green: 0.55, blue: 1.0) : Color.clear)
+                                .background(!subdivide ? Color.white.opacity(0.20) : Color.clear)
                                 .clipShape(Capsule())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .help("Duplicate click (1/8 notes)")
                         }
-                        .padding(2)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Capsule())
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Standard 1/4 click")
+                        
+                        Button(action: { subdivide = true }) {
+                            Text("1/8")
+                                .font(.system(size: 11, weight: subdivide ? .bold : .medium))
+                                .foregroundColor(subdivide ? .white : .white.opacity(0.5))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(subdivide ? Color.white.opacity(0.20) : Color.clear)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Duplicate click (1/8 notes)")
                     }
+                    .padding(2)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                    
+                    Spacer()
                 }
-                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
                 
                 HStack(spacing: 12) {
                     Spacer()
