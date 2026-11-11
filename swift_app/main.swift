@@ -5356,9 +5356,12 @@ struct ScrollWheelHandler: NSViewRepresentable {
             onScroll?(delta)
 
             endTimer?.invalidate()
-            if event.phase == .ended || event.momentumPhase == .ended {
+            if event.momentumPhase == .ended {
+                // Fim da inércia do trackpad
                 onEnd?()
             } else {
+                // Roda de mouse, ou dedo levantado: se nenhum evento novo (inclusive de inércia)
+                // chegar em 150ms, considera que o gesto terminou.
                 endTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
                     self?.onEnd?()
                 }
@@ -5371,78 +5374,62 @@ struct WheelPicker<Item: Hashable>: View {
     @Binding var selection: Item
     let items: [Item]
     let label: String
-    var valueWidth: CGFloat = 48
-    var labelWidth: CGFloat = 64
+    var valueWidth: CGFloat
+    var labelWidth: CGFloat
     let format: (Item) -> String
 
     private let viewportHeight: CGFloat = 190
     private let cylinderRadius: CGFloat = 105
-    private let stepAngleDegrees: CGFloat = 21.0
-    private let stepHeight: CGFloat = 34.0
-    private let centerRowHeight: CGFloat = 32.0
+    private let stepAngle: CGFloat = 21          // graus de cilindro por item
+    private let rowHeight: CGFloat = 32
 
-    @State private var dragOffset: CGFloat = 0
-    @State private var lastDragY: CGFloat = 0
-
+    // Pontos de arraste equivalentes a 1 item (bate com o deslocamento visual no centro)
+    private var stepHeight: CGFloat { cylinderRadius * stepAngle * .pi / 180 }
     private var totalWidth: CGFloat { valueWidth + labelWidth + 10 + 24 }
 
-    var body: some View {
-        let center = viewportHeight / 2
-        let curIdx = items.firstIndex(of: selection) ?? 0
+    /// Posição contínua na lista, em "índices" (ex.: 3.4 = entre o item 3 e o 4).
+    @State private var position: CGFloat
+    @State private var lastDragY: CGFloat = 0
 
+    init(
+        selection: Binding<Item>,
+        items: [Item],
+        label: String,
+        valueWidth: CGFloat = 48,
+        labelWidth: CGFloat = 64,
+        format: @escaping (Item) -> String
+    ) {
+        self._selection = selection
+        self.items = items
+        self.label = label
+        self.valueWidth = valueWidth
+        self.labelWidth = labelWidth
+        self.format = format
+        self._position = State(initialValue: CGFloat(items.firstIndex(of: selection.wrappedValue) ?? 0))
+    }
+
+    private var nearestIndex: Int {
+        guard !items.isEmpty else { return 0 }
+        return max(0, min(items.count - 1, Int(position.rounded())))
+    }
+
+    private var visibleIndices: [Int] {
+        guard !items.isEmpty else { return [] }
+        let c = nearestIndex
+        return Array(max(0, c - 4)...min(items.count - 1, c + 4))
+    }
+
+    var body: some View {
         ZStack {
-            // Faixa de destaque central espaçosa
+            // Faixa de destaque central
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
-                .frame(width: totalWidth, height: centerRowHeight)
+                .frame(width: totalWidth, height: rowHeight)
 
-            // Coluna cilíndrica 3D com curvatura real e espaçamento uniforme
-            GeometryReader { _ in
-                ZStack {
-                    ForEach(-3...3, id: \.self) { offsetIndex in
-                        let itemIndex = curIdx + offsetIndex
-                        if itemIndex >= 0 && itemIndex < items.count {
-                            let item = items[itemIndex]
-                            
-                            // Ângulo contínuo na superfície cilíndrica
-                            let effectiveStep = CGFloat(offsetIndex) - (dragOffset / stepHeight)
-                            let angleDeg = effectiveStep * stepAngleDegrees
-                            let angleRad = angleDeg * .pi / 180.0
-
-                            // Projeção vertical trigonométrica suave (sem sobreposição)
-                            let yPos = center + cylinderRadius * sin(angleRad)
-                            let cosVal = max(0.0, cos(angleRad))
-                            let isCenter = abs(angleDeg) < stepAngleDegrees * 0.5
-
-                            HStack(spacing: 10) {
-                                Text(format(item))
-                                    .font(.system(size: isCenter ? 17 : 15, weight: .regular).monospacedDigit())
-                                    .foregroundStyle(Color.white.opacity(0.65))
-                                    .frame(width: valueWidth, alignment: .trailing)
-
-                                Spacer()
-                                    .frame(width: labelWidth)
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .frame(height: centerRowHeight)
-                            .position(x: totalWidth / 2, y: yPos)
-                            .opacity(pow(cosVal, 1.8))
-                            .scaleEffect(0.80 + 0.20 * cosVal)
-                            .rotation3DEffect(
-                                .degrees(angleDeg),
-                                axis: (x: 1, y: 0, z: 0),
-                                perspective: 0.4
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                                    selection = item
-                                    dragOffset = 0
-                                }
-                            }
-                        }
-                    }
+            // Cilindro 3D
+            ZStack {
+                ForEach(visibleIndices, id: \.self) { idx in
+                    row(idx)
                 }
             }
             .frame(width: totalWidth, height: viewportHeight)
@@ -5461,11 +5448,9 @@ struct WheelPicker<Item: Hashable>: View {
                 )
             )
 
-            // Rótulo fixo (Tempo / Time Sig em negrito)
+            // Rótulo fixo
             HStack(spacing: 10) {
-                Color.clear
-                    .frame(width: valueWidth)
-
+                Color.clear.frame(width: valueWidth)
                 Text(label)
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
@@ -5477,81 +5462,97 @@ struct WheelPicker<Item: Hashable>: View {
         .frame(width: totalWidth, height: viewportHeight)
         .background(
             ScrollWheelHandler(
-                onScroll: { delta in
-                    applyContinuousDelta(delta)
-                },
-                onEnd: {
-                    snapToNearest()
-                }
+                onScroll: { delta in move(by: delta) },
+                onEnd: { snap() }
             )
         )
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 1)
-                .onChanged { gesture in
-                    let delta = gesture.translation.height - lastDragY
-                    lastDragY = gesture.translation.height
-                    applyContinuousDelta(delta)
+                .onChanged { g in
+                    let delta = g.translation.height - lastDragY
+                    lastDragY = g.translation.height
+                    move(by: delta)
                 }
-                .onEnded { gesture in
+                .onEnded { g in
                     lastDragY = 0
-                    let velocity = gesture.predictedEndTranslation.height - gesture.translation.height
-                    let extraSteps = Int(round(velocity / (stepHeight * 1.5)))
-                    if extraSteps != 0 {
-                        let cur = items.firstIndex(of: selection) ?? 0
-                        let targetIdx = max(0, min(items.count - 1, cur - extraSteps))
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                            selection = items[targetIdx]
-                            dragOffset = 0
-                        }
-                    } else {
-                        snapToNearest()
-                    }
+                    // Inércia simples: arrastar para baixo => números menores
+                    let velocity = g.predictedEndTranslation.height - g.translation.height
+                    let extra = Int((velocity / (stepHeight * 1.5)).rounded())
+                    snap(extraSteps: -extra)
                 }
         )
-    }
-
-    private func applyContinuousDelta(_ delta: CGFloat) {
-        var newOffset = dragOffset + delta
-        var cur = items.firstIndex(of: selection) ?? 0
-
-        while newOffset > stepHeight / 2 {
-            if cur > 0 {
-                cur -= 1
-                newOffset -= stepHeight
-            } else {
-                newOffset = min(newOffset, stepHeight * 0.4)
-                break
+        .onChange(of: selection) { _, new in
+            // Mudança externa do binding (ex.: carregar uma música para edição)
+            guard let i = items.firstIndex(of: new), i != nearestIndex else { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                position = CGFloat(i)
             }
         }
-
-        while newOffset < -stepHeight / 2 {
-            if cur < items.count - 1 {
-                cur += 1
-                newOffset += stepHeight
-            } else {
-                newOffset = max(newOffset, -stepHeight * 0.4)
-                break
-            }
-        }
-
-        selection = items[cur]
-        dragOffset = newOffset
     }
 
-    private func snapToNearest() {
-        var cur = items.firstIndex(of: selection) ?? 0
+    // MARK: - Linha do cilindro
 
-        if dragOffset > stepHeight * 0.25 && cur > 0 {
-            cur -= 1
-        } else if dragOffset < -stepHeight * 0.25 && cur < items.count - 1 {
-            cur += 1
-        }
+    private func row(_ idx: Int) -> some View {
+        // step < 0: acima do centro | 0: centro | > 0: abaixo do centro
+        let step = CGFloat(idx) - position
+        let angleDeg = step * stepAngle
+        let rad = angleDeg * .pi / 180
+        let cosVal = max(0, cos(rad))
+        let nearCenter = max(0, 1 - abs(step))
 
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-            selection = items[cur]
-            dragOffset = 0
+        return HStack(spacing: 10) {
+            Text(format(items[idx]))
+                .font(.system(size: 17, weight: .regular).monospacedDigit())
+                .foregroundStyle(Color.white.opacity(0.55 + 0.45 * nearCenter))
+                .frame(width: valueWidth, alignment: .trailing)
+
+            Color.clear.frame(width: labelWidth)
         }
+        .padding(.horizontal, 12)
+        .frame(width: totalWidth, height: rowHeight)
+        // IMPORTANTE: efeitos ANTES do offset, para girar/escalar em torno do centro da PRÓPRIA linha
+        .opacity(pow(cosVal, 1.8))
+        .scaleEffect(0.80 + 0.20 * cosVal)
+        .rotation3DEffect(
+            .degrees(-angleDeg),   // linhas abaixo: parte de baixo recua; acima: parte de cima recua
+            axis: (x: 1, y: 0, z: 0),
+            perspective: 0.4
+        )
+        .offset(y: cylinderRadius * sin(rad))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                position = CGFloat(idx)
+            }
+            syncSelection()
+        }
+    }
+
+    // MARK: - Movimento
+
+    /// `delta` em pontos, positivo = conteúdo descendo (dedo/rolagem para baixo).
+    private func move(by delta: CGFloat) {
+        guard !items.isEmpty else { return }
+        let next = position - delta / stepHeight
+        // Pequena folga nas pontas (efeito elástico), o snap traz de volta
+        position = max(-0.4, min(CGFloat(items.count - 1) + 0.4, next))
+        syncSelection()
+    }
+
+    private func snap(extraSteps: Int = 0) {
+        guard !items.isEmpty else { return }
+        let target = max(0, min(items.count - 1, Int(position.rounded()) + extraSteps))
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+            position = CGFloat(target)
+        }
+        syncSelection()
+    }
+
+    private func syncSelection() {
+        guard !items.isEmpty else { return }
+        let value = items[nearestIndex]
+        if value != selection { selection = value }
     }
 }
 
