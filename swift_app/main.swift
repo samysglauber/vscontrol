@@ -240,46 +240,53 @@ struct SongCoverView: View {
     let height: CGFloat
     let cornerRadius: CGFloat
     var isSelected: Bool = false
+    var isCountingIn: Bool = false
     var refreshId: Int = 0
     
     var body: some View {
-        ZStack {
-            if let img = CoverImageCache.shared.image(for: song) {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: width, height: height)
-                    .clipped()
-            } else if song.has_cover == true, let coverUrl = song.cover_url,
-                      let url = URL(string: "http://127.0.0.1:8080" + coverUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: width, height: height)
-                            .clipped()
-                    case .failure(_):
-                        fallbackGradient
-                    default:
-                        ZStack {
+        TimelineView(.periodic(from: .now, by: (isSelected && isCountingIn) ? 0.35 : 60.0)) { timeline in
+            let isDimmed = (isSelected && isCountingIn) ? (Int(timeline.date.timeIntervalSinceReferenceDate / 0.35) % 2 == 1) : false
+            let strokeColor = isSelected ? Color.white.opacity(isDimmed ? 0.20 : 1.0) : Color.white.opacity(0.12)
+            let shadowColor = isSelected ? Color.white.opacity(isDimmed ? 0.05 : 0.35) : Color.clear
+            
+            ZStack {
+                if let img = CoverImageCache.shared.image(for: song) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: width, height: height)
+                        .clipped()
+                } else if song.has_cover == true, let coverUrl = song.cover_url,
+                          let url = URL(string: "http://127.0.0.1:8080" + coverUrl) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: width, height: height)
+                                .clipped()
+                        case .failure(_):
                             fallbackGradient
-                            ProgressView().scaleEffect(0.6)
+                        default:
+                            ZStack {
+                                fallbackGradient
+                                ProgressView().scaleEffect(0.6)
+                            }
                         }
                     }
+                } else {
+                    fallbackGradient
                 }
-            } else {
-                fallbackGradient
             }
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(strokeColor, lineWidth: isSelected ? 2.5 : 1)
+            )
+            .shadow(color: shadowColor, radius: 8)
         }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: isSelected ? 2.5 : 1)
-        )
-        .shadow(color: isSelected ? Color.white.opacity(0.25) : Color.clear, radius: 8)
         .id("\(song.id)_\(refreshId)")
         .onAppear {
             if song.has_cover != true {
@@ -2073,6 +2080,56 @@ class PlaybackState: ObservableObject {
         }
     }
     
+    // Verifica se a música atual está na seção de "contagem" (Count-In)
+    var isCurrentSongCountingIn: Bool {
+        guard isPlaying, totalSeconds > 0 else { return false }
+        
+        // 1. Se o marcador atual for explicitamente "Count-In" ou similar
+        if currentCues.indices.contains(currentCueIdx) {
+            let cueName = currentCues[currentCueIdx].name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if cueName.contains("count") || cueName.contains("contagem") {
+                return true
+            }
+        }
+        
+        // 2. Se a música possui múltiplos marcadores e ainda não ultrapassou o início do bloco 1 (Intro/Verso)
+        if currentCues.count > 1 {
+            let nextSectionTime = currentCues[1].time
+            if nextSectionTime > 0.4 && currentSeconds < nextSectionTime {
+                return true
+            }
+        }
+        
+        // 3. Fallback: tempo de contagem estimado baseado em 2 compassos do BPM
+        let bpmVal = bpm > 30 ? bpm : 120.0
+        let parts = timeSignature.split(separator: "/")
+        let beatsPerBar = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let secPerBeat = 60.0 / bpmVal
+        let estimatedCountIn = max(2.0, min(8.0, secPerBeat * beatsPerBar * 2.0))
+        if currentSeconds < estimatedCountIn {
+            return true
+        }
+        
+        return false
+    }
+
+    // Troca de música imediata com Crossfade no Canal R e Contagem na hora no Canal L
+    func switchSetlistSongWithCrossfade(to targetItem: SetlistSong) {
+        guard !hasTriggeredCrossfade else { return }
+        
+        if currentSong?.id == targetItem.song.id {
+            restart()
+            return
+        }
+        
+        let countInDuration = calculateCountInDuration(for: targetItem)
+        let xfadeDuration = max(2.0, min(6.0, countInDuration))
+        
+        // Carrega a nova música e dispara imediatamente o crossfade:
+        // A nova música começa a contagem no Canal L, o click anterior para, e o VS faz crossfade no Canal R
+        loadSong(targetItem.song, cues: targetItem.cues, autoPlay: true, crossfade: true, crossfadeDuration: xfadeDuration)
+    }
+
     // Inicia a música correspondente do Setlist pelo índice (teclas 1 a 8)
     func playSetlistSong(at index: Int) {
         guard index >= 0 && index < setlist.count else { return }
@@ -2087,7 +2144,39 @@ class PlaybackState: ObservableObject {
                 sendAction("play")
             }
         } else {
-            loadSong(target, cues: targetItem.cues, autoPlay: true)
+            if isPlaying {
+                switchSetlistSongWithCrossfade(to: targetItem)
+            } else {
+                loadSong(target, cues: targetItem.cues, autoPlay: true)
+            }
+        }
+    }
+
+    func switchToNextSong() {
+        guard let current = currentSong,
+              let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }),
+              currentIndex + 1 < setlist.count else {
+            return
+        }
+        let nextItem = setlist[currentIndex + 1]
+        if isPlaying {
+            switchSetlistSongWithCrossfade(to: nextItem)
+        } else {
+            loadSong(nextItem.song, cues: nextItem.cues, autoPlay: false)
+        }
+    }
+
+    func switchToPreviousSong() {
+        guard let current = currentSong,
+              let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }),
+              currentIndex > 0 else {
+            return
+        }
+        let prevItem = setlist[currentIndex - 1]
+        if isPlaying {
+            switchSetlistSongWithCrossfade(to: prevItem)
+        } else {
+            loadSong(prevItem.song, cues: prevItem.cues, autoPlay: false)
         }
     }
     
@@ -2571,6 +2660,17 @@ struct PlaybackAppView: View {
                     return nil
                 }
                 
+                // Navegação pelas Músicas do Setlist com as Setas do Teclado (Cima = Anterior / Baixo = Próxima)
+                if event.keyCode == 126 { // Seta para Cima (↑)
+                    state.switchToPreviousSong()
+                    return nil
+                }
+                
+                if event.keyCode == 125 { // Seta para Baixo (↓)
+                    state.switchToNextSong()
+                    return nil
+                }
+                
                 // Tecla Enter / Return: Alterna a seleção do bloco (Laranja <-> Branco)
                 if event.keyCode == 36 || event.keyCode == 76 { // 36 = Return, 76 = Enter (Keypad)
                     let targetIdxOpt = state.focusedCueIdx ?? state.queuedCueIdx
@@ -2995,6 +3095,8 @@ struct TopBarView: View {
 // ==========================================
 struct SetlistCarouselView: View {
     @ObservedObject var state: PlaybackState
+    @State private var lastClickedSongId: String? = nil
+    @State private var lastClickTime: Date = .distantPast
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -3002,13 +3104,31 @@ struct SetlistCarouselView: View {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
                         let isSelected = state.currentSong?.id == item.song.id
+                        let isCountingIn = isSelected && state.isCurrentSongCountingIn
                         
                         VStack(alignment: .leading, spacing: 6) {
                             ZStack(alignment: .topTrailing) {
                                 // Card da Música com Capa do Álbum
                                 Button(action: {
                                     if !state.isEditMode {
-                                        state.loadSong(item.song, cues: item.cues)
+                                        let now = Date()
+                                        let isDoubleClick = (lastClickedSongId == item.song.id && now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval)
+                                        lastClickedSongId = item.song.id
+                                        lastClickTime = now
+                                        
+                                        if state.isPlaying {
+                                            if isDoubleClick {
+                                                // Duplo clique enquanto toca: troca imediata com crossfade e contagem
+                                                state.switchSetlistSongWithCrossfade(to: item)
+                                            }
+                                            // Com 1 clique enquanto já tiver uma música tocando: NÃO ACONTECE NADA!
+                                        } else {
+                                            if isDoubleClick {
+                                                state.loadSong(item.song, cues: item.cues, autoPlay: true)
+                                            } else {
+                                                state.loadSong(item.song, cues: item.cues, autoPlay: false)
+                                            }
+                                        }
                                     }
                                 }) {
                                     SongCoverView(
@@ -3017,6 +3137,7 @@ struct SetlistCarouselView: View {
                                         height: 88,
                                         cornerRadius: 10,
                                         isSelected: isSelected,
+                                        isCountingIn: isCountingIn,
                                         refreshId: state.coverRefreshTrigger
                                     )
                                 }
@@ -3084,9 +3205,9 @@ struct SetlistCarouselView: View {
                             // Info da Música Embaixo (Apenas o Nome da Música)
                             HStack(alignment: .center, spacing: 4) {
                                 if isSelected {
-                                    Image(systemName: "play.fill")
+                                    Image(systemName: isCountingIn ? "hourglass" : "play.fill")
                                         .font(.system(size: 8, weight: .bold))
-                                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
+                                        .foregroundColor(isCountingIn ? Color.yellow : Color(red: 0.2, green: 0.9, blue: 0.5))
                                 }
                                 
                                 Text(item.song.name)

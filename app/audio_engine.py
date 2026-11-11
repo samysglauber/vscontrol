@@ -269,7 +269,7 @@ class LiveAudioEngine:
                     self.outgoing_audio = self.audio_data[start_frame:end_frame].copy()
                     self.outgoing_pos = 0
                     self.outgoing_total_frames = len(self.outgoing_audio)
-                    self.incoming_xfade_frames = self.outgoing_total_frames
+                    self.incoming_xfade_frames = max(self.outgoing_total_frames, rem_frames)
                     self.incoming_xfade_pos = 0
                 else:
                     self.outgoing_audio = None
