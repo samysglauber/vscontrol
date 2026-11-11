@@ -3205,9 +3205,9 @@ struct SetlistCarouselView: View {
                             // Info da Música Embaixo (Apenas o Nome da Música)
                             HStack(alignment: .center, spacing: 4) {
                                 if isSelected {
-                                    Image(systemName: isCountingIn ? "hourglass" : "play.fill")
+                                    Image(systemName: "play.fill")
                                         .font(.system(size: 8, weight: .bold))
-                                        .foregroundColor(isCountingIn ? Color.yellow : Color(red: 0.2, green: 0.9, blue: 0.5))
+                                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
                                 }
                                 
                                 Text(item.song.name)
