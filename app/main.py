@@ -8,6 +8,9 @@ import io
 import base64
 import socket
 import asyncio
+import time
+import threading
+import subprocess
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, Response, FileResponse
@@ -70,7 +73,6 @@ def sync_time_signature_to_ableton(time_sig: str, insert_change: bool = True):
 def trigger_ableton_time_signature_change():
     """Aciona a inserção de um marcador de Time Signature Change no Arrangement View do Ableton Live via AppleScript."""
     def _run():
-        import time, subprocess
         # Aguarda 50ms para que o Ableton aplique os novos valores de numerador/denominador recebidos via OSC
         time.sleep(0.05)
         apple_script = '''
@@ -423,7 +425,6 @@ def load_song(req: LoadSongRequest):
 
     # Se a música não tiver capa, busca automaticamente em segundo plano
     if not song.get("has_cover"):
-        import threading
         threading.Thread(target=library.auto_fetch_cover, args=(req.song_id,), daemon=True).start()
 
     return {"status": "loaded", "song": song, "bpm_synced": bool(song.get("bpm"))}
@@ -479,7 +480,6 @@ def quit_backend():
     def _do_exit():
         time.sleep(0.08)
         os._exit(0)
-    import threading
     threading.Thread(target=_do_exit, daemon=True).start()
     return {"status": "ok"}
 

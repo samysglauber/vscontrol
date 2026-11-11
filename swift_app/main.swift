@@ -5371,29 +5371,32 @@ struct ScrollWheelHandler: NSViewRepresentable {
         var onScroll: ((CGFloat, Bool) -> Void)?
         var onEnd: (() -> Void)?
         private var endTimer: Timer?
+        private var mouseAccum: CGFloat = 0
 
         override func scrollWheel(with event: NSEvent) {
             let isPrecise = event.hasPreciseScrollingDeltas
             if isPrecise {
-                // Trackpad / Magic Mouse: rolagem contínua fluida e ágil
+                // Trackpad / Magic Mouse: rolagem contínua fluida
                 let delta = event.scrollingDeltaY * 1.5
                 onScroll?(delta, true)
             } else {
-                // Mouse tradicional com roda dentada (notches):
-                // Cada notch é uma intenção clara do usuário de avançar 1 item completo
-                let raw = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
-                let sign: CGFloat = raw > 0 ? 1.0 : -1.0
-                let notches = max(1.0, abs(raw).rounded())
-                onScroll?(sign * notches, false)
+                // Mouse com roda dentada: acumula os micro-deltas até cruzar o limiar de 1 notch
+                mouseAccum += event.scrollingDeltaY
+                let threshold: CGFloat = 1.0
+                while abs(mouseAccum) >= threshold {
+                    let step: CGFloat = mouseAccum > 0 ? 1.0 : -1.0
+                    onScroll?(step, false)
+                    mouseAccum -= step * threshold
+                }
             }
 
             endTimer?.invalidate()
             if event.momentumPhase == .ended {
-                // Fim da inércia do trackpad
                 onEnd?()
+                mouseAccum = 0
             } else {
-                // Roda de mouse ou fim do gesto: snap em 120ms
-                endTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
+                endTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                    self?.mouseAccum = 0
                     self?.onEnd?()
                 }
             }
@@ -5590,16 +5593,14 @@ struct WheelPicker<Item: Hashable>: View {
             syncSelection()
         } else {
             // Movimento discreto por notch de roda de mouse tradicional (1 notch = 1 item)
-            // delta > 0: rodou para cima -> diminuir valor (ex: 75 -> 74)
-            // delta < 0: rodou para baixo -> aumentar valor (ex: 75 -> 76)
-            let base = position.rounded()
-            let target = max(0, min(CGFloat(items.count - 1), base - delta))
-            withAnimation(.spring(response: 0.20, dampingFraction: 0.88)) {
-                position = target
-            }
-            let snapped = Int(target)
-            if items.indices.contains(snapped), selection != items[snapped] {
-                selection = items[snapped]
+            // delta > 0: rodou para cima -> índice menor (valor menor)
+            // delta < 0: rodou para baixo -> índice maior (valor maior)
+            let cur = nearestIndex
+            let steps = Int(delta.rounded())
+            let target = max(0, min(items.count - 1, cur - steps))
+            position = CGFloat(target)
+            if selection != items[target] {
+                selection = items[target]
             }
         }
     }
