@@ -56,23 +56,108 @@ def sync_tempo_to_ableton(bpm: float):
     except Exception as e:
         print(f"Erro ao enviar BPM para AbletonOSC: {e}")
 
+# ---------------------------------------------------------------------------
+# Leitura de respostas do AbletonOSC (porta 11001) para saber a posição do playhead
+# ---------------------------------------------------------------------------
+_osc_waiters: dict = {}
+_pending_markers: list[dict] = []   # trocas de compasso detectadas durante a gravação/reprodução
+_markers_lock = threading.Lock()
+
+def _osc_reply_handler(address, *args):
+    w = _osc_waiters.get(address)
+    if w is not None:
+        w["value"] = args
+        w["event"].set()
+
+def start_osc_listener():
+    try:
+        from pythonosc.dispatcher import Dispatcher
+        from pythonosc.osc_server import ThreadingOSCUDPServer
+        disp = Dispatcher()
+        disp.set_default_handler(_osc_reply_handler)
+        server = ThreadingOSCUDPServer(("127.0.0.1", 11001), disp)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print("🎵 Ouvindo respostas do AbletonOSC em 127.0.0.1:11001")
+    except Exception as e:
+        print(f"⚠️ Não consegui abrir a porta 11001 para ler o playhead do Ableton: {e}")
+
+def osc_query(address: str, timeout: float = 0.4):
+    w = {"event": threading.Event(), "value": None}
+    _osc_waiters[address] = w
+    try:
+        osc_client.send_message(address, [])
+        return w["value"] if w["event"].wait(timeout) else None
+    finally:
+        _osc_waiters.pop(address, None)
+
+def ableton_is_playing() -> bool:
+    r = osc_query("/live/song/get/is_playing")
+    return bool(r and r[0])
+
+def ableton_song_time():
+    r = osc_query("/live/song/get/current_song_time")
+    return float(r[0]) if r else None
+
 ABLETON_ACTIVATE_LIVE = os.environ.get("ABLETON_ACTIVATE_LIVE", "0") == "1"  # traz o Live p/ frente antes de clicar no menu (rouba o foco!)
 _ts_lock = threading.Lock()
 _last_ts_insert = {"sig": None, "t": 0.0}
 
 def sync_time_signature_to_ableton(time_sig: str, insert_change: bool = True):
-    """Envia a fórmula de compasso ao Live via OSC e, opcionalmente, insere um Time Signature Change no Arrangement."""
+    """Sincroniza o compasso com o Live (em thread, sem travar a requisição).
+    - Live PARADO: define o compasso via OSC e insere o marcador no insert marker (comportamento anterior).
+    - Live TOCANDO/GRAVANDO: NÃO mexe no compasso global (isso editaria o 1º marcador) e apenas anota
+      a posição atual do playhead; os marcadores são criados depois em /api/ableton/apply_markers."""
     if not time_sig:
         return
-    try:
-        num, denom = parse_time_signature(time_sig)
-        osc_client.send_message("/live/song/set/signature_numerator", int(num))
-        osc_client.send_message("/live/song/set/signature_denominator", int(denom))
-        print(f"🎵 AbletonOSC: Time Signature sincronizado para {num}/{denom}")
-        if insert_change:
-            trigger_ableton_time_signature_change(f"{num}/{denom}")
-    except Exception as e:
-        print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
+    def _worker():
+        try:
+            num, denom = parse_time_signature(time_sig)
+            sig = f"{num}/{denom}"
+            if ableton_is_playing():
+                if insert_change:
+                    beat = ableton_song_time()
+                    if beat is not None:
+                        with _markers_lock:
+                            last = _pending_markers[-1] if _pending_markers else None
+                            if last and last["sig"] == sig and abs(last["beat"] - beat) < 2.0:
+                                return  # chamada duplicada (/api/load + /api/sync_ableton)
+                            _pending_markers.append({"beat": beat, "sig": sig})
+                        print(f"📝 Ableton gravando: troca para {sig} anotada no beat {beat:.2f} (aplicar ao parar)")
+                return
+            osc_client.send_message("/live/song/set/signature_numerator", int(num))
+            osc_client.send_message("/live/song/set/signature_denominator", int(denom))
+            print(f"🎵 AbletonOSC: Time Signature sincronizado para {sig}")
+            if insert_change:
+                trigger_ableton_time_signature_change(sig)
+        except Exception as e:
+            print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+
+def apply_pending_markers() -> dict:
+    """Com o Live parado, percorre as trocas anotadas: posiciona o insert marker no ponto exato,
+    insere o Time Signature Change e só então define numerador/denominador (editando o marcador novo)."""
+    with _markers_lock:
+        items = sorted(_pending_markers, key=lambda m: m["beat"])
+    if not items:
+        return {"applied": 0, "results": [], "note": "nenhuma troca anotada"}
+    osc_client.send_message("/live/song/stop_playing", [])
+    time.sleep(0.4)
+    results = []
+    with _ts_lock:
+        for m in items:
+            num, denom = parse_time_signature(m["sig"])
+            osc_client.send_message("/live/song/set/current_song_time", float(m["beat"]))
+            time.sleep(0.35)
+            r = insert_ableton_time_signature_change_blocking()
+            time.sleep(0.3)
+            osc_client.send_message("/live/song/set/signature_numerator", int(num))
+            osc_client.send_message("/live/song/set/signature_denominator", int(denom))
+            time.sleep(0.3)
+            results.append({**m, "ok": r["ok"], "reason": r["reason"]})
+    ok_ids = {id(m) for m, r in zip(items, results) if r["ok"]}
+    with _markers_lock:
+        _pending_markers[:] = [m for m in _pending_markers if id(m) not in ok_ids]  # mantém as que falharam
+    return {"applied": len(ok_ids), "results": results}
 
 def _build_insert_ts_script() -> str:
     activate = "set frontmost of liveProc to true\n        delay 0.15" if ABLETON_ACTIVATE_LIVE else ""
@@ -183,6 +268,7 @@ engine.event_listener = on_engine_event
 async def startup_event():
     global main_loop
     main_loop = asyncio.get_running_loop()
+    start_osc_listener()
     asyncio.create_task(status_broadcaster())
 
 async def status_broadcaster():
@@ -765,6 +851,23 @@ def api_sync_ableton(req: AbletonSyncRequest):
     if req.time_signature:
         sync_time_signature_to_ableton(req.time_signature)
     return {"status": "ok", "bpm": req.bpm, "time_signature": req.time_signature}
+
+@app.get("/api/ableton/markers")
+def api_ableton_markers():
+    """Lista as trocas de compasso anotadas durante a gravação."""
+    with _markers_lock:
+        return {"pending": list(_pending_markers)}
+
+@app.post("/api/ableton/clear_markers")
+def api_ableton_clear_markers():
+    with _markers_lock:
+        _pending_markers.clear()
+    return {"status": "ok"}
+
+@app.post("/api/ableton/apply_markers")
+def api_ableton_apply_markers():
+    """Chame DEPOIS de parar a gravação: cria os marcadores nos pontos exatos."""
+    return apply_pending_markers()
 
 @app.post("/api/ableton/test_marker")
 def api_ableton_test_marker():

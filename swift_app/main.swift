@@ -658,6 +658,9 @@ class PlaybackState: ObservableObject {
     @Published var isFadedOut: Bool = false
     @Published var isFadingIn: Bool = false
     @Published var abletonSynced: Bool = false
+    @Published var pendingMarkerCount: Int = 0
+    @Published var isApplyingMarkers: Bool = false
+    @Published var markerStatusMessage: String? = nil
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
     @Published var zoomLevel: Double = 0.35 {
@@ -2726,6 +2729,61 @@ class PlaybackState: ObservableObject {
         }
     }
     
+    // MARK: - Marcadores de Time Signature no Ableton
+
+    /// Consulta quantas trocas de compasso foram anotadas durante a gravação.
+    func refreshPendingMarkers() {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/ableton/markers") else { return }
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let pending = json["pending"] as? [[String: Any]] else { return }
+            DispatchQueue.main.async {
+                if self?.pendingMarkerCount != pending.count { self?.pendingMarkerCount = pending.count }
+            }
+        }.resume()
+    }
+
+    /// Cria no Ableton os marcadores anotados (rodar DEPOIS de parar a gravação).
+    func applyAbletonMarkers() {
+        guard !isApplyingMarkers, pendingMarkerCount > 0,
+              let url = URL(string: "http://127.0.0.1:8080/api/ableton/apply_markers") else { return }
+        isApplyingMarkers = true
+        markerStatusMessage = "Aplicando marcadores no Ableton…"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 180
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isApplyingMarkers = false
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let applied = json["applied"] as? Int {
+                    let results = json["results"] as? [[String: Any]] ?? []
+                    let total = results.isEmpty ? applied : results.count
+                    if applied == total {
+                        self.markerStatusMessage = "\(applied) marcador(es) criado(s) no Ableton"
+                    } else {
+                        let reason = results.first(where: { ($0["ok"] as? Bool) == false })?["reason"] as? String ?? ""
+                        self.markerStatusMessage = "\(applied) de \(total) criados. Falha: \(reason)"
+                    }
+                } else {
+                    self.markerStatusMessage = "Falha ao aplicar marcadores\(error.map { ": \($0.localizedDescription)" } ?? "")"
+                }
+                self.refreshPendingMarkers()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self.markerStatusMessage = nil }
+            }
+        }.resume()
+    }
+
+    func clearPendingMarkers() {
+        sendAction("ableton/clear_markers")
+        pendingMarkerCount = 0
+    }
+
     private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/\(endpoint)") else { return }
         var req = URLRequest(url: url)
@@ -3106,6 +3164,56 @@ struct TablerIcon: View {
     }
 }
 
+struct AbletonMarkersButton: View {
+    @ObservedObject var state: PlaybackState
+    private let poll = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
+
+    private var hasPending: Bool { state.pendingMarkerCount > 0 }
+
+    var body: some View {
+        Button(action: { state.applyAbletonMarkers() }) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(hasPending ? Color.orange.opacity(0.25) : Color.white.opacity(0.06))
+                    .frame(width: 36, height: 36)
+                if state.isApplyingMarkers {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                } else {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(hasPending ? Color.orange : Color.white.opacity(0.45))
+                }
+            }
+            .frame(width: 36, height: 36)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(hasPending ? Color.orange.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .overlay(alignment: .topTrailing) {
+                if hasPending {
+                    Text("\(state.pendingMarkerCount)")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 4)
+                        .background(Capsule().fill(Color.orange))
+                        .offset(x: 5, y: -5)
+                }
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!hasPending || state.isApplyingMarkers)
+        .help(state.markerStatusMessage ?? (hasPending
+              ? "Pare a gravação no Ableton e clique para criar \(state.pendingMarkerCount) marcador(es) de Time Signature nos pontos exatos"
+              : "Nenhuma troca de compasso anotada (as trocas são anotadas enquanto o Ableton está tocando/gravando)"))
+        .contextMenu {
+            Button("Descartar marcadores anotados") { state.clearPendingMarkers() }
+                .disabled(!hasPending)
+        }
+        .onReceive(poll) { _ in state.refreshPendingMarkers() }
+        .onAppear { state.refreshPendingMarkers() }
+    }
+}
+
 struct TopBarView: View {
     @ObservedObject var state: PlaybackState
     
@@ -3256,6 +3364,9 @@ struct TopBarView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help("Connect smartphone remote control via QR Code")
+
+                        // Botão: cria no Ableton os marcadores de Time Signature anotados durante a gravação
+                        AbletonMarkersButton(state: state)
                     }
                 }
                 
