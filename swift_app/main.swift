@@ -5378,9 +5378,9 @@ struct WheelPicker<Item: Hashable>: View {
     var labelWidth: CGFloat
     let format: (Item) -> String
 
-    private let viewportHeight: CGFloat = 136
-    private let cylinderRadius: CGFloat = 70
-    private let stepAngle: CGFloat = 18.5        // graus de cilindro por item
+    private let viewportHeight: CGFloat = 110
+    private let cylinderRadius: CGFloat = 40
+    private let stepAngle: CGFloat = 34          // graus de cilindro por item
     private let rowHeight: CGFloat = 26
 
     // Pontos de arraste equivalentes a 1 item (bate com o deslocamento visual no centro)
@@ -5697,7 +5697,7 @@ struct MetronomeModalView: View {
             }
         }
         .padding(20)
-        .frame(width: 440, height: 340)
+        .frame(width: 440, height: 310)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
