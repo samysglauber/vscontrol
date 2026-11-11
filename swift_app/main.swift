@@ -1719,6 +1719,7 @@ class PlaybackState: ObservableObject {
                     self.currentSong = updatedSong
                     self.bpm = updatedSong.bpm ?? bpm
                     self.timeSignature = updatedSong.time_signature ?? timeSignature
+                    self.syncAbleton(bpm: self.bpm, timeSignature: self.timeSignature)
                     if let cs = updatedSong.cues { self.currentCues = cs }
                 }
                 
@@ -1726,6 +1727,18 @@ class PlaybackState: ObservableObject {
                 completion(.success(updatedSong))
             }
         }.resume()
+    }
+    
+    func syncAbleton(bpm: Double? = nil, timeSignature: String? = nil) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/sync_ableton") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var payload: [String: Any] = [:]
+        if let b = bpm { payload["bpm"] = b }
+        if let ts = timeSignature { payload["time_signature"] = ts }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        URLSession.shared.dataTask(with: req).resume()
     }
     
     func fetchDevices(retryCount: Int = 0) {
@@ -1829,6 +1842,7 @@ class PlaybackState: ObservableObject {
         if let d = cached {
             self.bpm = d.bpm
             self.timeSignature = d.timeSignature
+            self.syncAbleton(bpm: d.bpm, timeSignature: d.timeSignature)
             if d.totalSeconds > 0 {
                 self.totalSeconds = d.totalSeconds
             }
@@ -1837,6 +1851,7 @@ class PlaybackState: ObservableObject {
         } else {
             if let b = song.bpm { self.bpm = b }
             if let ts = song.time_signature { self.timeSignature = ts }
+            self.syncAbleton(bpm: song.bpm, timeSignature: song.time_signature)
             if let dur = song.total_duration, dur > 0 { self.totalSeconds = dur }
             if let wf = song.full_waveform { self.fullWaveform = wf }
             if let cs = cues ?? song.cues { self.currentCues = cs }
@@ -2135,6 +2150,7 @@ class PlaybackState: ObservableObject {
         self.bpm = bpm
         self.timeSignature = timeSignature
         self.currentCues = cues
+        self.syncAbleton(bpm: bpm, timeSignature: timeSignature)
         
         // 1. Salva imediatamente em UserDefaults local para garantir persistência contínua
         let encoder = JSONEncoder()
@@ -5525,7 +5541,7 @@ struct WheelPicker<Item: Hashable>: View {
         return HStack(spacing: 10) {
             Text(format(items[idx]))
                 .font(.system(size: 16, weight: .regular).monospacedDigit())
-                .foregroundStyle(isHighlight ? Color.white : Color.white.opacity(bgOpacity))
+                .foregroundStyle(isHighlight ? Color.white.opacity(0.70) : Color.white.opacity(bgOpacity))
                 .frame(width: valueWidth, alignment: .trailing)
 
             Color.clear.frame(width: labelWidth)

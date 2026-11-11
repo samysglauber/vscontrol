@@ -34,8 +34,15 @@ async def add_no_cache_header(request, call_next):
 engine = LiveAudioEngine()
 library = SongLibrary()
 
-# Cliente OSC para sincronização automática de BPM com o Ableton Live
+# Cliente OSC para sincronização automática de BPM e Time Signature com o Ableton Live
 osc_client = udp_client.SimpleUDPClient("127.0.0.1", 11000)
+
+def parse_time_signature(ts_str: str) -> tuple[int, int]:
+    try:
+        parts = str(ts_str).strip().split("/")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return (4, 4)
 
 def sync_tempo_to_ableton(bpm: float):
     """Envia o novo BPM para o Ableton Live via protocolo OSC."""
@@ -45,6 +52,18 @@ def sync_tempo_to_ableton(bpm: float):
         osc_client.send_message("/live/song/set/tempo", float(bpm))
     except Exception as e:
         print(f"Erro ao enviar BPM para AbletonOSC: {e}")
+
+def sync_time_signature_to_ableton(time_sig: str):
+    """Envia a nova fórmula de compasso (numerador e denominador) para o Ableton Live via protocolo OSC."""
+    if not time_sig:
+        return
+    try:
+        num, denom = parse_time_signature(time_sig)
+        osc_client.send_message("/live/song/set/signature_numerator", int(num))
+        osc_client.send_message("/live/song/set/signature_denominator", int(denom))
+        print(f"🎵 AbletonOSC: Time Signature sincronizado para {num}/{denom}")
+    except Exception as e:
+        print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
 
 # Gerenciador de conexões WebSocket para sincronia Mac <-> Android
 class ConnectionManager:
@@ -356,9 +375,11 @@ def load_song(req: LoadSongRequest):
             cached["cues"] = song.get("cues", [])
         atomic_save_json(cache_path, cached, backup=True)
 
-    # Sincroniza o BPM automaticamente no Ableton Live
+    # Sincroniza o BPM e Time Signature automaticamente no Ableton Live
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
+    if song.get("time_signature"):
+        sync_time_signature_to_ableton(song["time_signature"])
 
     # Se a música não tiver capa, busca automaticamente em segundo plano
     if not song.get("has_cover"):
@@ -552,6 +573,8 @@ def save_cues(req: SaveCuesRequest):
             engine.bpm = req.bpm
             sync_tempo_to_ableton(req.bpm)
         engine.time_signature = ts
+        if req.time_signature or song.get("time_signature"):
+            sync_time_signature_to_ableton(req.time_signature or song.get("time_signature"))
         engine.cues = song["cues"]
     return {"success": success, "song": song}
 
@@ -578,6 +601,8 @@ def reprocess_song(req: ReprocessRequest):
     song["total_duration"] = tot_dur
     if song.get("bpm"):
         sync_tempo_to_ableton(song["bpm"])
+    if song.get("time_signature"):
+        sync_time_signature_to_ableton(song["time_signature"])
         
     return {"status": "reprocessed", "song": song}
 
@@ -652,12 +677,26 @@ def api_update_metronome(req: MetronomeUpdateRequest):
             )
             if song.get("bpm"):
                 sync_tempo_to_ableton(song["bpm"])
+            if song.get("time_signature"):
+                sync_time_signature_to_ableton(song["time_signature"])
 
         return {"status": "success", "song": song}
     except Exception as e:
         import traceback
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+class AbletonSyncRequest(BaseModel):
+    bpm: float | None = None
+    time_signature: str | None = None
+
+@app.post("/api/sync_ableton")
+def api_sync_ableton(req: AbletonSyncRequest):
+    if req.bpm:
+        sync_tempo_to_ableton(req.bpm)
+    if req.time_signature:
+        sync_time_signature_to_ableton(req.time_signature)
+    return {"status": "ok", "bpm": req.bpm, "time_signature": req.time_signature}
 
 # ==========================
 # WebSocket para baixa latência (Mac <-> Android)
