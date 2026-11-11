@@ -613,7 +613,11 @@ class PlaybackState: ObservableObject {
     @Published var queuedCueIdx: Int? = nil
     @Published var focusedCueIdx: Int? = nil
     @Published var loopActive: Bool = false
+    @Published var loopInfinite: Bool = false
     @Published var loopCueIdx: Int? = nil
+    
+    var isLoopOnceActive: Bool { loopActive && !loopInfinite }
+    var isInfiniteActive: Bool { loopActive && loopInfinite }
     @Published var padActive: Bool = false
     @Published var padKey: String = "D"
     
@@ -816,6 +820,7 @@ class PlaybackState: ObservableObject {
                 let newQueued = eventData["queued_cue_idx"] as? Int
                 if self.queuedCueIdx != newQueued { self.queuedCueIdx = newQueued }
                 if let loop = eventData["loop_active"] as? Bool, self.loopActive != loop { self.loopActive = loop }
+                if let inf = eventData["loop_infinite"] as? Bool, self.loopInfinite != inf { self.loopInfinite = inf }
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
                 if let pad = eventData["pad_active"] as? Bool, self.padActive != pad { self.padActive = pad }
@@ -863,6 +868,7 @@ class PlaybackState: ObservableObject {
                 self.queuedCueIdx = nil
             } else if event == "loop_state" {
                 if let loop = eventData["loop_active"] as? Bool { self.loopActive = loop }
+                if let inf = eventData["loop_infinite"] as? Bool { self.loopInfinite = inf }
                 if let lIdx = eventData["loop_cue_idx"] as? Int { self.loopCueIdx = lIdx } else { self.loopCueIdx = nil }
             } else if event == "device_changed" {
                 if let devId = eventData["output_device_id"] as? Int {
@@ -2220,7 +2226,15 @@ class PlaybackState: ObservableObject {
     }
     
     func toggleLoop(cueIdx: Int? = nil) {
-        var body: [String: Any] = [:]
+        var body: [String: Any] = ["mode": "once", "infinite": false]
+        if let idx = cueIdx {
+            body["cue_idx"] = idx
+        }
+        sendAction("toggle_loop", body: body)
+    }
+    
+    func toggleInfinite(cueIdx: Int? = nil) {
+        var body: [String: Any] = ["mode": "infinite", "infinite": true]
         if let idx = cueIdx {
             body["cue_idx"] = idx
         }
@@ -2720,12 +2734,22 @@ struct PlaybackAppView: View {
                 if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
                     let char = event.charactersIgnoringModifiers ?? ""
                     
-                    // Tecla L: Alterna o modo Loop da seção focada ou da seção atual
+                    // Tecla L: Alterna o modo Loop 1x da seção focada ou da seção atual
                     if char.lowercased() == "l" || event.keyCode == 37 {
                         if let focusedIdx = state.focusedCueIdx {
                             state.toggleLoop(cueIdx: focusedIdx)
                         } else {
                             state.toggleLoop()
+                        }
+                        return nil
+                    }
+                    
+                    // Tecla I: Alterna o modo Infinito (repetição sem parar) da seção focada ou da seção atual
+                    if char.lowercased() == "i" || event.keyCode == 34 {
+                        if let focusedIdx = state.focusedCueIdx {
+                            state.toggleInfinite(cueIdx: focusedIdx)
+                        } else {
+                            state.toggleInfinite()
                         }
                         return nil
                     }
@@ -2977,24 +3001,24 @@ struct TopBarView: View {
                 
                 // Camada 2: 5 Botões de Transporte Perfeitamente Centralizados na Janela
                 HStack(spacing: 10) {
-                    // 1. Botão AUTO (Auto-Advance do Setlist) - colocado à esquerda do botão retroceder
-                    Button(action: { state.autoAdvance.toggle() }) {
+                    // 1. Botão INFINITO (Repetição Sem Parar da Seção Atual) [Atalho: I]
+                    Button(action: { state.toggleInfinite() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.22) : Color.white.opacity(0.06))
+                                .fill(state.isInfiniteActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
                                 .frame(width: 36, height: 36)
-                            Text("AUTO")
-                                .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .foregroundColor(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.white.opacity(0.55))
+                            Image(systemName: "infinity")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(state.isInfiniteActive ? Color.cyan : Color.white.opacity(0.65))
                         }
                         .frame(width: 36, height: 36)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.autoAdvance ? Color(red: 0.2, green: 0.85, blue: 0.5).opacity(0.5) : Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(state.isInfiniteActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Auto-Advance: automatically play next track when current song finishes")
+                    .help("Loop Infinito da seção atual [Atalho: I]")
                     
                     // 2. Botão Retroceder / Restart (Branco)
                     Button(action: { state.restart() }) {
@@ -3056,24 +3080,24 @@ struct TopBarView: View {
                     .disabled(!state.isPlaying && !isFadeActive)
                     .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
                     
-                    // 5. Botão Loop da Seção Atual
+                    // 5. Botão Loop da Seção Atual (Repete 1 única vez e segue adiante)
                     Button(action: { state.toggleLoop() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(state.loopActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
+                                .fill(state.isLoopOnceActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
                                 .frame(width: 36, height: 36)
                             Image(systemName: "repeat")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(state.loopActive ? Color.cyan : Color.white.opacity(0.65))
+                                .foregroundColor(state.isLoopOnceActive ? Color.cyan : Color.white.opacity(0.65))
                         }
                         .frame(width: 36, height: 36)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(state.loopActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(state.isLoopOnceActive ? Color.cyan.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Loop current section (L)")
+                    .help("Repetir seção atual uma vez [Atalho: L]")
                 }
             }
             .padding(.horizontal, 20)
@@ -4148,6 +4172,14 @@ struct SpectrogramWaveformView: View {
         }
         return isPlaying
     }
+
+    private func isLoopInfinite(idx: Int, isPlaying: Bool) -> Bool {
+        guard state.loopActive && state.loopInfinite else { return false }
+        if let loopCue = state.loopCueIdx {
+            return loopCue == idx
+        }
+        return isPlaying
+    }
     
     private func handleCueSelection(index idx: Int, section: CueSection, proxy: ScrollViewProxy) {
         state.focusedCueIdx = nil
@@ -4177,6 +4209,7 @@ struct SpectrogramWaveformView: View {
         let isFocused = (idx == state.focusedCueIdx)
         let isEditing = (idx == state.quickEditingCueIdx)
         let isLoop = isLooping(idx: idx, isPlaying: isPlaying)
+        let isInf = isLoopInfinite(idx: idx, isPlaying: isPlaying)
         let w: CGFloat = (idx < blockWidths.count) ? blockWidths[idx] : 90.0
         
         WaveformSectionBlock(
@@ -4188,6 +4221,7 @@ struct SpectrogramWaveformView: View {
             isQueued: isQueued,
             isFocused: isFocused,
             isLoopActive: isLoop,
+            isLoopInfinite: isInf,
             width: w,
             timeSignature: state.timeSignature,
             durationBars: state.calculateDurationBars(for: idx),
@@ -4195,7 +4229,11 @@ struct SpectrogramWaveformView: View {
                 handleCueSelection(index: idx, section: section, proxy: proxy)
             },
             onLoopToggle: {
-                state.toggleLoop(cueIdx: idx)
+                if isInf {
+                    state.toggleInfinite(cueIdx: idx)
+                } else {
+                    state.toggleLoop(cueIdx: idx)
+                }
             }
         )
         .equatable()
@@ -4367,6 +4405,7 @@ struct WaveformSectionBlock: View, Equatable {
     let isQueued: Bool
     let isFocused: Bool
     let isLoopActive: Bool
+    let isLoopInfinite: Bool
     let width: CGFloat
     let timeSignature: String
     let durationBars: Double
@@ -4381,6 +4420,7 @@ struct WaveformSectionBlock: View, Equatable {
         lhs.isQueued == rhs.isQueued &&
         lhs.isFocused == rhs.isFocused &&
         lhs.isLoopActive == rhs.isLoopActive &&
+        lhs.isLoopInfinite == rhs.isLoopInfinite &&
         lhs.width == rhs.width &&
         lhs.timeSignature == rhs.timeSignature &&
         lhs.durationBars == rhs.durationBars
@@ -4431,8 +4471,8 @@ struct WaveformSectionBlock: View, Equatable {
                     
                     if width >= 44 {
                         Button(action: onLoopToggle) {
-                            Image(systemName: "repeat")
-                                .font(.system(size: 10, weight: .heavy))
+                            Image(systemName: isLoopInfinite ? "infinity" : "repeat")
+                                .font(.system(size: isLoopInfinite ? 11 : 10, weight: .heavy))
                                 .foregroundColor(isLoopActive ? Color.black : Color.white.opacity(0.85))
                                 .padding(4)
                                 .background(isLoopActive ? Color.cyan : Color.black.opacity(0.55))
@@ -4443,7 +4483,7 @@ struct WaveformSectionBlock: View, Equatable {
                                 )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Loop this section (L)")
+                        .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
                     }
                 }
                 .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))

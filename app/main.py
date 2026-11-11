@@ -462,12 +462,32 @@ def set_guide_lead_in(req: GuideLeadInRequest):
 
 class ToggleLoopRequest(BaseModel):
     cue_idx: int | None = None
+    infinite: bool | None = False
+    mode: str | None = None
 
 @app.post("/api/toggle_loop")
 def toggle_loop(req: ToggleLoopRequest = None):
     cue_idx = req.cue_idx if req else None
-    active = engine.toggle_loop(cue_idx=cue_idx)
-    return {"loop_active": active, "loop_cue_idx": engine.loop_cue_idx}
+    infinite = req.infinite if req and req.infinite is not None else False
+    mode = req.mode if req else None
+    active = engine.toggle_loop(cue_idx=cue_idx, infinite=infinite, mode=mode)
+    return {
+        "loop_active": active,
+        "loop_infinite": engine.loop_infinite,
+        "loop_mode": "infinite" if engine.loop_infinite else ("once" if active else "off"),
+        "loop_cue_idx": engine.loop_cue_idx
+    }
+
+@app.post("/api/toggle_infinite")
+def toggle_infinite(req: ToggleLoopRequest = None):
+    cue_idx = req.cue_idx if req else None
+    active = engine.toggle_loop(cue_idx=cue_idx, infinite=True, mode="infinite")
+    return {
+        "loop_active": active,
+        "loop_infinite": engine.loop_infinite,
+        "loop_mode": "infinite" if engine.loop_infinite else ("once" if active else "off"),
+        "loop_cue_idx": engine.loop_cue_idx
+    }
 
 class PadRequest(BaseModel):
     active: bool
@@ -587,7 +607,17 @@ async def websocket_endpoint(websocket: WebSocket):
             elif action == "trigger_cue":
                 engine.trigger_cue(msg.get("cue_idx", 0), quantize=msg.get("quantize", True))
             elif action == "toggle_loop":
-                engine.toggle_loop(msg.get("cue_idx"))
+                engine.toggle_loop(
+                    cue_idx=msg.get("cue_idx"),
+                    infinite=msg.get("infinite", False),
+                    mode=msg.get("mode")
+                )
+            elif action == "toggle_infinite":
+                engine.toggle_loop(
+                    cue_idx=msg.get("cue_idx"),
+                    infinite=True,
+                    mode="infinite"
+                )
             elif action == "set_guide_lead_in":
                 engine.set_guide_lead_in(msg.get("bars", 1.0))
             elif action == "set_pad":

@@ -43,6 +43,7 @@ class LiveAudioEngine:
         self.guide_lead_in = None   # Lead-in exclusivo do Canal L (Click + Guia)
         self.guide_lead_in_bars = 1.0 # 1.0 compasso de preparação para ouvir a voz guia do trecho escolhido
         self.loop_active = False
+        self.loop_infinite = False
         self.loop_cue_idx = None
         
         # Crossfade rápido nas trocas de seção (30ms para evitar cortes bruscos e cliques)
@@ -295,6 +296,7 @@ class LiveAudioEngine:
             self.queued_jump = None
             self.guide_lead_in = None
             self.loop_active = False
+            self.loop_infinite = False
             self.loop_cue_idx = None
             self.xfade_tail = None
             self.fade_stop_active = False
@@ -357,6 +359,9 @@ class LiveAudioEngine:
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
+            self.loop_active = False
+            self.loop_infinite = False
+            self.loop_cue_idx = None
             self.xfade_tail = None
             self.outgoing_audio = None
             self.incoming_xfade_frames = 0
@@ -413,6 +418,9 @@ class LiveAudioEngine:
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
+            self.loop_active = False
+            self.loop_infinite = False
+            self.loop_cue_idx = None
             self.xfade_tail = None
             self.fade_stop_active = False
             self.tracks_fade_gain = 1.0
@@ -558,28 +566,49 @@ class LiveAudioEngine:
             
         self._notify_event("cue_queued", {"queued_cue_idx": cue_index})
 
-    def toggle_loop(self, cue_idx: int | None = None) -> bool:
-        """Ativa/desativa a repetição infinita da seção especificada ou atual."""
+    def toggle_loop(self, cue_idx: int | None = None, infinite: bool = False, mode: str | None = None) -> bool:
+        """Ativa/desativa repetição da seção (modo loop 1x ou infinito)."""
+        is_inf = (mode == "infinite") or bool(infinite)
         with self.lock:
-            if cue_idx is not None:
-                if self.loop_active and self.loop_cue_idx == cue_idx:
+            target_cue = cue_idx if cue_idx is not None else self.current_cue_idx
+
+            if is_inf:
+                # Se já estava em modo infinito na mesma seção, desativa
+                if self.loop_active and self.loop_infinite and (cue_idx is None or self.loop_cue_idx == cue_idx):
                     self.loop_active = False
+                    self.loop_infinite = False
                     self.loop_cue_idx = None
                 else:
                     self.loop_active = True
-                    self.loop_cue_idx = cue_idx
+                    self.loop_infinite = True
+                    self.loop_cue_idx = target_cue
             else:
-                self.loop_active = not self.loop_active
-                self.loop_cue_idx = self.current_cue_idx if self.loop_active else None
-            
+                # Modo Loop 1x:
+                # Se já estava em modo 1x na mesma seção, desativa
+                if self.loop_active and not self.loop_infinite and (cue_idx is None or self.loop_cue_idx == cue_idx):
+                    self.loop_active = False
+                    self.loop_infinite = False
+                    self.loop_cue_idx = None
+                else:
+                    self.loop_active = True
+                    self.loop_infinite = False
+                    self.loop_cue_idx = target_cue
+
             # Se desativou o loop ou alterou a seção de loop, cancela lead-in de repetição anterior
             if self.guide_lead_in and self.guide_lead_in.get("is_loop"):
                 if not self.loop_active or self.loop_cue_idx != self.guide_lead_in.get("cue_idx"):
                     self.guide_lead_in = None
 
             status = self.loop_active
+            inf_status = self.loop_infinite
             target_idx = self.loop_cue_idx
-        self._notify_event("loop_state", {"loop_active": status, "loop_cue_idx": target_idx})
+
+        self._notify_event("loop_state", {
+            "loop_active": status,
+            "loop_infinite": inf_status,
+            "loop_mode": "infinite" if inf_status else ("once" if status else "off"),
+            "loop_cue_idx": target_idx
+        })
         return status
 
     def set_pad(self, active: bool, key: str | None = None, volume: float | None = None):
@@ -651,6 +680,8 @@ class LiveAudioEngine:
                 "current_cue_idx": self.current_cue_idx,
                 "queued_cue_idx": self.queued_cue_idx,
                 "loop_active": self.loop_active,
+                "loop_infinite": self.loop_infinite,
+                "loop_mode": "infinite" if self.loop_infinite else ("once" if self.loop_active else "off"),
                 "loop_cue_idx": self.loop_cue_idx,
                 "guide_lead_in_bars": self.guide_lead_in_bars,
                 "click_vol": self.click_vol,
@@ -940,11 +971,22 @@ class LiveAudioEngine:
                     slice_r = np.concatenate((r1, r2)) if frames_before > 0 else r2
 
                     self.pos_frame = target_downbeat + frames_after
+                    was_loop = bool(self.guide_lead_in.get("is_loop"))
                     self.guide_lead_in = None
                     self.current_cue_idx = target_cue_idx
                     self.queued_cue_idx = None
                     self._notify_event("cue_jumped", {"current_cue_idx": target_cue_idx})
                     self._notify_event("cue_queued", {"queued_cue_idx": None})
+
+                    if was_loop and not self.loop_infinite:
+                        self.loop_active = False
+                        self.loop_cue_idx = None
+                        self._notify_event("loop_state", {
+                            "loop_active": False,
+                            "loop_infinite": False,
+                            "loop_mode": "off",
+                            "loop_cue_idx": None
+                        })
                 else:
                     # Continua tocando: Canal L lê voz guia, Canal R lê instrumental atual
                     slice_l = self._read_slice(l_pos, frames)[:, 0]
@@ -1004,6 +1046,16 @@ class LiveAudioEngine:
                             chunk_stereo = np.vstack((out1, out2)) if frames_before > 0 else out2
                             slice_l = chunk_stereo[:, 0]
                             slice_r = chunk_stereo[:, 1]
+
+                            if not self.loop_infinite:
+                                self.loop_active = False
+                                self.loop_cue_idx = None
+                                self._notify_event("loop_state", {
+                                    "loop_active": False,
+                                    "loop_infinite": False,
+                                    "loop_mode": "off",
+                                    "loop_cue_idx": None
+                                })
                         else:
                             chunk_stereo = self._read_slice(self.pos_frame, frames)
                             chunk_stereo = self._apply_crossfade(chunk_stereo)
