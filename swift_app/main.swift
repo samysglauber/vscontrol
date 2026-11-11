@@ -4515,20 +4515,16 @@ struct WaveformSectionBlock: View, Equatable {
                     
                     Spacer(minLength: 0)
                     
-                    if width >= 44 {
+                    if width >= 40 {
                         Button(action: onLoopToggle) {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
-                                size: isLoopInfinite ? 13 : 13,
-                                color: isLoopActive ? Color.black : Color.white.opacity(0.85)
+                                size: 17,
+                                color: isLoopActive ? Color.cyan : Color.white.opacity(0.50)
                             )
-                            .padding(4)
-                            .background(isLoopActive ? Color.cyan : Color.black.opacity(0.55))
-                            .clipShape(Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(isLoopActive ? Color.white.opacity(0.35) : Color.white.opacity(0.12), lineWidth: 1)
-                            )
+                            .shadow(color: isLoopActive ? Color.cyan.opacity(0.8) : Color.black.opacity(0.5), radius: isLoopActive ? 4 : 1, x: 0, y: 1)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
