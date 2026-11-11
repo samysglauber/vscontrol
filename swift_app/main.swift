@@ -5421,15 +5421,15 @@ struct WheelPicker<Item: Hashable>: View {
 
     var body: some View {
         ZStack {
-            // Faixa de destaque central
+            // 1. Faixa de destaque central (o fundo da lente)
             RoundedRectangle(cornerRadius: 7)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(width: totalWidth, height: rowHeight)
 
-            // Cilindro 3D
+            // 2. Camada de Fundo (Cilindro 3D com números em cinza translúcido fosco)
             ZStack {
                 ForEach(visibleIndices, id: \.self) { idx in
-                    row(idx)
+                    numberRow(idx, isHighlight: false)
                 }
             }
             .frame(width: totalWidth, height: viewportHeight)
@@ -5448,7 +5448,20 @@ struct WheelPicker<Item: Hashable>: View {
                 )
             )
 
-            // Rótulo fixo
+            // 3. Camada da Lente (Números em branco 100% recortados perfeitamente na faixa central)
+            ZStack {
+                ForEach(visibleIndices, id: \.self) { idx in
+                    numberRow(idx, isHighlight: true)
+                }
+            }
+            .frame(width: totalWidth, height: viewportHeight)
+            // A máscara recorta EXATAMENTE na faixa central, criando o efeito de fatia na borda
+            .mask(
+                RoundedRectangle(cornerRadius: 7)
+                    .frame(width: totalWidth, height: rowHeight)
+            )
+
+            // 4. Rótulo fixo (Tempo / Time Sig em negrito)
             HStack(spacing: 10) {
                 Color.clear.frame(width: valueWidth)
                 Text(label)
@@ -5491,9 +5504,9 @@ struct WheelPicker<Item: Hashable>: View {
         }
     }
 
-    // MARK: - Linha do cilindro
+    // MARK: - Linha do cilindro (Fundo ou Lente de Destaque)
 
-    private func row(_ idx: Int) -> some View {
+    private func numberRow(_ idx: Int, isHighlight: Bool) -> some View {
         // step < 0: acima do centro | 0: centro | > 0: abaixo do centro
         let step = CGFloat(idx) - position
         let angleDeg = step * stepAngle
@@ -5502,8 +5515,8 @@ struct WheelPicker<Item: Hashable>: View {
 
         return HStack(spacing: 10) {
             Text(format(items[idx]))
-                .font(.system(size: 16, weight: .regular).monospacedDigit())
-                .foregroundStyle(Color.white.opacity(0.65))
+                .font(.system(size: 16, weight: isHighlight ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(isHighlight ? Color.white : Color.white.opacity(0.38))
                 .frame(width: valueWidth, alignment: .trailing)
 
             Color.clear.frame(width: labelWidth)
@@ -5511,7 +5524,7 @@ struct WheelPicker<Item: Hashable>: View {
         .padding(.horizontal, 12)
         .frame(width: totalWidth, height: rowHeight)
         // IMPORTANTE: efeitos ANTES do offset, para girar/escalar em torno do centro da PRÓPRIA linha
-        .opacity(pow(cosVal, 1.8))
+        .opacity(isHighlight ? 1.0 : pow(cosVal, 1.8))
         .scaleEffect(0.82 + 0.18 * cosVal)
         .rotation3DEffect(
             .degrees(-angleDeg),   // linhas abaixo: parte de baixo recua; acima: parte de cima recua
