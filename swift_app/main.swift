@@ -5341,47 +5341,44 @@ struct WheelPicker<Item: Hashable>: View {
     private let rowHeight: CGFloat = 26
     private let visibleRows = 5
     @State private var scrolledID: Item?
+    @State private var isInternalUpdate: Bool = false
+    @State private var dragAccumulator: CGFloat = 0
 
     private var viewportHeight: CGFloat { rowHeight * CGFloat(visibleRows) }
+    private var totalWidth: CGFloat { valueWidth + labelWidth + 10 + 24 }
 
     var body: some View {
+        let rh = rowHeight
+        let center = viewportHeight / 2
+
         ZStack {
             // Faixa de destaque (largura total, atrás do valor + rótulo)
             RoundedRectangle(cornerRadius: 7)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(height: rowHeight)
 
-            HStack(spacing: 10) {
-                wheel
-                    .frame(width: valueWidth)
-
-                // Rótulo em coluna própria, sempre alinhado à esquerda
-                Text(label)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: labelWidth, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-        }
-        .frame(width: valueWidth + labelWidth + 10 + 24, height: viewportHeight)
-    }
-
-    private var wheel: some View {
-        let rh = rowHeight
-        let center = viewportHeight / 2
-
-        return ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 0) {
-                ForEach(items, id: \.self) { item in
-                    Text(format(item))
-                        .font(.system(size: 16, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+            // ScrollView ocupando toda a largura para receber scroll/wheel em toda a área
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(items, id: \.self) { item in
+                        HStack(spacing: 10) {
+                            Text(format(item))
+                                .font(.system(size: 16, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.white)
+                                .frame(width: valueWidth, alignment: .trailing)
+                            
+                            // Espaço reservado para o label
+                            Spacer()
+                                .frame(width: labelWidth)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .frame(height: rh)
+                        .contentShape(Rectangle())
                         .id(item)
                         .visualEffect { content, proxy in
                             // distância da linha até o centro: -1 (topo) ... 0 (centro) ... 1 (base)
-                            let midY = proxy.frame(in: .named("wheel")).midY
+                            let midY = proxy.frame(in: .named("wheel_\(label)")).midY
                             let d = max(-1, min(1, (midY - center) / (rh * 2.5)))
                             return content
                                 .opacity(1 - abs(d) * 0.75)
@@ -5392,27 +5389,90 @@ struct WheelPicker<Item: Hashable>: View {
                                     perspective: 0.5
                                 )
                         }
+                        .onTapGesture {
+                            selectItem(item)
+                        }
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .coordinateSpace(name: "wheel_\(label)")
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $scrolledID, anchor: .center)
+            .contentMargins(.vertical, rh * 2, for: .scrollContent)
+            .frame(width: totalWidth, height: viewportHeight)
+            .mask(
+                LinearGradient(
+                    colors: [.clear, .black, .black, .black, .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+
+            // Rótulo fixo alinhado à sua coluna, sem bloquear eventos de toque/scroll
+            HStack(spacing: 10) {
+                Color.clear
+                    .frame(width: valueWidth)
+
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: labelWidth, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .allowsHitTesting(false)
+        }
+        .frame(width: totalWidth, height: viewportHeight)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { gesture in
+                    let deltaY = -(gesture.translation.height - dragAccumulator)
+                    let stepHeight: CGFloat = 18.0
+                    if abs(deltaY) >= stepHeight {
+                        let steps = Int(deltaY / stepHeight)
+                        if let curIdx = items.firstIndex(of: selection) {
+                            let newIdx = max(0, min(items.count - 1, curIdx + steps))
+                            let newItem = items[newIdx]
+                            if newItem != selection {
+                                selectItem(newItem)
+                            }
+                        }
+                        dragAccumulator = gesture.translation.height
+                    }
+                }
+                .onEnded { _ in
+                    dragAccumulator = 0
+                }
+        )
+        .onAppear {
+            scrolledID = selection
+        }
+        .onChange(of: scrolledID) { _, new in
+            if let new, new != selection {
+                isInternalUpdate = true
+                selection = new
+                DispatchQueue.main.async {
+                    isInternalUpdate = false
                 }
             }
-            .scrollTargetLayout()
-        }
-        .coordinateSpace(name: "wheel")
-        .scrollTargetBehavior(.viewAligned)
-        .scrollPosition(id: $scrolledID, anchor: .center)
-        .contentMargins(.vertical, rh * 2, for: .scrollContent)
-        .frame(height: viewportHeight)
-        .mask(
-            LinearGradient(
-                colors: [.clear, .black, .black, .black, .clear],
-                startPoint: .top, endPoint: .bottom
-            )
-        )
-        .onAppear { scrolledID = selection }
-        .onChange(of: scrolledID) { _, new in
-            if let new { selection = new }
         }
         .onChange(of: selection) { _, new in
-            if scrolledID != new { withAnimation { scrolledID = new } }
+            if !isInternalUpdate && scrolledID != new {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    scrolledID = new
+                }
+            }
+        }
+    }
+
+    private func selectItem(_ item: Item) {
+        isInternalUpdate = true
+        selection = item
+        withAnimation(.easeOut(duration: 0.15)) {
+            scrolledID = item
+        }
+        DispatchQueue.main.async {
+            isInternalUpdate = false
         }
     }
 }
