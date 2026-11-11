@@ -5378,9 +5378,9 @@ struct WheelPicker<Item: Hashable>: View {
     var labelWidth: CGFloat
     let format: (Item) -> String
 
-    private let viewportHeight: CGFloat = 110
-    private let cylinderRadius: CGFloat = 40
-    private let stepAngle: CGFloat = 34          // graus de cilindro por item
+    private let viewportHeight: CGFloat = 142
+    private let cylinderRadius: CGFloat = 58
+    private let stepAngle: CGFloat = 22.5        // graus de cilindro por item
     private let rowHeight: CGFloat = 26
 
     // Pontos de arraste equivalentes a 1 item (bate com o deslocamento visual no centro)
@@ -5437,10 +5437,10 @@ struct WheelPicker<Item: Hashable>: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: .black.opacity(0.3), location: 0.12),
-                        .init(color: .black, location: 0.25),
-                        .init(color: .black, location: 0.75),
-                        .init(color: .black.opacity(0.3), location: 0.88),
+                        .init(color: .black.opacity(0.5), location: 0.08),
+                        .init(color: .black, location: 0.16),
+                        .init(color: .black, location: 0.84),
+                        .init(color: .black.opacity(0.5), location: 0.92),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .top,
@@ -5512,11 +5512,15 @@ struct WheelPicker<Item: Hashable>: View {
         let angleDeg = step * stepAngle
         let rad = angleDeg * .pi / 180
         let cosVal = max(0, cos(rad))
+        let nearDist = abs(step)
+
+        // Opacidade calibrada para manter 2 a 3 números claramente visíveis acima e abaixo
+        let bgOpacity = max(0.18, 0.65 - nearDist * 0.15)
 
         return HStack(spacing: 10) {
             Text(format(items[idx]))
                 .font(.system(size: 16, weight: isHighlight ? .semibold : .regular).monospacedDigit())
-                .foregroundStyle(isHighlight ? Color.white : Color.white.opacity(0.38))
+                .foregroundStyle(isHighlight ? Color.white : Color.white.opacity(bgOpacity))
                 .frame(width: valueWidth, alignment: .trailing)
 
             Color.clear.frame(width: labelWidth)
@@ -5524,7 +5528,7 @@ struct WheelPicker<Item: Hashable>: View {
         .padding(.horizontal, 12)
         .frame(width: totalWidth, height: rowHeight)
         // IMPORTANTE: efeitos ANTES do offset, para girar/escalar em torno do centro da PRÓPRIA linha
-        .opacity(isHighlight ? 1.0 : pow(cosVal, 1.8))
+        .opacity(isHighlight ? 1.0 : (cosVal > 0.05 ? 1.0 : 0.0))
         .scaleEffect(0.82 + 0.18 * cosVal)
         .rotation3DEffect(
             .degrees(-angleDeg),   // linhas abaixo: parte de baixo recua; acima: parte de cima recua
@@ -5697,7 +5701,7 @@ struct MetronomeModalView: View {
             }
         }
         .padding(20)
-        .frame(width: 440, height: 310)
+        .frame(width: 440, height: 335)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
