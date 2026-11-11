@@ -82,7 +82,8 @@ def generate_metronome_track(
     duration_sec: float = 600.0,
     output_dir: str | None = None,
     existing_filepath: str | None = None,
-    subdivide: bool = False
+    subdivide: bool = False,
+    subdivision: str = "1/4"
 ) -> dict:
     """
     Gera ou atualiza uma faixa de metrônomo estéreo (~10 minutos) e seus metadados (.cues.json).
@@ -109,30 +110,32 @@ def generate_metronome_track(
     audio = np.zeros((total_samples, 2), dtype=np.float32)
 
     # 1. Geração do Click no Canal L (In-Ear)
+    subdiv = str(subdivision or ("1/8" if subdivide else "1/4")).strip()
+    if subdiv not in ["1/4", "1/8", "1/16"]:
+        subdiv = "1/8" if subdivide else "1/4"
+
     click_track1, click_track2 = get_click_samples(sample_rate=sr)
+
+    # Determina o número de clicks por tempo (beat):
+    # "1/4"  -> 1 click por tempo (quarter notes)
+    # "1/8"  -> 2 clicks por tempo (eighth notes)
+    # "1/16" -> 4 clicks por tempo (sixteenth notes)
+    steps_per_beat = 4 if subdiv == "1/16" else (2 if subdiv == "1/8" else 1)
+
+    total_steps = 0
     for bar in range(total_bars):
         for beat in range(beats_per_bar):
-            sample_pos = int((bar * beats_per_bar + beat) * beat_sec * sr)
-            
-            if subdivide:
-                # Click 1/8 (2x): Click Track-1 no tempo e Click Track-2 no contratempo,
-                # se repetindo continuamente sem marcação de início de compasso
-                avail1 = min(len(click_track1), total_samples - sample_pos)
-                if avail1 > 0:
-                    audio[sample_pos:sample_pos + avail1, 0] = click_track1[:avail1]
+            for step in range(steps_per_beat):
+                step_offset = step / float(steps_per_beat)
+                sample_pos = int((bar * beats_per_bar + beat + step_offset) * beat_sec * sr)
                 
-                sample_pos_sub = int((bar * beats_per_bar + beat + 0.5) * beat_sec * sr)
-                avail2 = min(len(click_track2), total_samples - sample_pos_sub)
-                if avail2 > 0:
-                    audio[sample_pos_sub:sample_pos_sub + avail2, 0] = click_track2[:avail2]
-            else:
-                # Click padrão 1/4: Click Track-1 e Click Track-2 se repetindo alternadamente a cada tempo,
-                # sem marcação de início de compasso
-                global_beat = bar * beats_per_bar + beat
-                click_sample = click_track1 if (global_beat % 2 == 0) else click_track2
-                avail = min(len(click_sample), total_samples - sample_pos)
+                # Alternância contínua entre Click Track-1 e Click Track-2
+                sample = click_track1 if (total_steps % 2 == 0) else click_track2
+                avail = min(len(sample), total_samples - sample_pos)
                 if avail > 0:
-                    audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
+                    audio[sample_pos:sample_pos + avail, 0] = sample[:avail]
+                
+                total_steps += 1
 
     # Canal R é mantido como silêncio absoluto (zeros) para uso profissional ao vivo
 
@@ -220,7 +223,8 @@ def generate_metronome_track(
         "channel": "L",
         "bpm": bpm,
         "time_signature": time_sig,
-        "subdivide": bool(subdivide),
+        "subdivision": subdiv,
+        "subdivide": (subdiv != "1/4"),
         "total_duration": total_duration,
         "cues": cues,
         "full_waveform": full_wf,
@@ -238,7 +242,8 @@ def generate_metronome_track(
         "path": filepath,
         "bpm": bpm,
         "time_signature": time_sig,
-        "subdivide": bool(subdivide),
+        "subdivision": subdiv,
+        "subdivide": (subdiv != "1/4"),
         "has_cached_cues": True,
         "default_key": "",
         "has_cover": False,

@@ -215,6 +215,7 @@ class SongLibrary:
         cues_data = None
         is_metronome = False
         subdivide = False
+        subdivision = "1/4"
         if has_cached_cues:
             try:
                 with open(full_path + ".cues.json", "r", encoding="utf-8") as f:
@@ -226,8 +227,11 @@ class SongLibrary:
                             time_sig = cdata["time_signature"]
                         if cdata.get("is_metronome"):
                             is_metronome = bool(cdata["is_metronome"])
-                        if cdata.get("subdivide") is not None:
-                            subdivide = bool(cdata["subdivide"])
+                        if cdata.get("subdivision"):
+                            subdivision = str(cdata["subdivision"])
+                        elif cdata.get("subdivide"):
+                            subdivision = "1/8"
+                        subdivide = (subdivision != "1/4")
                         if cdata.get("full_waveform"):
                             full_wf = cdata["full_waveform"]
                         if cdata.get("total_duration"):
@@ -253,6 +257,7 @@ class SongLibrary:
             "time_signature": time_sig,
             "is_metronome": is_metronome,
             "subdivide": subdivide,
+            "subdivision": subdivision,
             "has_cached_cues": has_cached_cues,
             "default_key": "D",
             "has_cover": has_cover,
@@ -510,6 +515,8 @@ class SongLibrary:
                 s["time_signature"] = saved["time_signature"]
             if saved.get("is_metronome") is not None:
                 s["is_metronome"] = saved["is_metronome"]
+            if saved.get("subdivision"):
+                s["subdivision"] = saved["subdivision"]
             if saved.get("subdivide") is not None:
                 s["subdivide"] = saved["subdivide"]
             s["cues"] = saved["cues"]
