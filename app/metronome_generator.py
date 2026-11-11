@@ -126,8 +126,10 @@ def generate_metronome_track(
                 if avail2 > 0:
                     audio[sample_pos_sub:sample_pos_sub + avail2, 0] = click_track2[:avail2]
             else:
-                # Click padrão 1/4: acento de início de compasso (Track-2 no beat 0) e Track-1 nos demais
-                click_sample = click_track2 if beat == 0 else click_track1
+                # Click padrão 1/4: Click Track-1 e Click Track-2 se repetindo alternadamente a cada tempo,
+                # sem marcação de início de compasso
+                global_beat = bar * beats_per_bar + beat
+                click_sample = click_track1 if (global_beat % 2 == 0) else click_track2
                 avail = min(len(click_sample), total_samples - sample_pos)
                 if avail > 0:
                     audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
