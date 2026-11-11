@@ -3300,7 +3300,6 @@ struct SetlistTransitionButton: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
-        .offset(y: 32)
         .onHover { h in isHovered = h }
         .help(transitionType.title)
         .popover(isPresented: $isPopoverPresented, arrowEdge: .trailing) {
@@ -3312,6 +3311,7 @@ struct SetlistTransitionButton: View {
                 }
             )
         }
+        .frame(height: 88)
     }
 }
 
