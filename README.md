@@ -151,6 +151,14 @@ O **BlackHole 2ch** aparecerá automaticamente no seletor de saídas do aplicati
 
 <br>
 
+## 📄 Licença / License
+
+Copyright &copy; 2026 **Samys Glauber**. Todos os direitos reservados (*All Rights Reserved*).
+
+Este software e seu código-fonte são proprietários. É estritamente proibida qualquer cópia, distribuição, modificação ou uso comercial sem a autorização prévia por escrito do autor.
+
+<br>
+
 <div align="center">
 
 <sub>Feito para quem toca ao vivo.</sub>

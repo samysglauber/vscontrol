@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-11T04:03:58Z",
+  "createdAt" : "2026-11-11T04:08:23Z",
   "items" : [
     {
       "cues" : [
@@ -10819,7 +10819,7 @@
         "time_signature" : "6\/8",
         "total_duration" : 341.84
       },
-      "transitionType" : "CROSSFADE"
+      "transitionType" : "CUE"
     },
     {
       "cues" : [
@@ -21935,6 +21935,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-11T04:03:58Z",
+  "updatedAt" : "2026-11-11T04:08:23Z",
   "version" : 1
 }
