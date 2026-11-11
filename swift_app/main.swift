@@ -5382,11 +5382,10 @@ struct ScrollWheelHandler: NSViewRepresentable {
             } else {
                 // Mouse com roda dentada: acumula os micro-deltas até cruzar o limiar de 1 notch
                 mouseAccum += event.scrollingDeltaY
-                let threshold: CGFloat = 1.0
-                while abs(mouseAccum) >= threshold {
-                    let step: CGFloat = mouseAccum > 0 ? 1.0 : -1.0
-                    onScroll?(step, false)
-                    mouseAccum -= step * threshold
+                let steps = mouseAccum.rounded(.towardZero)
+                if steps != 0 {
+                    mouseAccum -= steps
+                    onScroll?(steps, false)   // todos os notches acumulados de uma vez
                 }
             }
 
@@ -5401,6 +5400,100 @@ struct ScrollWheelHandler: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+private struct WheelCylinder<Item>: View, Animatable {
+    var position: CGFloat
+    let items: [Item]
+    let format: (Item) -> String
+    let valueWidth: CGFloat
+    let labelWidth: CGFloat
+    let totalWidth: CGFloat
+    let viewportHeight: CGFloat
+    let cylinderRadius: CGFloat
+    let stepAngle: CGFloat
+    let rowHeight: CGFloat
+    let onTapIndex: (Int) -> Void
+
+    var animatableData: CGFloat {
+        get { position }
+        set { position = newValue }
+    }
+
+    private var visibleIndices: [Int] {
+        guard !items.isEmpty else { return [] }
+        let c = max(0, min(items.count - 1, Int(position.rounded())))
+        return Array(max(0, c - 4)...min(items.count - 1, c + 4))
+    }
+
+    var body: some View {
+        ZStack {
+            // Camada de fundo (números em cinza translúcido, fade nas pontas)
+            ZStack {
+                ForEach(visibleIndices, id: \.self) { idx in
+                    numberRow(idx, isHighlight: false)
+                }
+            }
+            .frame(width: totalWidth, height: viewportHeight)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black.opacity(0.5), location: 0.08),
+                        .init(color: .black, location: 0.16),
+                        .init(color: .black, location: 0.84),
+                        .init(color: .black.opacity(0.5), location: 0.92),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+
+            // Camada da lente (números brancos recortados na faixa central)
+            ZStack {
+                ForEach(visibleIndices, id: \.self) { idx in
+                    numberRow(idx, isHighlight: true)
+                }
+            }
+            .frame(width: totalWidth, height: viewportHeight)
+            .mask(
+                RoundedRectangle(cornerRadius: 7)
+                    .frame(width: totalWidth, height: rowHeight)
+            )
+        }
+        .frame(width: totalWidth, height: viewportHeight)
+    }
+
+    private func numberRow(_ idx: Int, isHighlight: Bool) -> some View {
+        let step = CGFloat(idx) - position
+        let angleDeg = step * stepAngle
+        let rad = angleDeg * .pi / 180
+        let cosVal = max(0, cos(rad))
+        let nearDist = abs(step)
+        let bgOpacity = max(0.08, 0.38 - nearDist * 0.10)
+
+        return HStack(spacing: 10) {
+            Text(format(items[idx]))
+                .font(.system(size: 16, weight: .regular).monospacedDigit())
+                .foregroundStyle(isHighlight ? Color.white.opacity(0.70) : Color.white.opacity(bgOpacity))
+                .frame(width: valueWidth, alignment: .trailing)
+
+            Color.clear.frame(width: labelWidth)
+        }
+        .padding(.horizontal, 12)
+        .frame(width: totalWidth, height: rowHeight)
+        .opacity(isHighlight ? 1.0 : (cosVal > 0.05 ? 1.0 : 0.0))
+        .scaleEffect(0.82 + 0.18 * cosVal)
+        .rotation3DEffect(
+            .degrees(-angleDeg),
+            axis: (x: 1, y: 0, z: 0),
+            perspective: 0.4
+        )
+        .offset(y: cylinderRadius * sin(rad))
+        .contentShape(Rectangle())
+        .onTapGesture { onTapIndex(idx) }
     }
 }
 
@@ -5447,12 +5540,6 @@ struct WheelPicker<Item: Hashable>: View {
         return max(0, min(items.count - 1, Int(position.rounded())))
     }
 
-    private var visibleIndices: [Int] {
-        guard !items.isEmpty else { return [] }
-        let c = nearestIndex
-        return Array(max(0, c - 3)...min(items.count - 1, c + 3))
-    }
-
     var body: some View {
         ZStack {
             // 1. Faixa de destaque central (o fundo da lente)
@@ -5460,39 +5547,25 @@ struct WheelPicker<Item: Hashable>: View {
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(width: totalWidth, height: rowHeight)
 
-            // 2. Camada de Fundo (Cilindro 3D com números em cinza translúcido fosco)
-            ZStack {
-                ForEach(visibleIndices, id: \.self) { idx in
-                    numberRow(idx, isHighlight: false)
+            // 2 + 3. Cilindro 3D (fundo + lente). É Animatable: o SwiftUI recalcula o corpo
+            // a cada frame com a posição interpolada, então as linhas visíveis acompanham a animação.
+            WheelCylinder(
+                position: position,
+                items: items,
+                format: format,
+                valueWidth: valueWidth,
+                labelWidth: labelWidth,
+                totalWidth: totalWidth,
+                viewportHeight: viewportHeight,
+                cylinderRadius: cylinderRadius,
+                stepAngle: stepAngle,
+                rowHeight: rowHeight,
+                onTapIndex: { idx in
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                        position = CGFloat(idx)
+                    }
+                    syncSelection()
                 }
-            }
-            .frame(width: totalWidth, height: viewportHeight)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black.opacity(0.5), location: 0.08),
-                        .init(color: .black, location: 0.16),
-                        .init(color: .black, location: 0.84),
-                        .init(color: .black.opacity(0.5), location: 0.92),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-
-            // 3. Camada da Lente (Números em branco 100% recortados perfeitamente na faixa central)
-            ZStack {
-                ForEach(visibleIndices, id: \.self) { idx in
-                    numberRow(idx, isHighlight: true)
-                }
-            }
-            .frame(width: totalWidth, height: viewportHeight)
-            // A máscara recorta EXATAMENTE na faixa central, criando o efeito de fatia na borda
-            .mask(
-                RoundedRectangle(cornerRadius: 7)
-                    .frame(width: totalWidth, height: rowHeight)
             )
 
             // 4. Rótulo fixo (Tempo / Time Sig em negrito)
@@ -5540,47 +5613,6 @@ struct WheelPicker<Item: Hashable>: View {
         }
     }
 
-    // MARK: - Linha do cilindro (Fundo ou Lente de Destaque)
-
-    private func numberRow(_ idx: Int, isHighlight: Bool) -> some View {
-        // step < 0: acima do centro | 0: centro | > 0: abaixo do centro
-        let step = CGFloat(idx) - position
-        let angleDeg = step * stepAngle
-        let rad = angleDeg * .pi / 180
-        let cosVal = max(0, cos(rad))
-        let nearDist = abs(step)
-
-        // Opacidade calibrada mais suave para números acima e abaixo
-        let bgOpacity = max(0.08, 0.38 - nearDist * 0.10)
-
-        return HStack(spacing: 10) {
-            Text(format(items[idx]))
-                .font(.system(size: 16, weight: .regular).monospacedDigit())
-                .foregroundStyle(isHighlight ? Color.white.opacity(0.70) : Color.white.opacity(bgOpacity))
-                .frame(width: valueWidth, alignment: .trailing)
-
-            Color.clear.frame(width: labelWidth)
-        }
-        .padding(.horizontal, 12)
-        .frame(width: totalWidth, height: rowHeight)
-        // IMPORTANTE: efeitos ANTES do offset, para girar/escalar em torno do centro da PRÓPRIA linha
-        .opacity(isHighlight ? 1.0 : (cosVal > 0.05 ? 1.0 : 0.0))
-        .scaleEffect(0.82 + 0.18 * cosVal)
-        .rotation3DEffect(
-            .degrees(-angleDeg),   // linhas abaixo: parte de baixo recua; acima: parte de cima recua
-            axis: (x: 1, y: 0, z: 0),
-            perspective: 0.4
-        )
-        .offset(y: cylinderRadius * sin(rad))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                position = CGFloat(idx)
-            }
-            syncSelection()
-        }
-    }
-
     // MARK: - Movimento
 
     /// Trata eventos da roda do mouse ou trackpad
@@ -5598,7 +5630,10 @@ struct WheelPicker<Item: Hashable>: View {
             let cur = nearestIndex
             let steps = Int(delta.rounded())
             let target = max(0, min(items.count - 1, cur - steps))
-            position = CGFloat(target)
+            guard target != cur || abs(position - CGFloat(target)) > 0.001 else { return }
+            withAnimation(.interpolatingSpring(stiffness: 320, damping: 30)) {
+                position = CGFloat(target)
+            }
             if selection != items[target] {
                 selection = items[target]
             }

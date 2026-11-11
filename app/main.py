@@ -56,8 +56,12 @@ def sync_tempo_to_ableton(bpm: float):
     except Exception as e:
         print(f"Erro ao enviar BPM para AbletonOSC: {e}")
 
+ABLETON_ACTIVATE_LIVE = os.environ.get("ABLETON_ACTIVATE_LIVE", "0") == "1"  # traz o Live p/ frente antes de clicar no menu (rouba o foco!)
+_ts_lock = threading.Lock()
+_last_ts_insert = {"sig": None, "t": 0.0}
+
 def sync_time_signature_to_ableton(time_sig: str, insert_change: bool = True):
-    """Envia a nova fórmula de compasso (numerador e denominador) para o Ableton Live via protocolo OSC e opcionalmente insere um Time Signature Change na timeline."""
+    """Envia a fórmula de compasso ao Live via OSC e, opcionalmente, insere um Time Signature Change no Arrangement."""
     if not time_sig:
         return
     try:
@@ -66,45 +70,76 @@ def sync_time_signature_to_ableton(time_sig: str, insert_change: bool = True):
         osc_client.send_message("/live/song/set/signature_denominator", int(denom))
         print(f"🎵 AbletonOSC: Time Signature sincronizado para {num}/{denom}")
         if insert_change:
-            trigger_ableton_time_signature_change()
+            trigger_ableton_time_signature_change(f"{num}/{denom}")
     except Exception as e:
         print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
 
-def trigger_ableton_time_signature_change():
-    """Aciona a inserção de um marcador de Time Signature Change no Arrangement View do Ableton Live via AppleScript."""
-    def _run():
-        # Aguarda 50ms para que o Ableton aplique os novos valores de numerador/denominador recebidos via OSC
-        time.sleep(0.05)
-        apple_script = '''
-        tell application "System Events"
-            if exists (first process whose name contains "Live") then
-                tell (first process whose name contains "Live")
-                    try
-                        tell menu bar 1
-                            tell menu bar item "Create"
-                                tell menu 1
-                                    if exists (menu item "Insert Time Signature Change") then
-                                        if enabled of menu item "Insert Time Signature Change" then
-                                            click menu item "Insert Time Signature Change"
-                                        end if
-                                    end if
-                                end tell
-                            end tell
-                        end tell
-                    end try
-                end tell
-            end if
+def _build_insert_ts_script() -> str:
+    activate = "set frontmost of liveProc to true\n        delay 0.15" if ABLETON_ACTIVATE_LIVE else ""
+    return """
+    tell application "System Events"
+        -- Localiza o Live pelo bundle id (o antigo "name contains Live" podia casar com este próprio app)
+        set liveProcs to (every process whose bundle identifier starts with "com.ableton.live")
+        if (count of liveProcs) is 0 then return "NO_PROCESS"
+        set liveProc to item 1 of liveProcs
+        __ACTIVATE__
+        tell liveProc
+            if (count of menu bars) is 0 then return "NO_MENUBAR"
+            set createMenu to menu 1 of menu bar item "Create" of menu bar 1
+            set found to missing value
+            set allNames to ""
+            repeat with mi in (menu items of createMenu)
+                set n to missing value
+                try
+                    set n to name of mi
+                end try
+                if n is not missing value then
+                    set allNames to allNames & n & "; "
+                    if (found is missing value) and (n contains "Time Signature") then set found to mi
+                end if
+            end repeat
+            if found is missing value then return "NO_ITEM|" & allNames
+            if not (enabled of found) then return "DISABLED|" & (name of found)
+            click found
+            return "OK|" & (name of found)
         end tell
-        '''
-        try:
-            res = subprocess.run(["osascript", "-e", apple_script], capture_output=True, timeout=2.0)
-            if res.returncode == 0:
-                print("🎵 Ableton: 'Insert Time Signature Change' executado com sucesso no Arrangement")
-            else:
-                print(f"Ableton Time Sig Change stderr: {res.stderr.decode('utf-8', errors='ignore')}")
-        except Exception as e:
-            print(f"Erro ao disparar 'Insert Time Signature Change' via AppleScript: {e}")
+    end tell
+    """.replace("__ACTIVATE__", activate)
 
+def insert_ableton_time_signature_change_blocking() -> dict:
+    """Executa o AppleScript e devolve um diagnóstico real (antes um erro era engolido e logado como sucesso)."""
+    try:
+        res = subprocess.run(["osascript", "-e", _build_insert_ts_script()],
+                             capture_output=True, text=True, timeout=8.0)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": "TIMEOUT (provável diálogo de permissão aberto no macOS)"}
+    except Exception as e:
+        return {"ok": False, "reason": f"EXCEPTION {e}"}
+    out, err = (res.stdout or "").strip(), (res.stderr or "").strip()
+    if res.returncode != 0:
+        hint = ""
+        if "-1719" in err or "-25211" in err or "assistive" in err.lower():
+            hint = " -> Dê permissão em Ajustes > Privacidade e Segurança > Acessibilidade ao app que roda o backend (app Swift / Terminal / Python)."
+        elif "-1743" in err:
+            hint = " -> Permita a Automação ('System Events') em Privacidade e Segurança > Automação."
+        return {"ok": False, "reason": f"osascript erro: {err}{hint}"}
+    return {"ok": out.startswith("OK"), "reason": out}
+
+def trigger_ableton_time_signature_change(sig: str = ""):
+    """Dispara a inserção do marcador em segundo plano (com debounce para não duplicar marcadores)."""
+    def _run():
+        # Dá tempo ao Live para aplicar numerador/denominador recebidos via OSC
+        time.sleep(0.15)
+        with _ts_lock:
+            now = time.time()
+            if _last_ts_insert["sig"] == sig and now - _last_ts_insert["t"] < 1.5:
+                return  # chamada duplicada (ex.: /api/load + /api/sync_ableton)
+            result = insert_ableton_time_signature_change_blocking()
+            if result["ok"]:
+                _last_ts_insert.update(sig=sig, t=time.time())
+                print(f"🎵 Ableton: marcador inserido ({sig}) -> {result['reason']}")
+            else:
+                print(f"⚠️ Ableton: NÃO foi possível inserir o Time Signature Change -> {result['reason']}")
     threading.Thread(target=_run, daemon=True).start()
 
 # Gerenciador de conexões WebSocket para sincronia Mac <-> Android
@@ -346,13 +381,6 @@ def get_cover(id: str):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         return JSONResponse(status_code=404, content={"error": "Capa não encontrada"})
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
-
-def parse_time_signature(ts_str: str) -> tuple[int, int]:
-    try:
-        parts = ts_str.split("/")
-        return (int(parts[0]), int(parts[1]))
-    except Exception:
-        return (4, 4)
 
 class LoadSongRequest(BaseModel):
     song_id: str
@@ -737,6 +765,11 @@ def api_sync_ableton(req: AbletonSyncRequest):
     if req.time_signature:
         sync_time_signature_to_ableton(req.time_signature)
     return {"status": "ok", "bpm": req.bpm, "time_signature": req.time_signature}
+
+@app.post("/api/ableton/test_marker")
+def api_ableton_test_marker():
+    """Diagnóstico: tenta inserir o marcador agora e devolve o motivo exato se falhar."""
+    return insert_ableton_time_signature_change_blocking()
 
 # ==========================
 # WebSocket para baixa latência (Mac <-> Android)
