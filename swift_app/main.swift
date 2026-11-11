@@ -4496,26 +4496,64 @@ struct WaveformSectionBlock: View, Equatable {
                     }
                 }
                 
-                // Header: Playback Circular Badge ("Co", "I", "V1", etc.) + Botão de Loop
-                HStack(alignment: .center, spacing: 4) {
-                    if width >= 24 {
-                        let badgeSize: CGFloat = width < 42 ? 18 : 22
+                // Controles e Badge da Seção (Layout adaptativo conforme a largura do bloco)
+                let isNarrow = width < 56
+                if isNarrow {
+                    // Trecho Estreito: Bolinha da Seção centralizada em cima, Botão de Loop/Infinito centralizado embaixo
+                    VStack(spacing: 0) {
+                        if width >= 20 {
+                            let badgeSize: CGFloat = width < 36 ? 16 : (width < 44 ? 18 : 22)
+                            Circle()
+                                .fill(Color.black.opacity(0.55))
+                                .overlay(Circle().stroke(badgeColor, lineWidth: 1.6))
+                                .frame(width: badgeSize, height: badgeSize)
+                                .overlay(
+                                    Text(section.shortBadgeName)
+                                        .font(.system(size: width < 44 ? 8 : 10, weight: .black, design: .rounded))
+                                        .foregroundColor(.white)
+                                )
+                                .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
+                                .help(section.cleanFullName)
+                        }
+                        
+                        Spacer()
+                        
+                        if width >= 22 {
+                            Button(action: onLoopToggle) {
+                                TablerIcon(
+                                    name: isLoopInfinite ? "infinity-2" : "loop",
+                                    size: isLoopInfinite ? 20 : 15,
+                                    color: isLoopActive ? Color.cyan : Color.white.opacity(0.50)
+                                )
+                                .shadow(color: isLoopActive ? Color.cyan.opacity(0.8) : Color.black.opacity(0.5), radius: isLoopActive ? 4 : 1, x: 0, y: 1)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
+                        }
+                    }
+                    .padding(.top, 6)
+                    .padding(.bottom, 8)
+                    .frame(width: width, height: 175)
+                } else {
+                    // Trecho Largo: Layout padrão horizontal no topo
+                    HStack(alignment: .center, spacing: 4) {
+                        let badgeSize: CGFloat = 22
                         Circle()
                             .fill(Color.black.opacity(0.55))
                             .overlay(Circle().stroke(badgeColor, lineWidth: 1.6))
                             .frame(width: badgeSize, height: badgeSize)
                             .overlay(
                                 Text(section.shortBadgeName)
-                                    .font(.system(size: width < 42 ? 8 : 10, weight: .black, design: .rounded))
+                                    .font(.system(size: 10, weight: .black, design: .rounded))
                                     .foregroundColor(.white)
                             )
                             .shadow(color: Color.black.opacity(0.4), radius: 2, x: 0, y: 1)
                             .help(section.cleanFullName)
-                    }
-                    
-                    Spacer(minLength: 0)
-                    
-                    if width >= 40 {
+                        
+                        Spacer(minLength: 0)
+                        
                         Button(action: onLoopToggle) {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
@@ -4529,10 +4567,10 @@ struct WaveformSectionBlock: View, Equatable {
                         .buttonStyle(PlainButtonStyle())
                         .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
                     }
+                    .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))
+                    .padding(.trailing, max(2, min(6, (width - 24) / 4)))
+                    .padding(.top, 6)
                 }
-                .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))
-                .padding(.trailing, max(2, min(6, (width - 24) / 4)))
-                .padding(.top, 6)
             }
             .frame(width: width, height: 175)
             .clipped()
