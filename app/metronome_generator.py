@@ -218,8 +218,10 @@ def generate_metronome_track(
         )
 
     # 6. Salva arquivo .cues.json atômico com flag is_metronome=True
+    display_title = raw_name
     cues_payload = {
         "version": 6,
+        "name": display_title,
         "channel": "L",
         "bpm": bpm,
         "time_signature": time_sig,
@@ -234,7 +236,6 @@ def generate_metronome_track(
     atomic_save_json(filepath + ".cues.json", cues_payload, backup=True)
 
     # 7. Retorna SongItem estruturado
-    display_title = raw_name
     return {
         "id": filename,
         "filename": filename,

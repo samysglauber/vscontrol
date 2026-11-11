@@ -188,9 +188,26 @@ func cleanSongTitleForSearch(_ name: String) -> String {
     return s.isEmpty ? name : s
 }
 
+func resolveSongDisplayName(name: String, timeSignature: String? = nil, isMetronome: Bool? = nil) -> String {
+    var res = name
+    if let ts = timeSignature, ts.contains("/") {
+        let tsUnderscore = ts.replacingOccurrences(of: "/", with: "_")
+        if res.contains(tsUnderscore) {
+            res = res.replacingOccurrences(of: tsUnderscore, with: ts)
+        }
+    }
+    if (isMetronome == true || res.lowercased().hasPrefix("click")) {
+        if let regex = try? NSRegularExpression(pattern: "(Click\\s+\\d+)_(\\d+)", options: .caseInsensitive) {
+            let range = NSRange(location: 0, length: res.utf16.count)
+            res = regex.stringByReplacingMatches(in: res, options: [], range: range, withTemplate: "$1/$2")
+        }
+    }
+    return res
+}
+
 struct SongItem: Identifiable, Codable, Hashable {
     let id: String
-    let name: String
+    var name: String
     let filename: String
     let path: String
     var bpm: Double?
@@ -205,6 +222,72 @@ struct SongItem: Identifiable, Codable, Hashable {
     var is_metronome: Bool?
     var subdivide: Bool?
     var subdivision: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, name, filename, path, bpm, time_signature, default_key
+        case full_waveform, has_cover, cover_url, search_query
+        case total_duration, cues, is_metronome, subdivide, subdivision
+    }
+    
+    init(
+        id: String,
+        name: String,
+        filename: String,
+        path: String,
+        bpm: Double? = nil,
+        time_signature: String? = nil,
+        default_key: String? = nil,
+        full_waveform: [Double]? = nil,
+        has_cover: Bool? = nil,
+        cover_url: String? = nil,
+        search_query: String? = nil,
+        total_duration: Double? = nil,
+        cues: [CueSection]? = nil,
+        is_metronome: Bool? = nil,
+        subdivide: Bool? = nil,
+        subdivision: String? = nil
+    ) {
+        self.id = id
+        self.name = resolveSongDisplayName(name: name, timeSignature: time_signature, isMetronome: is_metronome)
+        self.filename = filename
+        self.path = path
+        self.bpm = bpm
+        self.time_signature = time_signature
+        self.default_key = default_key
+        self.full_waveform = full_waveform
+        self.has_cover = has_cover
+        self.cover_url = cover_url
+        self.search_query = search_query
+        self.total_duration = total_duration
+        self.cues = cues
+        self.is_metronome = is_metronome
+        self.subdivide = subdivide
+        self.subdivision = subdivision
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        let rawName = try container.decode(String.self, forKey: .name)
+        self.filename = try container.decode(String.self, forKey: .filename)
+        self.path = try container.decode(String.self, forKey: .path)
+        self.bpm = try container.decodeIfPresent(Double.self, forKey: .bpm)
+        let ts = try container.decodeIfPresent(String.self, forKey: .time_signature)
+        self.time_signature = ts
+        self.default_key = try container.decodeIfPresent(String.self, forKey: .default_key)
+        self.full_waveform = try container.decodeIfPresent([Double].self, forKey: .full_waveform)
+        self.has_cover = try container.decodeIfPresent(Bool.self, forKey: .has_cover)
+        self.cover_url = try container.decodeIfPresent(String.self, forKey: .cover_url)
+        self.search_query = try container.decodeIfPresent(String.self, forKey: .search_query)
+        self.total_duration = try container.decodeIfPresent(Double.self, forKey: .total_duration)
+        self.cues = try container.decodeIfPresent([CueSection].self, forKey: .cues)
+        let isMetro = try container.decodeIfPresent(Bool.self, forKey: .is_metronome)
+        self.is_metronome = isMetro
+        self.subdivide = try container.decodeIfPresent(Bool.self, forKey: .subdivide)
+        self.subdivision = try container.decodeIfPresent(String.self, forKey: .subdivision)
+        
+        self.name = resolveSongDisplayName(name: rawName, timeSignature: ts, isMetronome: isMetro)
+    }
     
     var isMetronomeTrack: Bool {
         if is_metronome == true { return true }
@@ -1285,6 +1368,15 @@ class PlaybackState: ObservableObject {
             } else {
                 songToUse = it.song
             }
+            if it.song.name.contains("/") && songToUse.name.contains("_") {
+                songToUse.name = it.song.name
+            } else if (songToUse.is_metronome == true || songToUse.name.lowercased().hasPrefix("click")),
+                      let ts = songToUse.time_signature, ts.contains("/") {
+                let tsUnderscore = ts.replacingOccurrences(of: "/", with: "_")
+                if songToUse.name.contains(tsUnderscore) {
+                    songToUse.name = songToUse.name.replacingOccurrences(of: tsUnderscore, with: ts)
+                }
+            }
             if songToUse.full_waveform == nil && it.song.full_waveform != nil {
                 songToUse.full_waveform = it.song.full_waveform
             }
@@ -1410,21 +1502,25 @@ class PlaybackState: ObservableObject {
                     // Atualiza as instâncias da setlist com dados frescos do servidor
                     for (idx, item) in self.setlist.enumerated() {
                         if let updated = songs.first(where: { $0.id == item.song.id }) {
-                            let songCues = item.cues ?? updated.cues
-                            let songDur = item.totalDuration ?? updated.total_duration
-                            let songWf = item.waveform ?? updated.full_waveform
+                            var resolvedSong = updated
+                            if item.song.name.contains("/") && resolvedSong.name.contains("_") {
+                                resolvedSong.name = item.song.name
+                            }
+                            let songCues = item.cues ?? resolvedSong.cues
+                            let songDur = item.totalDuration ?? resolvedSong.total_duration
+                            let songWf = item.waveform ?? resolvedSong.full_waveform
                             self.setlist[idx] = SetlistSong(
                                 id: item.id,
-                                song: updated,
+                                song: resolvedSong,
                                 transitionType: item.transitionType,
                                 cues: songCues,
                                 totalDuration: songDur,
                                 waveform: songWf
                             )
                             if let dur = songDur, let cs = songCues {
-                                self.songCache[updated.id] = CachedSongData(
-                                    bpm: updated.bpm ?? 120.0,
-                                    timeSignature: updated.time_signature ?? "4/4",
+                                self.songCache[resolvedSong.id] = CachedSongData(
+                                    bpm: resolvedSong.bpm ?? 120.0,
+                                    timeSignature: resolvedSong.time_signature ?? "4/4",
                                     totalSeconds: dur,
                                     cues: cs,
                                     waveform: songWf ?? []
@@ -1433,7 +1529,11 @@ class PlaybackState: ObservableObject {
                         }
                     }
                     if let current = self.currentSong, let updated = songs.first(where: { $0.id == current.id }) {
-                        self.currentSong = updated
+                        var resolvedCurrent = updated
+                        if current.name.contains("/") && resolvedCurrent.name.contains("_") {
+                            resolvedCurrent.name = current.name
+                        }
+                        self.currentSong = resolvedCurrent
                     } else if self.currentSong == nil, let first = self.setlist.first {
                         self.loadSong(first.song, cues: first.cues)
                     }
@@ -1835,10 +1935,12 @@ class PlaybackState: ObservableObject {
         self.isFadingIn = false
         
         // 1. OBTÉM DADOS COMPLETOS DA MÚSICA SINCRONIZADAMENTE (0.00s)
-        let cached = getOrLoadSongData(for: song, fallbackCues: cues)
+        var songToLoad = song
+        songToLoad.name = resolveSongDisplayName(name: songToLoad.name, timeSignature: songToLoad.time_signature, isMetronome: songToLoad.is_metronome)
+        let cached = getOrLoadSongData(for: songToLoad, fallbackCues: cues)
         
         // 2. ATUALIZAÇÃO ATÔMICA DE TODOS OS ESTADOS DA TIMELINE NO MESMO FRAME
-        self.currentSong = song
+        self.currentSong = songToLoad
         if let d = cached {
             self.bpm = d.bpm
             self.timeSignature = d.timeSignature

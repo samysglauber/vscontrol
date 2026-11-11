@@ -221,6 +221,10 @@ class SongLibrary:
                 with open(full_path + ".cues.json", "r", encoding="utf-8") as f:
                     cdata = json.load(f)
                     if isinstance(cdata, dict):
+                        if cdata.get("name"):
+                            clean_name = str(cdata["name"])
+                        elif cdata.get("title"):
+                            clean_name = str(cdata["title"])
                         if cdata.get("bpm"):
                             bpm = cdata["bpm"]
                         if cdata.get("time_signature"):
@@ -247,6 +251,15 @@ class SongLibrary:
                                 has_cover = True
             except Exception:
                 pass
+
+        # Se for metrônomo e o nome do arquivo foi sanitizado com "_" (ex.: Click 6_8 -> Click 6/8)
+        if is_metronome or clean_name.lower().startswith("click"):
+            if time_sig and "/" in time_sig:
+                ts_underscore = time_sig.replace("/", "_")
+                if ts_underscore in clean_name:
+                    clean_name = clean_name.replace(ts_underscore, time_sig)
+            # Fallback caso time_sig não esteja explícito ou regex geral
+            clean_name = re.sub(r'(Click\s+\d+)_(\d+)', r'\1/\2', clean_name, flags=re.IGNORECASE)
 
         item = {
             "id": entry,
@@ -561,10 +574,14 @@ class SongLibrary:
 
             payload = {
                 "version": 6,
-                "channel": "R",
+                "name": s.get("name"),
+                "channel": s.get("channel", "R"),
                 "bpm": s.get("bpm"),
                 "time_signature": s.get("time_signature", "4/4"),
                 "user_edited": True,
+                "is_metronome": s.get("is_metronome", False),
+                "subdivision": s.get("subdivision", "1/4"),
+                "subdivide": s.get("subdivide", False),
                 "cues": cues,
                 "full_waveform": s.get("full_waveform")
             }
