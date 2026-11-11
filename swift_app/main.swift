@@ -30,6 +30,18 @@ struct CueSection: Identifiable, Codable, Hashable {
         if upper.contains("COUNT") || upper.contains("CONTAGEM") || upper.contains("1234") {
             return "Co"
         }
+        if upper.contains("SECTION") || upper.contains("SEÇÃO") || upper.contains("SECAO") {
+            for n in (1...30).reversed().map({ "\($0)" }) {
+                if upper.contains(n) { return "S\(n)" }
+            }
+            return "Sec"
+        }
+        if upper.contains("PART") || upper.contains("PARTE") {
+            for n in (1...30).reversed().map({ "\($0)" }) {
+                if upper.contains(n) { return "P\(n)" }
+            }
+            return "Pt"
+        }
         if upper.contains("INTRO") {
             return "I"
         }
@@ -308,7 +320,7 @@ struct SongCoverView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-            Image(systemName: "music.note")
+            Image(systemName: (song.name.localizedCaseInsensitiveContains("click") || song.name.localizedCaseInsensitiveContains("metr")) ? "metronome" : "music.note")
                 .font(.system(size: 22, weight: .light))
                 .foregroundColor(Color.white.opacity(0.25))
         }
@@ -422,6 +434,11 @@ struct RefreshTracksResponse: Codable {
     let path: String
     let songs_count: Int
     let songs: [SongItem]?
+}
+
+struct MetronomeGenerateResponse: Codable {
+    let status: String
+    let song: SongItem
 }
 
 struct CueHistorySnapshot {
@@ -1540,6 +1557,76 @@ class PlaybackState: ObservableObject {
     
     func fetchSongs(retryCount: Int = 0) {
         fetchSetlistSongs(retryCount: retryCount)
+    }
+    
+    func generateMetronome(name: String, bpm: Double, timeSignature: String, padKey: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
+        guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/generate") else {
+            completion(.failure(NSError(domain: "Invalid URL", code: 400)))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "name": name,
+            "bpm": bpm,
+            "time_signature": timeSignature,
+            "pad_key": padKey,
+            "duration_sec": 300.0
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            guard let data = data,
+                  let resp = try? JSONDecoder().decode(MetronomeGenerateResponse.self, from: data) else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "DecodeError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Falha ao decodificar metrônomo gerado"])))
+                }
+                return
+            }
+            
+            let song = resp.song
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                
+                // 1. Adiciona à biblioteca
+                if !self.librarySongs.contains(where: { $0.id == song.id }) {
+                    self.librarySongs.insert(song, at: 0)
+                }
+                if !self.songs.contains(where: { $0.id == song.id }) {
+                    self.songs.insert(song, at: 0)
+                }
+                
+                // 2. Adiciona ao setlist atual
+                let newSong = SetlistSong(
+                    song: song,
+                    cues: song.cues,
+                    totalDuration: song.total_duration,
+                    waveform: song.full_waveform
+                )
+                self.setlist.append(newSong)
+                
+                // 3. Atualiza cache
+                if let dur = song.total_duration, let cs = song.cues {
+                    self.songCache[song.id] = CachedSongData(
+                        bpm: song.bpm ?? bpm,
+                        timeSignature: song.time_signature ?? timeSignature,
+                        totalSeconds: dur,
+                        cues: cs,
+                        waveform: song.full_waveform ?? []
+                    )
+                }
+                
+                self.saveSetlistState()
+                completion(.success(song))
+            }
+        }.resume()
     }
     
     func fetchDevices(retryCount: Int = 0) {
@@ -5125,12 +5212,400 @@ struct BottomMixerDock: View {
 }
 
 // ==========================================
-// 9. MODAL PARA ADICIONAR MÚSICAS AO SETLIST
+// 9. MODAL PARA CLICK & PAD (METRÔNOMO)
+// ==========================================
+struct ClickAndPadView: View {
+    @ObservedObject var state: PlaybackState
+    var onBack: () -> Void
+    var onSongAdded: () -> Void
+    
+    @State private var songName: String = "Click & Pad"
+    @State private var bpm: Int = 120
+    @State private var timeSigIndex: Int = 2 // "4/4"
+    @State private var selectedKey: String = "Off"
+    @State private var isGenerating: Bool = false
+    @State private var errorMessage: String? = nil
+    
+    // Suporte a arrasto fluido no wheel
+    @State private var dragBpmStart: Int? = nil
+    @State private var dragTimeSigStart: Int? = nil
+    
+    let timeSignatures = ["2/4", "3/4", "4/4", "5/4", "6/4", "6/8", "7/8", "9/8", "12/8"]
+    let padKeysRow1 = ["Off", "C", "C#", "D", "Eb", "E", "F"]
+    let padKeysRow2 = ["F#", "G", "Ab", "A", "Bb", "B"]
+    
+    var selectedTimeSig: String {
+        guard timeSigIndex >= 0 && timeSigIndex < timeSignatures.count else { return "4/4" }
+        return timeSignatures[timeSigIndex]
+    }
+    
+    var body: some View {
+        VStack(spacing: 14) {
+            // 1. Header (Voltar < , Título, Botão Add azul)
+            HStack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Spacer()
+                
+                Text("Click & Pad")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: generateMetronome) {
+                    if isGenerating {
+                        ProgressView()
+                            .scaleEffect(0.65)
+                            .frame(width: 52, height: 28)
+                    } else {
+                        Text("Add")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(Color(red: 0.0, green: 0.55, blue: 1.0))
+                            .clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isGenerating)
+            }
+            
+            // 2. Linha Name
+            HStack {
+                Text("Name")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                TextField("Click & Pad", text: $songName)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.9))
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 220)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.05))
+            .cornerRadius(8)
+            
+            // 3. Seção Click (Wheel Picker com Tempo e Time Sig)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Click")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                
+                ZStack {
+                    // Barra de seleção central com cantos arredondados
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.10))
+                        .frame(height: 34)
+                    
+                    HStack(spacing: 0) {
+                        // Coluna da Esquerda: Tempo (BPM)
+                        tempoWheelColumn
+                            .frame(maxWidth: .infinity)
+                        
+                        // Coluna da Direita: Time Sig
+                        timeSigWheelColumn
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 145)
+                .clipped()
+            }
+            
+            // 4. Seção Pad (Seleção de Tom em pílulas)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Pad")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        ForEach(padKeysRow1, id: \.self) { key in
+                            padKeyPill(key)
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        ForEach(padKeysRow2, id: \.self) { key in
+                            padKeyPill(key)
+                        }
+                    }
+                }
+            }
+            
+            if let err = errorMessage {
+                Text(err)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+            }
+        }
+        .padding(20)
+        .frame(width: 450, height: 440)
+        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
+    }
+    
+    // Coluna interativa de Tempo (BPM)
+    private var tempoWheelColumn: some View {
+        VStack(spacing: 4) {
+            // -3
+            if bpm - 3 >= 40 {
+                Text("\(bpm - 3)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.15))
+                    .frame(height: 16)
+                    .onTapGesture { bpm = max(40, bpm - 3) }
+            } else {
+                Spacer().frame(height: 16)
+            }
+            
+            // -2
+            if bpm - 2 >= 40 {
+                Text("\(bpm - 2)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.30))
+                    .frame(height: 18)
+                    .onTapGesture { bpm = max(40, bpm - 2) }
+            } else {
+                Spacer().frame(height: 18)
+            }
+            
+            // -1
+            if bpm - 1 >= 40 {
+                Text("\(bpm - 1)")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.60))
+                    .frame(height: 20)
+                    .onTapGesture { bpm = max(40, bpm - 1) }
+            } else {
+                Spacer().frame(height: 20)
+            }
+            
+            // Centro Selecionado: "120 Tempo"
+            HStack(spacing: 6) {
+                Text("\(bpm)")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                Text("Tempo")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(height: 34)
+            
+            // +1
+            if bpm + 1 <= 260 {
+                Text("\(bpm + 1)")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.60))
+                    .frame(height: 20)
+                    .onTapGesture { bpm = min(260, bpm + 1) }
+            } else {
+                Spacer().frame(height: 20)
+            }
+            
+            // +2
+            if bpm + 2 <= 260 {
+                Text("\(bpm + 2)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.30))
+                    .frame(height: 18)
+                    .onTapGesture { bpm = min(260, bpm + 2) }
+            } else {
+                Spacer().frame(height: 18)
+            }
+            
+            // +3
+            if bpm + 3 <= 260 {
+                Text("\(bpm + 3)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.15))
+                    .frame(height: 16)
+                    .onTapGesture { bpm = min(260, bpm + 3) }
+            } else {
+                Spacer().frame(height: 16)
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 3)
+                .onChanged { value in
+                    if dragBpmStart == nil {
+                        dragBpmStart = bpm
+                    }
+                    let delta = -Int(value.translation.height / 10.0)
+                    bpm = max(40, min(260, (dragBpmStart ?? bpm) + delta))
+                }
+                .onEnded { _ in
+                    dragBpmStart = nil
+                }
+        )
+    }
+    
+    // Coluna interativa de Time Signature
+    private var timeSigWheelColumn: some View {
+        VStack(spacing: 4) {
+            // -3
+            if timeSigIndex - 3 >= 0 {
+                Text(timeSignatures[timeSigIndex - 3])
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.15))
+                    .frame(height: 16)
+                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 3) }
+            } else {
+                Spacer().frame(height: 16)
+            }
+            
+            // -2
+            if timeSigIndex - 2 >= 0 {
+                Text(timeSignatures[timeSigIndex - 2])
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.30))
+                    .frame(height: 18)
+                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 2) }
+            } else {
+                Spacer().frame(height: 18)
+            }
+            
+            // -1
+            if timeSigIndex - 1 >= 0 {
+                Text(timeSignatures[timeSigIndex - 1])
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.60))
+                    .frame(height: 20)
+                    .onTapGesture { timeSigIndex = max(0, timeSigIndex - 1) }
+            } else {
+                Spacer().frame(height: 20)
+            }
+            
+            // Centro Selecionado: "4/4 Time Sig"
+            HStack(spacing: 6) {
+                Text(selectedTimeSig)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                Text("Time Sig")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(height: 34)
+            
+            // +1
+            if timeSigIndex + 1 < timeSignatures.count {
+                Text(timeSignatures[timeSigIndex + 1])
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.60))
+                    .frame(height: 20)
+                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 1) }
+            } else {
+                Spacer().frame(height: 20)
+            }
+            
+            // +2
+            if timeSigIndex + 2 < timeSignatures.count {
+                Text(timeSignatures[timeSigIndex + 2])
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.30))
+                    .frame(height: 18)
+                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 2) }
+            } else {
+                Spacer().frame(height: 18)
+            }
+            
+            // +3
+            if timeSigIndex + 3 < timeSignatures.count {
+                Text(timeSignatures[timeSigIndex + 3])
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.15))
+                    .frame(height: 16)
+                    .onTapGesture { timeSigIndex = min(timeSignatures.count - 1, timeSigIndex + 3) }
+            } else {
+                Spacer().frame(height: 16)
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 3)
+                .onChanged { value in
+                    if dragTimeSigStart == nil {
+                        dragTimeSigStart = timeSigIndex
+                    }
+                    let delta = -Int(value.translation.height / 20.0)
+                    timeSigIndex = max(0, min(timeSignatures.count - 1, (dragTimeSigStart ?? timeSigIndex) + delta))
+                }
+                .onEnded { _ in
+                    dragTimeSigStart = nil
+                }
+        )
+    }
+    
+    // Pílula para seleção de tom do Pad
+    private func padKeyPill(_ key: String) -> some View {
+        let isSelected = (selectedKey == key)
+        return Button(action: {
+            selectedKey = key
+        }) {
+            Text(key)
+                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                .foregroundColor(isSelected ? .white : .white.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .frame(height: 26)
+                .background(
+                    isSelected
+                        ? Color(red: 0.0, green: 0.55, blue: 1.0)
+                        : Color.white.opacity(0.08)
+                )
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.06), lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func generateMetronome() {
+        isGenerating = true
+        errorMessage = nil
+        let trimmedName = songName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? "Click & Pad" : trimmedName
+        
+        state.generateMetronome(
+            name: finalName,
+            bpm: Double(bpm),
+            timeSignature: selectedTimeSig,
+            padKey: selectedKey
+        ) { result in
+            isGenerating = false
+            switch result {
+            case .success(_):
+                onSongAdded()
+            case .failure(let err):
+                errorMessage = err.localizedDescription
+            }
+        }
+    }
+}
+
+// ==========================================
+// 10. MODAL PARA ADICIONAR MÚSICAS AO SETLIST
 // ==========================================
 struct AddSongSheetView: View {
     @ObservedObject var state: PlaybackState
     @Environment(\.presentationMode) var presentationMode
     @State private var searchText = ""
+    @State private var isShowingClickAndPad = false
     
     var availablePool: [SongItem] {
         return state.librarySongs.isEmpty ? state.songs : state.librarySongs
@@ -5145,156 +5620,195 @@ struct AddSongSheetView: View {
     }
     
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                Text("Add Song")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white)
-                
-                // Pasta atual clicável e discreta
-                Button(action: { state.selectTracksFolder() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 10))
-                        Text(state.shortFolderName.isEmpty ? "Select Folder" : state.shortFolderName)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
+        Group {
+            if isShowingClickAndPad {
+                ClickAndPadView(
+                    state: state,
+                    onBack: { isShowingClickAndPad = false },
+                    onSongAdded: {
+                        presentationMode.wrappedValue.dismiss()
                     }
-                    .foregroundColor(.white.opacity(0.6))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(5)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(state.tracksFolderPath.isEmpty ? "Select Tracks Folder" : "Folder: \(state.tracksFolderPath)")
-                
-                Spacer()
-                
-                // Botão Refresh discreto
-                Button(action: { state.refreshTracks() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(state.isScanningFolder ? Color.cyan : Color.white.opacity(0.6))
-                        .rotationEffect(Angle(degrees: state.isScanningFolder ? 360 : 0))
-                        .animation(state.isScanningFolder ? Animation.linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: state.isScanningFolder)
-                        .padding(5)
-                        .background(state.isScanningFolder ? Color.cyan.opacity(0.18) : Color.white.opacity(0.06))
-                        .cornerRadius(5)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(state.isScanningFolder)
-                .help("Refresh tracks from folder")
-                
-                Button("Close") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .buttonStyle(PlainButtonStyle())
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.8))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(5)
-            }
-            
-            // Campo de busca nativo minimalista
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.gray)
-                    .font(.system(size: 11))
-                TextField("Search songs...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 12))
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.gray)
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.06))
-            .cornerRadius(7)
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 1))
-            
-            if (state.isLoadingLibrary || state.isScanningFolder) && filteredSongs.isEmpty {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
-                    Text("Scanning tracks folder...")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                }
-                .frame(maxHeight: .infinity)
-            } else if filteredSongs.isEmpty {
-                VStack(spacing: 12) {
-                    Text("No tracks found in current folder.")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                    HStack(spacing: 10) {
-                        Button("Select Folder") {
-                            state.selectTracksFolder()
-                        }
-                        .buttonStyle(BorderedButtonStyle())
-                        
-                        Button("Refresh Tracks") {
-                            state.refreshTracks()
-                        }
-                        .buttonStyle(BorderedButtonStyle())
-                    }
-                }
-                .frame(maxHeight: .infinity)
+                )
             } else {
-                List(filteredSongs) { song in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(song.name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.white)
-                            if let bpm = song.bpm {
-                                Text("\(formatBpm(bpm)) BPM")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
+                VStack(spacing: 12) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text("Add Song")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
+                        
+                        // Pasta atual clicável e discreta
+                        Button(action: { state.selectTracksFolder() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 10))
+                                Text(state.shortFolderName.isEmpty ? "Select Folder" : state.shortFolderName)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
                             }
+                            .foregroundColor(.white.opacity(0.6))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.06))
+                            .cornerRadius(5)
                         }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(state.tracksFolderPath.isEmpty ? "Select Tracks Folder" : "Folder: \(state.tracksFolderPath)")
+                        
                         Spacer()
-                        Button("Add") {
-                            state.setlist.append(
-                                SetlistSong(
-                                    song: song,
-                                    cues: song.cues,
-                                    totalDuration: song.total_duration,
-                                    waveform: song.full_waveform
-                                )
-                            )
-                            if let dur = song.total_duration, let cs = song.cues {
-                                state.songCache[song.id] = CachedSongData(
-                                    bpm: song.bpm ?? 120.0,
-                                    timeSignature: song.time_signature ?? "4/4",
-                                    totalSeconds: dur,
-                                    cues: cs,
-                                    waveform: song.full_waveform ?? []
-                                )
-                            }
-                            state.saveSetlistState()
-                            state.autoFetchCover(for: song)
+                        
+                        // Botão Refresh discreto
+                        Button(action: { state.refreshTracks() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(state.isScanningFolder ? Color.cyan : Color.white.opacity(0.6))
+                                .rotationEffect(Angle(degrees: state.isScanningFolder ? 360 : 0))
+                                .animation(state.isScanningFolder ? Animation.linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: state.isScanningFolder)
+                                .padding(5)
+                                .background(state.isScanningFolder ? Color.cyan.opacity(0.18) : Color.white.opacity(0.06))
+                                .cornerRadius(5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(state.isScanningFolder)
+                        .help("Refresh tracks from folder")
+                        
+                        Button("Close") {
                             presentationMode.wrappedValue.dismiss()
                         }
-                        .buttonStyle(BorderedProminentButtonStyle())
+                        .buttonStyle(PlainButtonStyle())
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(5)
+                    }
+                    
+                    // Botão para Gerar Metrônomo (Click & Pad)
+                    Button(action: {
+                        isShowingClickAndPad = true
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "metronome")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color(red: 0.0, green: 0.55, blue: 1.0))
+                            Text("Create Click & Pad (Metrônomo)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.4))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.06))
+                        .cornerRadius(7)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(Color(red: 0.0, green: 0.55, blue: 1.0).opacity(0.35), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    // Campo de busca nativo minimalista
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 11))
+                        TextField("Search songs...", text: $searchText)
+                            .textFieldStyle(PlainTextFieldStyle())
+                            .font(.system(size: 12))
+                        if !searchText.isEmpty {
+                            Button(action: { searchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.06))
+                    .cornerRadius(7)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                    
+                    if (state.isLoadingLibrary || state.isScanningFolder) && filteredSongs.isEmpty {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                            Text("Scanning tracks folder...")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else if filteredSongs.isEmpty {
+                        VStack(spacing: 12) {
+                            Text("No tracks found in current folder.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                            HStack(spacing: 10) {
+                                Button("Select Folder") {
+                                    state.selectTracksFolder()
+                                }
+                                .buttonStyle(BorderedButtonStyle())
+                                
+                                Button("Refresh Tracks") {
+                                    state.refreshTracks()
+                                }
+                                .buttonStyle(BorderedButtonStyle())
+                            }
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else {
+                        List(filteredSongs) { song in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(song.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white)
+                                    if let bpm = song.bpm {
+                                        Text("\(formatBpm(bpm)) BPM")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                Spacer()
+                                Button("Add") {
+                                    state.setlist.append(
+                                        SetlistSong(
+                                            song: song,
+                                            cues: song.cues,
+                                            totalDuration: song.total_duration,
+                                            waveform: song.full_waveform
+                                        )
+                                    )
+                                    if let dur = song.total_duration, let cs = song.cues {
+                                        state.songCache[song.id] = CachedSongData(
+                                            bpm: song.bpm ?? 120.0,
+                                            timeSignature: song.time_signature ?? "4/4",
+                                            totalSeconds: dur,
+                                            cues: cs,
+                                            waveform: song.full_waveform ?? []
+                                        )
+                                    }
+                                    state.saveSetlistState()
+                                    state.autoFetchCover(for: song)
+                                    presentationMode.wrappedValue.dismiss()
+                                }
+                                .buttonStyle(BorderedProminentButtonStyle())
+                            }
+                        }
                     }
                 }
-            }
-        }
-        .padding(20)
-        .frame(width: 450, height: 420)
-        .background(Color(red: 0.11, green: 0.11, blue: 0.12))
-        .onAppear {
-            if state.librarySongs.isEmpty {
-                state.fetchAllLibrarySongs()
+                .padding(20)
+                .frame(width: 450, height: 420)
+                .background(Color(red: 0.11, green: 0.11, blue: 0.12))
+                .onAppear {
+                    if state.librarySongs.isEmpty {
+                        state.fetchAllLibrarySongs()
+                    }
+                }
             }
         }
     }
