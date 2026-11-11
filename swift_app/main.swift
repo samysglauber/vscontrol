@@ -5330,19 +5330,55 @@ struct BottomMixerDock: View {
 // ==========================================
 // 9. COMPONENTES DE WHEEL PICKER 3D
 // ==========================================
+struct ScrollWheelHandler: NSViewRepresentable {
+    var onScroll: (CGFloat) -> Void
+    var onEnd: () -> Void
+
+    func makeNSView(context: Context) -> ScrollEventView {
+        let view = ScrollEventView()
+        view.onScroll = onScroll
+        view.onEnd = onEnd
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollEventView, context: Context) {
+        nsView.onScroll = onScroll
+        nsView.onEnd = onEnd
+    }
+
+    class ScrollEventView: NSView {
+        var onScroll: ((CGFloat) -> Void)?
+        var onEnd: (() -> Void)?
+        private var endTimer: Timer?
+
+        override func scrollWheel(with event: NSEvent) {
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 8.0
+            onScroll?(delta)
+
+            endTimer?.invalidate()
+            if event.phase == .ended || event.momentumPhase == .ended {
+                onEnd?()
+            } else {
+                endTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                    self?.onEnd?()
+                }
+            }
+        }
+    }
+}
+
 struct WheelPicker<Item: Hashable>: View {
     @Binding var selection: Item
     let items: [Item]
     let label: String
-    var valueWidth: CGFloat = 48
+    var valueWidth: CGFloat = 44
     var labelWidth: CGFloat = 64
     let format: (Item) -> String
 
     private let rowHeight: CGFloat = 26
     private let visibleRows = 5
-    @State private var scrolledID: Item?
-    @State private var isInternalUpdate: Bool = false
-    @State private var dragAccumulator: CGFloat = 0
+    @State private var dragOffset: CGFloat = 0
+    @State private var lastDragY: CGFloat = 0
 
     private var viewportHeight: CGFloat { rowHeight * CGFloat(visibleRows) }
     private var totalWidth: CGFloat { valueWidth + labelWidth + 10 + 24 }
@@ -5350,56 +5386,55 @@ struct WheelPicker<Item: Hashable>: View {
     var body: some View {
         let rh = rowHeight
         let center = viewportHeight / 2
+        let curIdx = items.firstIndex(of: selection) ?? 0
 
         ZStack {
-            // Faixa de destaque (largura total, atrás do valor + rótulo)
+            // Faixa de destaque central
             RoundedRectangle(cornerRadius: 7)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
                 .frame(height: rowHeight)
 
-            // ScrollView ocupando toda a largura para receber scroll/wheel em toda a área
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
-                    ForEach(items, id: \.self) { item in
-                        HStack(spacing: 10) {
-                            Text(format(item))
-                                .font(.system(size: 16, weight: .regular).monospacedDigit())
-                                .foregroundStyle(Color.white.opacity(0.65))
-                                .frame(width: valueWidth, alignment: .trailing)
-                            
-                            // Espaço reservado para o label
-                            Spacer()
-                                .frame(width: labelWidth)
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(height: rh)
-                        .contentShape(Rectangle())
-                        .id(item)
-                        .visualEffect { content, proxy in
-                            // distância da linha até o centro: -1 (topo) ... 0 (centro) ... 1 (base)
-                            let midY = proxy.frame(in: .named("wheel_\(label)")).midY
-                            let d = max(-1, min(1, (midY - center) / (rh * 2.5)))
-                            return content
-                                .opacity(1 - abs(d) * 0.75)
-                                .scaleEffect(1 - abs(d) * 0.18)
-                                .rotation3DEffect(
-                                    .degrees(-d * 65),
-                                    axis: (x: 1, y: 0, z: 0),
-                                    perspective: 0.5
-                                )
-                        }
-                        .onTapGesture {
-                            selectItem(item)
+            // Coluna de itens 3D com rotação contínua em tempo real (1:1 com o arrasto)
+            GeometryReader { _ in
+                ZStack {
+                    ForEach(-3...3, id: \.self) { offsetIndex in
+                        let itemIndex = curIdx + offsetIndex
+                        if itemIndex >= 0 && itemIndex < items.count {
+                            let item = items[itemIndex]
+                            let yPos = center + CGFloat(offsetIndex) * rh + dragOffset
+                            let d = max(-1.0, min(1.0, (yPos - center) / (rh * 2.5)))
+
+                            HStack(spacing: 10) {
+                                Text(format(item))
+                                    .font(.system(size: 16, weight: .regular).monospacedDigit())
+                                    .foregroundStyle(Color.white.opacity(0.65))
+                                    .frame(width: valueWidth, alignment: .trailing)
+
+                                Spacer()
+                                    .frame(width: labelWidth)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .frame(height: rh)
+                            .position(x: totalWidth / 2, y: yPos)
+                            .opacity(1.0 - abs(d) * 0.75)
+                            .scaleEffect(1.0 - abs(d) * 0.18)
+                            .rotation3DEffect(
+                                .degrees(-d * 65),
+                                axis: (x: 1, y: 0, z: 0),
+                                perspective: 0.5
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                    selection = item
+                                    dragOffset = 0
+                                }
+                            }
                         }
                     }
                 }
-                .scrollTargetLayout()
             }
-            .coordinateSpace(name: "wheel_\(label)")
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $scrolledID, anchor: .center)
-            .contentMargins(.vertical, rh * 2, for: .scrollContent)
             .frame(width: totalWidth, height: viewportHeight)
             .mask(
                 LinearGradient(
@@ -5408,7 +5443,7 @@ struct WheelPicker<Item: Hashable>: View {
                 )
             )
 
-            // Rótulo fixo alinhado à sua coluna, sem bloquear eventos de toque/scroll
+            // Rótulo fixo (Tempo / Time Sig em negrito)
             HStack(spacing: 10) {
                 Color.clear
                     .frame(width: valueWidth)
@@ -5422,57 +5457,84 @@ struct WheelPicker<Item: Hashable>: View {
             .allowsHitTesting(false)
         }
         .frame(width: totalWidth, height: viewportHeight)
+        .background(
+            ScrollWheelHandler(
+                onScroll: { delta in
+                    applyContinuousDelta(delta)
+                },
+                onEnd: {
+                    snapToNearest()
+                }
+            )
+        )
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 2)
+            DragGesture(minimumDistance: 1)
                 .onChanged { gesture in
-                    let deltaY = -(gesture.translation.height - dragAccumulator)
-                    let stepHeight: CGFloat = 18.0
-                    if abs(deltaY) >= stepHeight {
-                        let steps = Int(deltaY / stepHeight)
-                        if let curIdx = items.firstIndex(of: selection) {
-                            let newIdx = max(0, min(items.count - 1, curIdx + steps))
-                            let newItem = items[newIdx]
-                            if newItem != selection {
-                                selectItem(newItem)
-                            }
+                    let delta = gesture.translation.height - lastDragY
+                    lastDragY = gesture.translation.height
+                    applyContinuousDelta(delta)
+                }
+                .onEnded { gesture in
+                    lastDragY = 0
+                    let velocity = gesture.predictedEndTranslation.height - gesture.translation.height
+                    let extraSteps = Int(round(velocity / (rh * 1.5)))
+                    if extraSteps != 0 {
+                        let cur = items.firstIndex(of: selection) ?? 0
+                        let targetIdx = max(0, min(items.count - 1, cur - extraSteps))
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                            selection = items[targetIdx]
+                            dragOffset = 0
                         }
-                        dragAccumulator = gesture.translation.height
+                    } else {
+                        snapToNearest()
                     }
                 }
-                .onEnded { _ in
-                    dragAccumulator = 0
-                }
         )
-        .onAppear {
-            scrolledID = selection
-        }
-        .onChange(of: scrolledID) { _, new in
-            if let new, new != selection {
-                isInternalUpdate = true
-                selection = new
-                DispatchQueue.main.async {
-                    isInternalUpdate = false
-                }
-            }
-        }
-        .onChange(of: selection) { _, new in
-            if !isInternalUpdate && scrolledID != new {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    scrolledID = new
-                }
-            }
-        }
     }
 
-    private func selectItem(_ item: Item) {
-        isInternalUpdate = true
-        selection = item
-        withAnimation(.easeOut(duration: 0.15)) {
-            scrolledID = item
+    private func applyContinuousDelta(_ delta: CGFloat) {
+        let rh = rowHeight
+        var newOffset = dragOffset + delta
+        var cur = items.firstIndex(of: selection) ?? 0
+
+        while newOffset > rh / 2 {
+            if cur > 0 {
+                cur -= 1
+                newOffset -= rh
+            } else {
+                newOffset = min(newOffset, rh * 0.4)
+                break
+            }
         }
-        DispatchQueue.main.async {
-            isInternalUpdate = false
+
+        while newOffset < -rh / 2 {
+            if cur < items.count - 1 {
+                cur += 1
+                newOffset += rh
+            } else {
+                newOffset = max(newOffset, -rh * 0.4)
+                break
+            }
+        }
+
+        selection = items[cur]
+        dragOffset = newOffset
+    }
+
+    private func snapToNearest() {
+        let rh = rowHeight
+        var cur = items.firstIndex(of: selection) ?? 0
+
+        if dragOffset > rh * 0.25 && cur > 0 {
+            cur -= 1
+        } else if dragOffset < -rh * 0.25 && cur < items.count - 1 {
+            cur += 1
+        }
+
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            selection = items[cur]
+            dragOffset = 0
         }
     }
 }
