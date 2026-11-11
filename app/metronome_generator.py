@@ -81,7 +81,8 @@ def generate_metronome_track(
     time_signature: str = "4/4",
     duration_sec: float = 600.0,
     output_dir: str | None = None,
-    existing_filepath: str | None = None
+    existing_filepath: str | None = None,
+    subdivide: bool = False
 ) -> dict:
     """
     Gera ou atualiza uma faixa de metrônomo estéreo (~10 minutos) e seus metadados (.cues.json).
@@ -109,6 +110,7 @@ def generate_metronome_track(
 
     # 1. Geração do Click no Canal L (In-Ear)
     click_regular, click_accent = get_click_samples(sample_rate=sr)
+    click_subdivision = (click_regular * 0.70).astype(np.float32)
     for bar in range(total_bars):
         for beat in range(beats_per_bar):
             sample_pos = int((bar * beats_per_bar + beat) * beat_sec * sr)
@@ -116,6 +118,13 @@ def generate_metronome_track(
             avail = min(len(click_sample), total_samples - sample_pos)
             if avail > 0:
                 audio[sample_pos:sample_pos + avail, 0] = click_sample[:avail]
+            
+            # Duplicação do click somando colcheias (1/8) entre os tempos
+            if subdivide:
+                sample_pos_sub = int((bar * beats_per_bar + beat + 0.5) * beat_sec * sr)
+                avail_sub = min(len(click_subdivision), total_samples - sample_pos_sub)
+                if avail_sub > 0:
+                    audio[sample_pos_sub:sample_pos_sub + avail_sub, 0] = click_subdivision[:avail_sub]
 
     # Canal R é mantido como silêncio absoluto (zeros) para uso profissional ao vivo
 
@@ -203,6 +212,7 @@ def generate_metronome_track(
         "channel": "L",
         "bpm": bpm,
         "time_signature": time_sig,
+        "subdivide": bool(subdivide),
         "total_duration": total_duration,
         "cues": cues,
         "full_waveform": full_wf,
@@ -220,6 +230,7 @@ def generate_metronome_track(
         "path": filepath,
         "bpm": bpm,
         "time_signature": time_sig,
+        "subdivide": bool(subdivide),
         "has_cached_cues": True,
         "default_key": "",
         "has_cover": False,

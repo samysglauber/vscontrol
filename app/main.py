@@ -586,6 +586,7 @@ class MetronomeGenerateRequest(BaseModel):
     bpm: float = 120.0
     time_signature: str = "4/4"
     duration_sec: float = 600.0
+    subdivide: bool = False
 
 class MetronomeUpdateRequest(BaseModel):
     song_id: str
@@ -593,6 +594,7 @@ class MetronomeUpdateRequest(BaseModel):
     bpm: float
     time_signature: str
     duration_sec: float = 600.0
+    subdivide: bool = False
 
 @app.post("/api/metronome/generate")
 def api_generate_metronome(req: MetronomeGenerateRequest):
@@ -603,7 +605,8 @@ def api_generate_metronome(req: MetronomeGenerateRequest):
             bpm=req.bpm,
             time_signature=req.time_signature,
             duration_sec=req.duration_sec,
-            output_dir=out_dir
+            output_dir=out_dir,
+            subdivide=req.subdivide
         )
         library.refresh()
         return {"status": "success", "song": song}
@@ -630,7 +633,8 @@ def api_update_metronome(req: MetronomeUpdateRequest):
             time_signature=req.time_signature,
             duration_sec=req.duration_sec,
             output_dir=out_dir,
-            existing_filepath=existing_path
+            existing_filepath=existing_path,
+            subdivide=req.subdivide
         )
         library.refresh()
 

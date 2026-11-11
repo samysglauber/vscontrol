@@ -203,6 +203,7 @@ struct SongItem: Identifiable, Codable, Hashable {
     var total_duration: Double?
     var cues: [CueSection]?
     var is_metronome: Bool?
+    var subdivide: Bool?
     
     var isMetronomeTrack: Bool {
         if is_metronome == true { return true }
@@ -1576,7 +1577,7 @@ class PlaybackState: ObservableObject {
         self.isShowingMetronomeEditor = true
     }
     
-    func generateMetronome(name: String, bpm: Double, timeSignature: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
+    func generateMetronome(name: String, bpm: Double, timeSignature: String, subdivide: Bool = false, completion: @escaping (Result<SongItem, Error>) -> Void) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/generate") else {
             completion(.failure(NSError(domain: "Invalid URL", code: 400)))
             return
@@ -1590,7 +1591,8 @@ class PlaybackState: ObservableObject {
             "name": name,
             "bpm": bpm,
             "time_signature": timeSignature,
-            "duration_sec": 600.0
+            "duration_sec": 600.0,
+            "subdivide": subdivide
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         
@@ -1645,7 +1647,7 @@ class PlaybackState: ObservableObject {
         }.resume()
     }
     
-    func updateMetronome(item: SetlistSong, name: String, bpm: Double, timeSignature: String, completion: @escaping (Result<SongItem, Error>) -> Void) {
+    func updateMetronome(item: SetlistSong, name: String, bpm: Double, timeSignature: String, subdivide: Bool = false, completion: @escaping (Result<SongItem, Error>) -> Void) {
         guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/update") else {
             completion(.failure(NSError(domain: "Invalid URL", code: 400)))
             return
@@ -1660,7 +1662,8 @@ class PlaybackState: ObservableObject {
             "name": name,
             "bpm": bpm,
             "time_signature": timeSignature,
-            "duration_sec": 600.0
+            "duration_sec": 600.0,
+            "subdivide": subdivide
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         
@@ -5583,6 +5586,7 @@ struct MetronomeModalView: View {
     @State private var songName: String = ""
     @State private var bpm: Int = 120
     @State private var timeSigIndex: Int = 2 // "4/4"
+    @State private var subdivide: Bool = false
     @State private var isProcessing: Bool = false
     @State private var errorMessage: String? = nil
     
@@ -5652,23 +5656,68 @@ struct MetronomeModalView: View {
                 
                 Spacer()
                 
-                TextField("Click (\(bpm) BPM)", text: $songName)
+                TextField("Click \(selectedTimeSig) (\(bpm) BPM)", text: $songName)
                     .textFieldStyle(PlainTextFieldStyle())
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
                     .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 180)
+                    .frame(maxWidth: 190)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(Color.white.opacity(0.05))
             .cornerRadius(7)
             
-            // 3. Seção Click (WheelPickers lado a lado)
+            // 3. Seção Click (WheelPickers lado a lado + Seletor de Subdivisão)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Click")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white)
+                HStack(alignment: .center) {
+                    Text("Click")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Spacer()
+                    
+                    HStack(spacing: 4) {
+                        Text("Subdivisão:")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.white.opacity(0.55))
+                        
+                        HStack(spacing: 2) {
+                            Button(action: { subdivide = false }) {
+                                Text("1/4")
+                                    .font(.system(size: 10, weight: !subdivide ? .bold : .medium))
+                                    .foregroundColor(!subdivide ? .white : .white.opacity(0.5))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(!subdivide ? Color.white.opacity(0.18) : Color.clear)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Click padrão em 1/4 (semínimas)")
+                            
+                            Button(action: { subdivide = true }) {
+                                HStack(spacing: 2) {
+                                    Text("1/8")
+                                        .font(.system(size: 10, weight: subdivide ? .bold : .medium))
+                                    if subdivide {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 7, weight: .bold))
+                                    }
+                                }
+                                .foregroundColor(subdivide ? .white : .white.opacity(0.5))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(subdivide ? Color(red: 0.0, green: 0.55, blue: 1.0) : Color.clear)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Duplicar click somando colcheias em 1/8")
+                        }
+                        .padding(2)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                }
                 
                 HStack(spacing: 12) {
                     Spacer()
@@ -5711,18 +5760,45 @@ struct MetronomeModalView: View {
                 if let ts = item.song.time_signature, let idx = timeSignatures.firstIndex(of: ts) {
                     timeSigIndex = idx
                 }
+                subdivide = item.song.subdivide ?? false
             } else {
                 if songName.isEmpty {
-                    songName = "Click (\(bpm) BPM)"
+                    songName = "Click \(selectedTimeSig) (\(bpm) BPM)"
                 }
             }
         }
         .onChange(of: bpm) { _, newBpm in
-            let isDefaultName = songName.isEmpty || songName.range(of: #"^Click\s*\(\s*\d+\s*BPM\s*\)$"#, options: .regularExpression) != nil
-            if isDefaultName {
-                songName = "Click (\(newBpm) BPM)"
-            } else if let range = songName.range(of: #"\b\d+\s*BPM\b"#, options: .regularExpression) {
-                songName = songName.replacingCharacters(in: range, with: "\(newBpm) BPM")
+            updateDefaultName(newBpm: newBpm, newTimeSig: nil)
+        }
+        .onChange(of: timeSigIndex) { _, newIdx in
+            let newTs = (newIdx >= 0 && newIdx < timeSignatures.count) ? timeSignatures[newIdx] : "4/4"
+            updateDefaultName(newBpm: nil, newTimeSig: newTs)
+        }
+    }
+    
+    private func updateDefaultName(newBpm: Int?, newTimeSig: String?) {
+        let currentBpm = newBpm ?? bpm
+        let currentTs = newTimeSig ?? selectedTimeSig
+        
+        // Padrão que reconhece nomes padrão anteriores ou atuais
+        let pattern = #"^Click(\s+\d+/\d+)?\s*\(\s*\d+\s*BPM\s*\)$"#
+        let isDefaultName = songName.isEmpty || songName.range(of: pattern, options: .regularExpression) != nil
+        
+        if isDefaultName {
+            songName = "Click \(currentTs) (\(currentBpm) BPM)"
+        } else {
+            // Se nome customizado possui indicação de BPM, atualiza
+            if let newB = newBpm, let range = songName.range(of: #"\b\d+\s*BPM\b"#, options: .regularExpression) {
+                songName = songName.replacingCharacters(in: range, with: "\(newB) BPM")
+            }
+            // Se nome customizado possui time signature antiga, atualiza para a nova
+            if let newT = newTimeSig {
+                for ts in timeSignatures {
+                    if ts != newT, songName.contains(ts) {
+                        songName = songName.replacingOccurrences(of: ts, with: newT)
+                        break
+                    }
+                }
             }
         }
     }
@@ -5731,14 +5807,15 @@ struct MetronomeModalView: View {
         isProcessing = true
         errorMessage = nil
         let trimmedName = songName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmedName.isEmpty ? "Click (\(bpm) BPM)" : trimmedName
+        let finalName = trimmedName.isEmpty ? "Click \(selectedTimeSig) (\(bpm) BPM)" : trimmedName
         
         if let item = editingItem {
             state.updateMetronome(
                 item: item,
                 name: finalName,
                 bpm: Double(bpm),
-                timeSignature: selectedTimeSig
+                timeSignature: selectedTimeSig,
+                subdivide: subdivide
             ) { result in
                 isProcessing = false
                 switch result {
@@ -5752,7 +5829,8 @@ struct MetronomeModalView: View {
             state.generateMetronome(
                 name: finalName,
                 bpm: Double(bpm),
-                timeSignature: selectedTimeSig
+                timeSignature: selectedTimeSig,
+                subdivide: subdivide
             ) { result in
                 isProcessing = false
                 switch result {
