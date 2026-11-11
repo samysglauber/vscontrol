@@ -3416,7 +3416,6 @@ struct SetlistCarouselView: View {
                                         }) {
                                             Label("Edit Metronome...", systemImage: "metronome")
                                         }
-                                        Divider()
                                     } else {
                                         Button(action: {
                                             state.openCoverPicker(for: item.song)
@@ -3433,12 +3432,12 @@ struct SetlistCarouselView: View {
                                         }
                                         
                                         Divider()
-                                    }
-                                    
-                                    Button(action: {
-                                        state.openSongEditor(for: item.song)
-                                    }) {
-                                        Label("Edit Song", systemImage: "slider.horizontal.3")
+                                        
+                                        Button(action: {
+                                            state.openSongEditor(for: item.song)
+                                        }) {
+                                            Label("Edit Song", systemImage: "slider.horizontal.3")
+                                        }
                                     }
                                     
                                     Divider()
@@ -5719,8 +5718,11 @@ struct MetronomeModalView: View {
             }
         }
         .onChange(of: bpm) { _, newBpm in
-            if !isEditing && (songName.isEmpty || songName.hasPrefix("Click (")) {
+            let isDefaultName = songName.isEmpty || songName.range(of: #"^Click\s*\(\s*\d+\s*BPM\s*\)$"#, options: .regularExpression) != nil
+            if isDefaultName {
                 songName = "Click (\(newBpm) BPM)"
+            } else if let range = songName.range(of: #"\b\d+\s*BPM\b"#, options: .regularExpression) {
+                songName = songName.replacingCharacters(in: range, with: "\(newBpm) BPM")
             }
         }
     }
