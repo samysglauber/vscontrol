@@ -5378,9 +5378,9 @@ struct WheelPicker<Item: Hashable>: View {
     var labelWidth: CGFloat
     let format: (Item) -> String
 
-    private let viewportHeight: CGFloat = 150
-    private let cylinderRadius: CGFloat = 88
-    private let stepAngle: CGFloat = 16          // graus de cilindro por item
+    private let viewportHeight: CGFloat = 136
+    private let cylinderRadius: CGFloat = 70
+    private let stepAngle: CGFloat = 18.5        // graus de cilindro por item
     private let rowHeight: CGFloat = 26
 
     // Pontos de arraste equivalentes a 1 item (bate com o deslocamento visual no centro)
