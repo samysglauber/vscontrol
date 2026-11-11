@@ -5371,42 +5371,52 @@ struct WheelPicker<Item: Hashable>: View {
     @Binding var selection: Item
     let items: [Item]
     let label: String
-    var valueWidth: CGFloat = 44
+    var valueWidth: CGFloat = 48
     var labelWidth: CGFloat = 64
     let format: (Item) -> String
 
-    private let rowHeight: CGFloat = 26
-    private let visibleRows = 5
+    private let viewportHeight: CGFloat = 190
+    private let cylinderRadius: CGFloat = 105
+    private let stepAngleDegrees: CGFloat = 21.0
+    private let stepHeight: CGFloat = 34.0
+    private let centerRowHeight: CGFloat = 32.0
+
     @State private var dragOffset: CGFloat = 0
     @State private var lastDragY: CGFloat = 0
 
-    private var viewportHeight: CGFloat { rowHeight * CGFloat(visibleRows) }
     private var totalWidth: CGFloat { valueWidth + labelWidth + 10 + 24 }
 
     var body: some View {
-        let rh = rowHeight
         let center = viewportHeight / 2
         let curIdx = items.firstIndex(of: selection) ?? 0
 
         ZStack {
-            // Faixa de destaque central
-            RoundedRectangle(cornerRadius: 7)
+            // Faixa de destaque central espaçosa
+            RoundedRectangle(cornerRadius: 8)
                 .fill(Color(red: 0.14, green: 0.22, blue: 0.38))
-                .frame(height: rowHeight)
+                .frame(width: totalWidth, height: centerRowHeight)
 
-            // Coluna de itens 3D com rotação contínua em tempo real (1:1 com o arrasto)
+            // Coluna cilíndrica 3D com curvatura real e espaçamento uniforme
             GeometryReader { _ in
                 ZStack {
                     ForEach(-3...3, id: \.self) { offsetIndex in
                         let itemIndex = curIdx + offsetIndex
                         if itemIndex >= 0 && itemIndex < items.count {
                             let item = items[itemIndex]
-                            let yPos = center + CGFloat(offsetIndex) * rh + dragOffset
-                            let d = max(-1.0, min(1.0, (yPos - center) / (rh * 2.5)))
+                            
+                            // Ângulo contínuo na superfície cilíndrica
+                            let effectiveStep = CGFloat(offsetIndex) - (dragOffset / stepHeight)
+                            let angleDeg = effectiveStep * stepAngleDegrees
+                            let angleRad = angleDeg * .pi / 180.0
+
+                            // Projeção vertical trigonométrica suave (sem sobreposição)
+                            let yPos = center + cylinderRadius * sin(angleRad)
+                            let cosVal = max(0.0, cos(angleRad))
+                            let isCenter = abs(angleDeg) < stepAngleDegrees * 0.5
 
                             HStack(spacing: 10) {
                                 Text(format(item))
-                                    .font(.system(size: 16, weight: .regular).monospacedDigit())
+                                    .font(.system(size: isCenter ? 17 : 15, weight: .regular).monospacedDigit())
                                     .foregroundStyle(Color.white.opacity(0.65))
                                     .frame(width: valueWidth, alignment: .trailing)
 
@@ -5415,18 +5425,18 @@ struct WheelPicker<Item: Hashable>: View {
                             }
                             .padding(.horizontal, 12)
                             .frame(maxWidth: .infinity, alignment: .center)
-                            .frame(height: rh)
+                            .frame(height: centerRowHeight)
                             .position(x: totalWidth / 2, y: yPos)
-                            .opacity(1.0 - abs(d) * 0.75)
-                            .scaleEffect(1.0 - abs(d) * 0.18)
+                            .opacity(pow(cosVal, 1.8))
+                            .scaleEffect(0.80 + 0.20 * cosVal)
                             .rotation3DEffect(
-                                .degrees(-d * 65),
+                                .degrees(angleDeg),
                                 axis: (x: 1, y: 0, z: 0),
-                                perspective: 0.5
+                                perspective: 0.4
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                                     selection = item
                                     dragOffset = 0
                                 }
@@ -5438,8 +5448,16 @@ struct WheelPicker<Item: Hashable>: View {
             .frame(width: totalWidth, height: viewportHeight)
             .mask(
                 LinearGradient(
-                    colors: [.clear, .black, .black, .black, .clear],
-                    startPoint: .top, endPoint: .bottom
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black.opacity(0.4), location: 0.10),
+                        .init(color: .black, location: 0.22),
+                        .init(color: .black, location: 0.78),
+                        .init(color: .black.opacity(0.4), location: 0.90),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
             )
 
@@ -5449,7 +5467,7 @@ struct WheelPicker<Item: Hashable>: View {
                     .frame(width: valueWidth)
 
                 Text(label)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: labelWidth, alignment: .leading)
             }
@@ -5478,11 +5496,11 @@ struct WheelPicker<Item: Hashable>: View {
                 .onEnded { gesture in
                     lastDragY = 0
                     let velocity = gesture.predictedEndTranslation.height - gesture.translation.height
-                    let extraSteps = Int(round(velocity / (rh * 1.5)))
+                    let extraSteps = Int(round(velocity / (stepHeight * 1.5)))
                     if extraSteps != 0 {
                         let cur = items.firstIndex(of: selection) ?? 0
                         let targetIdx = max(0, min(items.count - 1, cur - extraSteps))
-                        withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                             selection = items[targetIdx]
                             dragOffset = 0
                         }
@@ -5494,26 +5512,25 @@ struct WheelPicker<Item: Hashable>: View {
     }
 
     private func applyContinuousDelta(_ delta: CGFloat) {
-        let rh = rowHeight
         var newOffset = dragOffset + delta
         var cur = items.firstIndex(of: selection) ?? 0
 
-        while newOffset > rh / 2 {
+        while newOffset > stepHeight / 2 {
             if cur > 0 {
                 cur -= 1
-                newOffset -= rh
+                newOffset -= stepHeight
             } else {
-                newOffset = min(newOffset, rh * 0.4)
+                newOffset = min(newOffset, stepHeight * 0.4)
                 break
             }
         }
 
-        while newOffset < -rh / 2 {
+        while newOffset < -stepHeight / 2 {
             if cur < items.count - 1 {
                 cur += 1
-                newOffset += rh
+                newOffset += stepHeight
             } else {
-                newOffset = max(newOffset, -rh * 0.4)
+                newOffset = max(newOffset, -stepHeight * 0.4)
                 break
             }
         }
@@ -5523,16 +5540,15 @@ struct WheelPicker<Item: Hashable>: View {
     }
 
     private func snapToNearest() {
-        let rh = rowHeight
         var cur = items.firstIndex(of: selection) ?? 0
 
-        if dragOffset > rh * 0.25 && cur > 0 {
+        if dragOffset > stepHeight * 0.25 && cur > 0 {
             cur -= 1
-        } else if dragOffset < -rh * 0.25 && cur < items.count - 1 {
+        } else if dragOffset < -stepHeight * 0.25 && cur < items.count - 1 {
             cur += 1
         }
 
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
             selection = items[cur]
             dragOffset = 0
         }
@@ -5645,14 +5661,14 @@ struct MetronomeModalView: View {
                         selection: $bpm,
                         items: Array(40...260),
                         label: "Tempo",
-                        valueWidth: 44
+                        valueWidth: 48
                     ) { "\($0)" }
                     
                     WheelPicker(
                         selection: $timeSigIndex,
                         items: Array(timeSignatures.indices),
                         label: "Time Sig",
-                        valueWidth: 36
+                        valueWidth: 42
                     ) { timeSignatures[$0] }
                     
                     Spacer()
@@ -5668,7 +5684,7 @@ struct MetronomeModalView: View {
             }
         }
         .padding(20)
-        .frame(width: 440, height: 320)
+        .frame(width: 440, height: 380)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         .onAppear {
             if let item = editingItem {
