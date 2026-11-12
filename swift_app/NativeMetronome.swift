@@ -13,6 +13,90 @@ final class NativeMetronomeGenerator {
         "#10b981", "#f59e0b", "#06b6d4", "#a855f7"
     ]
     
+    private var clickCache: [Double: ([Float], [Float])] = [:]
+    
+    private func loadWavMono(path: String) -> [Float]? {
+        let url = URL(fileURLWithPath: path)
+        guard let audioFile = try? AVAudioFile(forReading: url) else { return nil }
+        let format = audioFile.processingFormat
+        let frameCount = AVAudioFrameCount(audioFile.length)
+        guard frameCount > 0 else { return nil }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
+        guard (try? audioFile.read(into: buffer)) != nil else { return nil }
+        guard let channelData = buffer.floatChannelData else { return nil }
+        let ptr = channelData[0]
+        return Array(UnsafeBufferPointer(start: ptr, count: Int(buffer.frameLength)))
+    }
+    
+    private func getClickSamples(sampleRate: Double = 44100.0) -> ([Float], [Float]) {
+        if let cached = clickCache[sampleRate] {
+            return cached
+        }
+        
+        let fm = FileManager.default
+        let baseDir = "/Users/samysglauber/Documents/AbletonTracks"
+        let curDir = fm.currentDirectoryPath
+        let tracksDir = NativeSongLibrary.shared.getTracksDirectory().path
+        
+        let c1Candidates = [
+            "\(baseDir)/Click Track-1.wav",
+            "\(baseDir)/resources/clicks/Click Track-1.wav",
+            "\(curDir)/Click Track-1.wav",
+            "\(tracksDir)/Click Track-1.wav"
+        ]
+        let c2Candidates = [
+            "\(baseDir)/Click Track-2.wav",
+            "\(baseDir)/resources/clicks/Click Track-2.wav",
+            "\(curDir)/Click Track-2.wav",
+            "\(tracksDir)/Click Track-2.wav"
+        ]
+        
+        var s1: [Float]? = nil
+        var s2: [Float]? = nil
+        
+        for p in c1Candidates {
+            if fm.fileExists(atPath: p), let b = loadWavMono(path: p) {
+                s1 = b
+                break
+            }
+        }
+        for p in c2Candidates {
+            if fm.fileExists(atPath: p), let b = loadWavMono(path: p) {
+                s2 = b
+                break
+            }
+        }
+        
+        if var m1 = s1, var m2 = s2 {
+            var max1: Float = 0
+            var max2: Float = 0
+            for x in m1 { max1 = max(max1, abs(x)) }
+            for x in m2 { max2 = max(max2, abs(x)) }
+            if max1 > 0 {
+                for i in 0..<m1.count { m1[i] = (m1[i] / max1) * 0.95 }
+            }
+            if max2 > 0 {
+                for i in 0..<m2.count { m2[i] = (m2[i] / max2) * 0.98 }
+            }
+            clickCache[sampleRate] = (m1, m2)
+            return (m1, m2)
+        }
+        
+        // Fallback sintetizado caso os arquivos não existam
+        let clickLen = Int(sampleRate * 0.025)
+        var c1 = [Float](repeating: 0, count: clickLen)
+        var c2 = [Float](repeating: 0, count: clickLen)
+        let twoPi = 2.0 * Double.pi
+        for i in 0..<clickLen {
+            let t = Double(i) / sampleRate
+            let env = Float(exp(-Double(i) / (sampleRate * 0.005)))
+            c1[i] = Float(sin(twoPi * 2500.0 * t)) * env * 0.95
+            c2[i] = Float(sin(twoPi * 1600.0 * t)) * env * 0.85
+        }
+        clickCache[sampleRate] = (c1, c2)
+        return (c1, c2)
+    }
+    
     func generateMetronome(
         name: String = "Click",
         bpm: Double = 120.0,
@@ -50,25 +134,10 @@ final class NativeMetronomeGenerator {
         let nBars = max(4, Int(durationSec / barSec))
         let totalSamples = Int(Double(nBars) * barSec * sr)
         
-        // 3. Síntese do Click Analógico de Estúdio
-        // Downbeat (Tempo 1): 2500 Hz (frequência alta brilhante)
-        // Beats normais: 1600 Hz
-        // Subdivisão: 1200 Hz
-        let clickLen = Int(sr * 0.025) // 25ms
-        var clickDownbeat = [Float](repeating: 0, count: clickLen)
-        var clickNormal = [Float](repeating: 0, count: clickLen)
-        var clickSub = [Float](repeating: 0, count: clickLen)
+        // 3. Carrega os samples originais do projeto (Click Track-1.wav e Click Track-2.wav)
+        let (clickTrack1, clickTrack2) = getClickSamples(sampleRate: sr)
         
-        let twoPi = 2.0 * Double.pi
-        for i in 0..<clickLen {
-            let t = Double(i) / sr
-            let env = Float(exp(-Double(i) / (sr * 0.005))) // Decaimento rápido percussivo
-            clickDownbeat[i] = Float(sin(twoPi * 2500.0 * t)) * env * 0.95
-            clickNormal[i] = Float(sin(twoPi * 1600.0 * t)) * env * 0.85
-            clickSub[i] = Float(sin(twoPi * 1200.0 * t)) * env * 0.55
-        }
-        
-        // 4. Monta buffer do Canal L (Click)
+        // 4. Monta buffer do Canal L (Click com alternância profissional de samples)
         var leftChannel = [Float](repeating: 0, count: totalSamples)
         
         // Fator de subdivisão
@@ -80,6 +149,7 @@ final class NativeMetronomeGenerator {
         }
         let subIntervalSec = beatSec / Double(subPerBeat)
         
+        var totalSteps = 0
         for bar in 0..<nBars {
             let barStartSec = Double(bar) * barSec
             for beat in 0..<num {
@@ -88,21 +158,15 @@ final class NativeMetronomeGenerator {
                     let clickTime = beatStartSec + Double(sub) * subIntervalSec
                     let sampleIdx = Int(clickTime * sr)
                     
-                    let sampleToUse: [Float]
-                    if beat == 0 && sub == 0 {
-                        sampleToUse = clickDownbeat
-                    } else if sub == 0 {
-                        sampleToUse = clickNormal
-                    } else {
-                        sampleToUse = clickSub
-                    }
-                    
-                    for k in 0..<clickLen {
-                        let target = sampleIdx + k
-                        if target < totalSamples {
-                            leftChannel[target] = sampleToUse[k]
+                    // Alternância contínua entre Click Track-1 e Click Track-2 idêntica ao app original
+                    let sample = (totalSteps % 2 == 0) ? clickTrack1 : clickTrack2
+                    let avail = min(sample.count, totalSamples - sampleIdx)
+                    if avail > 0 && sampleIdx >= 0 {
+                        for k in 0..<avail {
+                            leftChannel[sampleIdx + k] = sample[k]
                         }
                     }
+                    totalSteps += 1
                 }
             }
         }

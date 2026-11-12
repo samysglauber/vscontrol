@@ -900,14 +900,43 @@ class PlaybackState: ObservableObject {
             if engine.isPlaying != self.isPlaying {
                 self.isPlaying = engine.isPlaying
             }
+            let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : 0.0
+            if abs(self.currentSeconds - curSec) > 0.015 {
+                self.currentSeconds = curSec
+            }
+            if self.currentCueIdx != engine.currentCueIdx {
+                self.currentCueIdx = engine.currentCueIdx
+            }
+            if self.queuedCueIdx != engine.queuedCueIdx {
+                self.queuedCueIdx = engine.queuedCueIdx
+            }
+            if self.loopActive != engine.loopActive {
+                self.loopActive = engine.loopActive
+            }
+            if self.loopInfinite != engine.loopInfinite {
+                self.loopInfinite = engine.loopInfinite
+            }
+            if self.loopCueIdx != engine.loopCueIdx {
+                self.loopCueIdx = engine.loopCueIdx
+            }
+            let isFaded = (engine.tracksFadeState == "faded_out")
+            if self.isFadedOut != isFaded {
+                self.isFadedOut = isFaded
+            }
+            let isFading = (engine.tracksFadeState == "fading_out")
+            if self.isFadingOut != isFading {
+                self.isFadingOut = isFading
+            }
+            
+            let beatSec = engine.bpm > 0 ? (60.0 / engine.bpm) : 0.5
+            let totalBeats = Int(curSec / beatSec)
+            let beatsPerBar = max(1, engine.timeSignature.0)
+            let bNum = (totalBeats / beatsPerBar) + 1
+            let bBeat = (totalBeats % beatsPerBar) + 1
+            if self.currentBar != bNum { self.currentBar = bNum }
+            if self.currentBeat != bBeat { self.currentBeat = bBeat }
+            
             if engine.isPlaying {
-                let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : 0.0
-                if abs(self.currentSeconds - curSec) > 0.015 {
-                    self.currentSeconds = curSec
-                }
-                if self.currentCueIdx != engine.currentCueIdx {
-                    self.currentCueIdx = engine.currentCueIdx
-                }
                 self.checkSongTransitions(currentSeconds: self.currentSeconds)
             }
         }
@@ -1855,9 +1884,6 @@ class PlaybackState: ObservableObject {
         if crossfade {
             self.hasTriggeredCrossfade = true
             self.isPlaying = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                self.hasTriggeredCrossfade = false
-            }
         } else {
             self.hasTriggeredCrossfade = false
         }
@@ -1902,7 +1928,7 @@ class PlaybackState: ObservableObject {
         
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
-            NativeAudioEngine.shared.loadSong(songToLoad, crossfade: crossfade)
+            NativeAudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
             if autoPlay {
                 DispatchQueue.main.async {
                     NativeAudioEngine.shared.play()
@@ -2502,6 +2528,12 @@ class PlaybackState: ObservableObject {
     }
     
     func sendVolumes() {
+        NativeAudioEngine.shared.setVolumes(
+            click: Float(clickVol),
+            vs: Float(vsVol),
+            clickMute: clickMute,
+            vsMute: vsMute
+        )
         sendAction("volumes", body: [
             "click_vol": clickVol,
             "vs_vol": vsVol,
@@ -2788,30 +2820,46 @@ class PlaybackState: ObservableObject {
         case "stop":
             engine.stop()
         case "seek":
-            if let sec = body?["time"] as? Double {
-                engine.seek(to: sec)
+            if let sec = (body?["seconds"] as? Double) ?? (body?["time"] as? Double) {
+                engine.seek(seconds: sec)
             }
         case "trigger_cue":
-            if let idx = body?["cue_index"] as? Int {
-                engine.triggerCue(index: idx)
-            }
+            let idx = (body?["cue_idx"] as? Int) ?? (body?["cue_index"] as? Int) ?? 0
+            let q = (body?["quantize"] as? Bool) ?? true
+            engine.triggerCue(idx: idx, quantize: q)
+            self.queuedCueIdx = engine.queuedCueIdx
         case "toggle_loop":
-            engine.toggleLoop()
+            let isInf = (body?["mode"] as? String == "infinite") || (body?["infinite"] as? Bool ?? false)
+            let cIdx = body?["cue_idx"] as? Int
+            engine.toggleLoop(cueIdx: cIdx, infinite: isInf)
+            self.loopActive = engine.loopActive
+            self.loopInfinite = engine.loopInfinite
+            self.loopCueIdx = engine.loopCueIdx
         case "toggle_infinite":
-            engine.toggleInfiniteLoop()
+            let cIdx = body?["cue_idx"] as? Int
+            engine.toggleLoop(cueIdx: cIdx, infinite: true)
+            self.loopActive = engine.loopActive
+            self.loopInfinite = engine.loopInfinite
+            self.loopCueIdx = engine.loopCueIdx
         case "fade_stop":
-            engine.fadeStop()
+            let dur = (body?["duration"] as? Double) ?? 3.0
+            engine.fadeStop(duration: dur)
         case "fade_tracks":
-            engine.fadeTracks()
+            let dir = (body?["direction"] as? String) ?? "toggle"
+            let dur = (body?["duration"] as? Double) ?? 3.0
+            engine.fadeTracks(direction: dir, duration: dur)
         case "pad":
             if let key = body?["key"] as? String {
                 let active = (body?["active"] as? Bool) ?? true
-                engine.setPadKey(key, active: active)
+                let vol = (body?["volume"] as? Double) ?? 0.35
+                engine.setPad(active: active, key: key, volume: Float(vol))
             }
         case "volumes":
-            let vl = (body?["volume_l"] as? Double) ?? Double(self.clickVol)
-            let vr = (body?["volume_r"] as? Double) ?? Double(self.vsVol)
-            engine.setVolumes(clickVolume: Float(vl), vsVolume: Float(vr))
+            let cVol = (body?["click_vol"] as? Double) ?? (body?["volume_l"] as? Double) ?? Double(self.clickVol)
+            let vVol = (body?["vs_vol"] as? Double) ?? (body?["volume_r"] as? Double) ?? Double(self.vsVol)
+            let cMute = (body?["click_mute"] as? Bool) ?? self.clickMute
+            let vMute = (body?["vs_mute"] as? Bool) ?? self.vsMute
+            engine.setVolumes(click: Float(cVol), vs: Float(vVol), clickMute: cMute, vsMute: vMute)
         case "device":
             if let devId = body?["device_id"] as? UInt32 {
                 _ = engine.setOutputDevice(deviceId: devId)

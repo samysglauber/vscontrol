@@ -386,30 +386,39 @@ fileprivate final class RemoteConnection {
             case "stop":
                 engine.stop()
             case "seek":
-                if let sec = payload["time"] as? Double {
+                if let sec = (payload["seconds"] as? Double) ?? (payload["time"] as? Double) {
                     engine.seek(to: sec)
                 }
             case "trigger_cue":
-                if let idx = payload["cue_index"] as? Int {
-                    engine.triggerCue(index: idx)
-                }
+                let idx = (payload["cue_idx"] as? Int) ?? (payload["cue_index"] as? Int) ?? 0
+                let q = (payload["quantize"] as? Bool) ?? true
+                engine.triggerCue(idx: idx, quantize: q)
             case "toggle_loop":
-                engine.toggleLoop()
+                let isInf = (payload["mode"] as? String == "infinite") || (payload["infinite"] as? Bool ?? false)
+                let cIdx = payload["cue_idx"] as? Int
+                engine.toggleLoop(cueIdx: cIdx, infinite: isInf)
             case "toggle_infinite":
-                engine.toggleInfiniteLoop()
+                let cIdx = payload["cue_idx"] as? Int
+                engine.toggleLoop(cueIdx: cIdx, infinite: true)
             case "fade_stop":
-                engine.fadeStop()
+                let dur = (payload["duration"] as? Double) ?? 3.0
+                engine.fadeStop(duration: dur)
             case "fade_tracks":
-                engine.fadeTracks()
+                let dir = (payload["direction"] as? String) ?? "toggle"
+                let dur = (payload["duration"] as? Double) ?? 3.0
+                engine.fadeTracks(direction: dir, duration: dur)
             case "pad":
                 if let key = payload["key"] as? String {
                     let active = (payload["active"] as? Bool) ?? true
-                    engine.setPadKey(key, active: active)
+                    let vol = (payload["volume"] as? Double) ?? 0.35
+                    engine.setPad(active: active, key: key, volume: Float(vol))
                 }
             case "volumes":
-                let vl = (payload["volume_l"] as? Double) ?? 1.0
-                let vr = (payload["volume_r"] as? Double) ?? 1.0
-                engine.setVolumes(clickVolume: Float(vl), vsVolume: Float(vr))
+                let cVol = (payload["click_vol"] as? Double) ?? (payload["volume_l"] as? Double) ?? Double(engine.clickVol)
+                let vVol = (payload["vs_vol"] as? Double) ?? (payload["volume_r"] as? Double) ?? Double(engine.vsVol)
+                let cMute = (payload["click_mute"] as? Bool) ?? engine.clickMute
+                let vMute = (payload["vs_mute"] as? Bool) ?? engine.vsMute
+                engine.setVolumes(click: Float(cVol), vs: Float(vVol), clickMute: cMute, vsMute: vMute)
             case "device":
                 if let devId = payload["device_id"] as? UInt32 {
                     _ = engine.setOutputDevice(deviceId: devId)
@@ -418,7 +427,8 @@ fileprivate final class RemoteConnection {
                 if let songId = payload["song_id"] as? String {
                     if let song = NativeSongLibrary.shared.findSong(byId: songId) {
                         let cf = (payload["crossfade"] as? Bool) ?? false
-                        engine.loadSong(song, crossfade: cf)
+                        let cfDur = (payload["crossfade_duration"] as? Double) ?? 4.0
+                        engine.loadSong(song, crossfade: cf, crossfadeDuration: cfDur)
                     }
                 }
             default:
@@ -498,6 +508,80 @@ fileprivate final class RemoteConnection {
             } else {
                 sendJsonResponse([])
             }
+            
+        case ("POST", "/api/metronome/generate"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            let name = (payload["name"] as? String) ?? "Click"
+            let bpm = (payload["bpm"] as? Double) ?? 120.0
+            let ts = (payload["time_signature"] as? String) ?? "4/4"
+            let sub = (payload["subdivision"] as? String) ?? "1/4"
+            let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
+            let dur = (payload["duration_sec"] as? Double) ?? 600.0
+            do {
+                let song = try NativeMetronomeGenerator.shared.generateMetronome(
+                    name: name,
+                    bpm: bpm,
+                    timeSignature: ts,
+                    subdivision: sub,
+                    subdivide: subdivide,
+                    durationSec: dur
+                )
+                if let data = try? JSONEncoder().encode(song),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    sendJsonResponse(["status": "success", "song": dict])
+                    return
+                }
+            } catch {
+                sendHttpError(500, message: error.localizedDescription)
+                return
+            }
+            sendJsonResponse(["status": "ok"])
+            
+        case ("POST", "/api/metronome/update"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            let name = (payload["name"] as? String) ?? "Click"
+            let bpm = (payload["bpm"] as? Double) ?? 120.0
+            let ts = (payload["time_signature"] as? String) ?? "4/4"
+            let sub = (payload["subdivision"] as? String) ?? "1/4"
+            let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
+            let songId = (payload["song_id"] as? String) ?? ""
+            let existing = NativeSongLibrary.shared.findSong(byId: songId)
+            do {
+                let song: SongItem
+                if let ex = existing {
+                    song = try NativeMetronomeGenerator.shared.updateMetronome(
+                        existingItem: ex,
+                        name: name,
+                        bpm: bpm,
+                        timeSignature: ts,
+                        subdivision: sub,
+                        subdivide: subdivide
+                    )
+                } else {
+                    song = try NativeMetronomeGenerator.shared.generateMetronome(
+                        name: name,
+                        bpm: bpm,
+                        timeSignature: ts,
+                        subdivision: sub,
+                        subdivide: subdivide
+                    )
+                }
+                if let data = try? JSONEncoder().encode(song),
+                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    sendJsonResponse(["status": "success", "song": dict])
+                    return
+                }
+            } catch {
+                sendHttpError(500, message: error.localizedDescription)
+                return
+            }
+            sendJsonResponse(["status": "ok"])
             
         case ("POST", "/api/load"):
             var payload: [String: Any] = [:]
