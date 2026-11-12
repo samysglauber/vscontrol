@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-12T13:56:23Z",
+  "createdAt" : "2026-11-12T20:24:19Z",
   "items" : [
     {
       "cues" : [
@@ -1466,7 +1466,6 @@
       ],
       "song" : {
         "bpm" : 74,
-        "cover_url" : "\/api\/covers?id=Eu%20falo%20Jesus%20%2874%20bpm%29%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -4133,10 +4132,10 @@
           0.04,
           0.04
         ],
-        "has_cover" : true,
+        "has_cover" : false,
         "id" : "Eu falo Jesus (74 bpm) - vs.mp3",
         "is_metronome" : false,
-        "name" : "Eu falo Jesus (74 bpm)",
+        "name" : "Eu falo Jesus (74 bpm) - vs",
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Eu falo Jesus (74 bpm) - vs.mp3",
         "search_query" : "Eu falo Jesus",
         "subdivide" : false,
@@ -25838,6 +25837,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-12T13:56:23Z",
+  "updatedAt" : "2026-11-12T20:24:19Z",
   "version" : 1
 }

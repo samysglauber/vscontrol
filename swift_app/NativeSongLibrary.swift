@@ -9,6 +9,7 @@ final class NativeSongLibrary {
     
     private let defaultDir = "/Users/samysglauber/Documents/Vs"
     private var songsCache: [String: SongItem] = [:]
+    private let lock = NSLock()
     
     // MARK: - Diretório de Músicas
     
@@ -23,7 +24,9 @@ final class NativeSongLibrary {
     func setTracksDirectory(_ path: String) -> Bool {
         guard FileManager.default.fileExists(atPath: path) else { return false }
         UserDefaults.standard.set(path, forKey: "saved_tracks_dir")
+        lock.lock()
         songsCache.removeAll()
+        lock.unlock()
         return true
     }
     
@@ -41,7 +44,7 @@ final class NativeSongLibrary {
         for file in files where !file.hasPrefix(".") {
             let lower = file.lowercased()
             if supportedExts.contains(where: { lower.hasSuffix($0) }) {
-                if let song = indexFile(file, directory: dir) {
+                if let song = getSong(id: file) {
                     result.append(song)
                 }
             }
@@ -52,9 +55,12 @@ final class NativeSongLibrary {
     }
     
     func getSong(id: String) -> SongItem? {
+        lock.lock()
         if let cached = songsCache[id] {
+            lock.unlock()
             return cached
         }
+        lock.unlock()
         let dir = getTracksDirectory()
         return indexFile(id, directory: dir)
     }
@@ -64,10 +70,9 @@ final class NativeSongLibrary {
     }
     
     func loadSetlistSongs(ids: [String]) -> [SongItem] {
-        let dir = getTracksDirectory()
         var result: [SongItem] = []
         for sid in ids {
-            if let s = indexFile(sid, directory: dir) {
+            if let s = getSong(id: sid) {
                 result.append(s)
             }
         }
@@ -75,6 +80,13 @@ final class NativeSongLibrary {
     }
     
     private func indexFile(_ entry: String, directory: URL) -> SongItem? {
+        lock.lock()
+        if let cached = songsCache[entry] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        
         let filePath = directory.appendingPathComponent(entry).path
         guard FileManager.default.fileExists(atPath: filePath) else { return nil }
         
@@ -170,7 +182,9 @@ final class NativeSongLibrary {
             subdivision: subdivision
         )
         
+        lock.lock()
         songsCache[entry] = item
+        lock.unlock()
         return item
     }
     
@@ -213,6 +227,7 @@ final class NativeSongLibrary {
         }
         
         // Atualiza cache
+        lock.lock()
         if var cached = songsCache[songId] {
             cached.cues = cues
             if let b = bpm { cached.bpm = b }
@@ -220,6 +235,7 @@ final class NativeSongLibrary {
             if let wf = fullWaveform { cached.full_waveform = wf }
             songsCache[songId] = cached
         }
+        lock.unlock()
     }
     
     // MARK: - Cálculo de Waveform Rápido com Accelerate (vDSP)
