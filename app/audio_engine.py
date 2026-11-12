@@ -311,7 +311,6 @@ class LiveAudioEngine:
             self.pad_pos = 0
 
             # Alinha MIDI Clock
-            self.midi_clock.send_spp(0)
             self.midi_clock.reset_tick(0, self.sample_rate, self.bpm)
 
             if crossfade:
@@ -373,7 +372,6 @@ class LiveAudioEngine:
             self.pos_frame = 0
             self.current_cue_idx = 0
             self.midi_clock.send_stop()
-            self.midi_clock.send_spp(0)
             self.midi_clock.reset_tick(0, self.sample_rate, self.bpm)
             self.queued_cue_idx = None
             self.queued_jump = None
@@ -446,10 +444,6 @@ class LiveAudioEngine:
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
             self._update_current_cue_idx()
-            
-            # Reposiciona o ponteiro de música (SPP) do MIDI Clock
-            sixteenths = int((seconds / 60.0) * self.bpm * 4.0) if self.bpm else 0
-            self.midi_clock.send_spp(sixteenths)
             self.midi_clock.reset_tick(self.pos_frame, self.sample_rate, self.bpm)
         self._notify_event("seek", {"pos_frame": self.pos_frame, "seconds": seconds})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
@@ -997,8 +991,6 @@ class LiveAudioEngine:
                     slice_r = np.concatenate((r1, r2)) if frames_before > 0 else r2
 
                     self.pos_frame = target_downbeat + frames_after
-                    sixteenths = int(((self.pos_frame / self.sample_rate) / 60.0) * self.bpm * 4.0) if self.sample_rate else 0
-                    self.midi_clock.send_spp(sixteenths)
                     self.midi_clock.reset_tick(self.pos_frame, self.sample_rate, self.bpm)
                     was_loop = bool(self.guide_lead_in.get("is_loop"))
                     self.guide_lead_in = None

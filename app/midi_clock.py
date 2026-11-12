@@ -105,28 +105,20 @@ class MidiClockManager:
             pass
 
     def send_start(self):
-        """Inicia a reprodução do início (SPP 0 + MIDI Start 0xFA)."""
+        """Inicia a reprodução contínua na timeline do Ableton sem retroceder (MIDI Continue 0xFB)."""
         self.last_tick = -1
         self.is_playing = True
-        # Envia Song Position Pointer = 0 (1.1.1)
-        spp_buf = self._make_packet([0xF2, 0x00, 0x00])
-        self._send_packet(spp_buf)
-        # Envia MIDI Start
-        self._send_packet(self._start_buf)
+        # Envia MIDI Continue (0xFB) para não rebobinar a timeline do Ableton
+        self._send_packet(self._continue_buf)
         # Envia o primeiro tick de clock imediatamente
         self._send_packet(self._clock_buf)
-        print("▶️ [MidiClock] MIDI Start (0xFA) + SPP 0 disparado")
+        print("▶️ [MidiClock] MIDI Continue (0xFB) disparado (gravação contínua)")
 
     def send_continue(self, pos_sixteenths: int = 0):
-        """Retoma a reprodução da posição especificada (SPP + MIDI Continue 0xFB)."""
+        """Retoma a reprodução contínua (MIDI Continue 0xFB) sem alterar a posição da agulha."""
         self.is_playing = True
-        if pos_sixteenths > 0:
-            lsb = pos_sixteenths & 0x7F
-            msb = (pos_sixteenths >> 7) & 0x7F
-            spp_buf = self._make_packet([0xF2, lsb, msb])
-            self._send_packet(spp_buf)
         self._send_packet(self._continue_buf)
-        print(f"▶️ [MidiClock] MIDI Continue (0xFB) disparado (pos: {pos_sixteenths} 16ths)")
+        print("▶️ [MidiClock] MIDI Continue (0xFB) disparado")
 
     def send_stop(self):
         """Para a reprodução (MIDI Stop 0xFC)."""
@@ -135,11 +127,8 @@ class MidiClockManager:
         print("⏹️ [MidiClock] MIDI Stop (0xFC) disparado")
 
     def send_spp(self, pos_sixteenths: int):
-        """Posiciona a agulha de reprodução na linha do tempo via SPP (0xF2)."""
-        lsb = pos_sixteenths & 0x7F
-        msb = (pos_sixteenths >> 7) & 0x7F
-        spp_buf = self._make_packet([0xF2, lsb, msb])
-        self._send_packet(spp_buf)
+        """Desativado: SPP não é enviado para permitir gravação contínua do show na timeline do Ableton."""
+        pass
 
     def reset_tick(self, current_frame: int, sample_rate: int, bpm: float):
         """Recalcula o tick atual sem disparar relógios acumulados."""

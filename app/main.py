@@ -70,24 +70,10 @@ def sync_time_signature_to_ableton(time_sig: str):
         print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
 
 def sync_play_to_ableton(seconds: float = 0.0, bpm: float | None = None, is_resume: bool = False):
-    """Envia comando de Play para o Ableton Live via OSC, sincronizando o tempo para o compasso não ficar bagunçado."""
+    """Envia comando de Play/Continue para o Ableton Live via OSC, mantendo a timeline contínua para gravação."""
     try:
-        if seconds <= 0.2:
-            osc_client.send_message("/live/song/set/current_song_time", 0.0)
-            osc_client.send_message("/live/song/start_playing", None)
-            print("▶️ AbletonOSC: Play iniciado do início (1.1.1 / 0.0 beats)")
-        elif is_resume:
-            if bpm and bpm > 0:
-                beats = (seconds / 60.0) * bpm
-                osc_client.send_message("/live/song/set/current_song_time", float(beats))
-            osc_client.send_message("/live/song/continue_playing", None)
-            print(f"▶️ AbletonOSC: Play continuado na posição {seconds:.2f}s")
-        else:
-            if bpm and bpm > 0:
-                beats = (seconds / 60.0) * bpm
-                osc_client.send_message("/live/song/set/current_song_time", float(beats))
-            osc_client.send_message("/live/song/start_playing", None)
-            print(f"▶️ AbletonOSC: Play iniciado na posição {seconds:.2f}s")
+        osc_client.send_message("/live/song/continue_playing", None)
+        print("▶️ AbletonOSC: Play/Continue disparado (gravação contínua)")
     except Exception as e:
         print(f"Erro ao enviar Play para AbletonOSC: {e}")
 
@@ -100,17 +86,8 @@ def sync_stop_to_ableton():
         print(f"Erro ao enviar Stop para AbletonOSC: {e}")
 
 def sync_seek_to_ableton(seconds: float, bpm: float | None = None):
-    """Ajusta a posição do playhead no Ableton Live via OSC (em beats)."""
-    try:
-        if seconds <= 0.05:
-            osc_client.send_message("/live/song/set/current_song_time", 0.0)
-            print("⏱️ AbletonOSC: Posição ajustada para 0.0 beats (1.1.1)")
-        elif bpm and bpm > 0:
-            beats = (seconds / 60.0) * bpm
-            osc_client.send_message("/live/song/set/current_song_time", float(beats))
-            print(f"⏱️ AbletonOSC: Posição ajustada para {beats:.2f} beats ({seconds:.2f}s)")
-    except Exception as e:
-        print(f"Erro ao sincronizar seek no AbletonOSC: {e}")
+    """Desativado: não reposiciona a agulha do Ableton para permitir gravação contínua do show do início ao fim."""
+    pass
 
 # Gerenciador de conexões WebSocket para sincronia Mac <-> Android
 class ConnectionManager:
