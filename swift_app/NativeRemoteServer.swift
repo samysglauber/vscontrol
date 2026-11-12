@@ -600,6 +600,30 @@ fileprivate final class RemoteConnection {
             }
             sendJsonResponse(["status": "ok"])
             
+        case ("POST", "/api/save_cues"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String {
+                let bpm = payload["bpm"] as? Double
+                let ts = payload["time_signature"] as? String
+                var parsedCues: [CueSection] = []
+                if let cuesRaw = payload["cues"] as? [[String: Any]],
+                   let data = try? JSONSerialization.data(withJSONObject: cuesRaw),
+                   let decoded = try? JSONDecoder().decode([CueSection].self, from: data) {
+                    parsedCues = decoded
+                }
+                NativeSongLibrary.shared.saveCues(songId: songId, cues: parsedCues, bpm: bpm, timeSignature: ts)
+                if let song = NativeSongLibrary.shared.findSong(byId: songId),
+                   let data = try? JSONEncoder().encode(song),
+                   let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    sendJsonResponse(["status": "success", "song": songDict])
+                    return
+                }
+            }
+            sendJsonResponse(["status": "ok"])
+            
         case ("POST", let p) where p.starts(with: "/api/"):
             let actionName = p.replacingOccurrences(of: "/api/", with: "")
             var payload: [String: Any] = [:]

@@ -853,8 +853,10 @@ class PlaybackState: ObservableObject {
         fetchTracksFolder()
         fetchDevices()
         fetchNetworkInfo()
-        setupWebSocket()
+        // setupWebSocket() - Desativado para o app Desktop: sincronização 100% nativa em memória a 30Hz
     }
+    
+    private var lastAdvanceTime: Date = Date.distantPast
     
     private func restoreInitialSetlistFromCache() {
         // 1. Tenta abrir por padrão o último setlist aberto
@@ -1098,6 +1100,8 @@ class PlaybackState: ObservableObject {
     
     func advanceToNextSetlistSong() {
         if hasTriggeredCrossfade { return }
+        guard Date().timeIntervalSince(lastAdvanceTime) > 1.5 else { return }
+        lastAdvanceTime = Date()
         guard let current = currentSong,
               let currentIndex = setlist.firstIndex(where: { $0.song.id == current.id }) else {
             return
@@ -1903,14 +1907,9 @@ class PlaybackState: ObservableObject {
     }
     
     func fetchNetworkInfo() {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/network_info") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            DispatchQueue.main.async {
-                if let u = json["url"] as? String { self?.serverUrl = u }
-            }
-        }.resume()
+        let ip = NativeRemoteServer.shared.getLocalIPAddress()
+        let port = NativeRemoteServer.shared.port
+        self.serverUrl = "http://\(ip):\(port)"
     }
     
     func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
@@ -1953,17 +1952,43 @@ class PlaybackState: ObservableObject {
             songToLoad.total_duration = d.totalSeconds
             songToLoad.full_waveform = d.waveform
         } else {
-            if let b = song.bpm { self.bpm = b; songToLoad.bpm = b }
-            if let ts = song.time_signature { self.timeSignature = ts; songToLoad.time_signature = ts }
-            self.syncAbleton(bpm: song.bpm, timeSignature: song.time_signature)
-            if let dur = song.total_duration, dur > 0 { self.totalSeconds = dur; songToLoad.total_duration = dur }
-            if let wf = song.full_waveform { self.fullWaveform = wf; songToLoad.full_waveform = wf }
-            if let cs = cues ?? song.cues { self.currentCues = cs; songToLoad.cues = cs }
+            if let libSong = NativeSongLibrary.shared.findSong(byId: song.id) {
+                if songToLoad.bpm == nil { songToLoad.bpm = libSong.bpm }
+                if songToLoad.time_signature == nil { songToLoad.time_signature = libSong.time_signature }
+                if songToLoad.total_duration == nil || songToLoad.total_duration == 0 { songToLoad.total_duration = libSong.total_duration }
+                if songToLoad.cues == nil || songToLoad.cues?.isEmpty == true { songToLoad.cues = libSong.cues }
+                if songToLoad.full_waveform == nil || songToLoad.full_waveform?.isEmpty == true { songToLoad.full_waveform = libSong.full_waveform }
+                if songToLoad.has_cover == nil || songToLoad.has_cover == false {
+                    songToLoad.has_cover = libSong.has_cover
+                    songToLoad.cover_url = libSong.cover_url
+                }
+            }
+            if let b = songToLoad.bpm { self.bpm = b }
+            if let ts = songToLoad.time_signature { self.timeSignature = ts }
+            self.syncAbleton(bpm: songToLoad.bpm, timeSignature: songToLoad.time_signature)
+            if let dur = songToLoad.total_duration, dur > 0 { self.totalSeconds = dur }
+            if let wf = songToLoad.full_waveform { self.fullWaveform = wf }
+            if let cs = cues ?? songToLoad.cues { self.currentCues = cs; songToLoad.cues = cs }
         }
         self.currentSong = songToLoad
         
+        // Atualiza cache em memória permanente
+        self.songCache[song.id] = CachedSongData(
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            totalSeconds: self.totalSeconds,
+            cues: self.currentCues,
+            waveform: self.fullWaveform
+        )
+        
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
+        
+        self.abletonSynced = true
+        NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            self.abletonSynced = false
+        }
         
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1971,95 +1996,10 @@ class PlaybackState: ObservableObject {
             if autoPlay {
                 DispatchQueue.main.async {
                     NativeAudioEngine.shared.play()
+                    self.isPlaying = true
                 }
             }
         }
-        
-        // REQUISIÇÃO AO MOTOR DE ÁUDIO NO BACKEND (EXECUTADA EM SEGUNDO PLANO PARA DISPOSITIVOS REMOTOS)
-        guard let url = URL(string: "http://127.0.0.1:8080/api/load") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Only send device_id if it has been resolved by fetchDevices() (not the -1 sentinel)
-        var body: [String: Any] = ["song_id": song.id]
-        if self.selectedDeviceId >= 0 {
-            body["device_id"] = self.selectedDeviceId
-        }
-        if !self.selectedDeviceName.isEmpty && self.selectedDeviceName != "Output" {
-            body["device_name"] = self.selectedDeviceName
-        }
-        if crossfade {
-            body["crossfade"] = true
-            body["crossfade_duration"] = crossfadeDuration
-        }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let songData = json["song"] as? [String: Any],
-                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
-            
-            let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw)
-            var parsedCues = (try? JSONDecoder().decode([CueSection].self, from: cuesData ?? Data())) ?? []
-            if parsedCues.isEmpty {
-                if let local = self?.currentCues, !local.isEmpty {
-                    parsedCues = local
-                }
-            } else if let validData = cuesData {
-                UserDefaults.standard.set(validData, forKey: "saved_cues_\(song.id)")
-            }
-            let fullW = songData["full_waveform"] as? [Double] ?? []
-            let totDur = songData["total_duration"] as? Double ?? (songData["total_seconds"] as? Double ?? 0.0)
-            
-            DispatchQueue.main.async {
-                guard let self = self, self.currentSong?.id == song.id else { return }
-                
-                if !parsedCues.isEmpty {
-                    self.currentCues = parsedCues
-                }
-                if totDur > 0 {
-                    self.totalSeconds = totDur
-                    UserDefaults.standard.set(totDur, forKey: "saved_duration_\(song.id)")
-                }
-                if !fullW.isEmpty {
-                    self.fullWaveform = fullW
-                    UserDefaults.standard.set(fullW, forKey: "saved_waveform_\(song.id)")
-                }
-                if let b = songData["bpm"] as? Double { self.bpm = b }
-                if let ts = songData["time_signature"] as? String { self.timeSignature = ts }
-                if let hasC = songData["has_cover"] as? Bool {
-                    self.currentSong?.has_cover = hasC
-                    self.currentSong?.cover_url = songData["cover_url"] as? String
-                }
-                
-                // Atualiza cache em memória permanente
-                self.songCache[song.id] = CachedSongData(
-                    bpm: self.bpm,
-                    timeSignature: self.timeSignature,
-                    totalSeconds: self.totalSeconds,
-                    cues: self.currentCues,
-                    waveform: self.fullWaveform
-                )
-                
-                self.abletonSynced = true
-                self.sendAction("set_guide_lead_in", body: ["bars": self.guideLeadInBars])
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    self.abletonSynced = false
-                }
-                if autoPlay && !crossfade {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                        self.sendAction("play")
-                    }
-                }
-                
-                // Pré-carrega a próxima música em background para transição com zero latência (0.00ms)
-                if let nextIdx = self.setlist.firstIndex(where: { $0.song.id == song.id }), nextIdx + 1 < self.setlist.count {
-                    let nextSong = self.setlist[nextIdx + 1].song
-                    self.sendAction("preload", body: ["song_id": nextSong.id])
-                }
-            }
-        }.resume()
     }
     
     // ==========================================
@@ -2573,12 +2513,6 @@ class PlaybackState: ObservableObject {
             clickMute: clickMute,
             vsMute: vsMute
         )
-        sendAction("volumes", body: [
-            "click_vol": clickVol,
-            "vs_vol": vsVol,
-            "click_mute": clickMute,
-            "vs_mute": vsMute
-        ])
     }
     
     func toggleClickMute() {
@@ -2903,19 +2837,13 @@ class PlaybackState: ObservableObject {
             if let devId = body?["device_id"] as? UInt32 {
                 _ = engine.setOutputDevice(deviceId: devId)
             }
+        case "set_guide_lead_in":
+            if let bars = body?["bars"] as? Double {
+                engine.guideLeadInBars = bars
+            }
         default:
             break
         }
-        
-        guard let url = URL(string: "http://127.0.0.1:8080/api/\(endpoint)") else { return }
-        var req = URLRequest(url: url)
-        req.cachePolicy = .reloadIgnoringLocalCacheData
-        req.httpMethod = "POST"
-        if let body = body {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        }
-        URLSession.shared.dataTask(with: req).resume()
     }
 }
 
