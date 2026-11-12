@@ -53,15 +53,9 @@ def sync_tempo_to_ableton(bpm: float):
         return
     try:
         osc_client.send_message("/live/song/set/tempo", float(bpm))
+        print(f"🎵 AbletonOSC: Tempo sincronizado para {float(bpm):.1f} BPM")
     except Exception as e:
         print(f"Erro ao enviar BPM para AbletonOSC: {e}")
-
-def parse_time_signature(ts_str: str) -> tuple[int, int]:
-    try:
-        parts = str(ts_str).strip().split("/")
-        return (int(parts[0]), int(parts[1]))
-    except Exception:
-        return (4, 4)
 
 def sync_time_signature_to_ableton(time_sig: str):
     """Envia a nova fórmula de compasso (numerador e denominador) para o Ableton Live via protocolo OSC."""
@@ -74,6 +68,49 @@ def sync_time_signature_to_ableton(time_sig: str):
         print(f"🎵 AbletonOSC: Time Signature sincronizado para {num}/{denom}")
     except Exception as e:
         print(f"Erro ao enviar Time Signature para AbletonOSC: {e}")
+
+def sync_play_to_ableton(seconds: float = 0.0, bpm: float | None = None, is_resume: bool = False):
+    """Envia comando de Play para o Ableton Live via OSC, sincronizando o tempo para o compasso não ficar bagunçado."""
+    try:
+        if seconds <= 0.2:
+            osc_client.send_message("/live/song/set/current_song_time", 0.0)
+            osc_client.send_message("/live/song/start_playing", None)
+            print("▶️ AbletonOSC: Play iniciado do início (1.1.1 / 0.0 beats)")
+        elif is_resume:
+            if bpm and bpm > 0:
+                beats = (seconds / 60.0) * bpm
+                osc_client.send_message("/live/song/set/current_song_time", float(beats))
+            osc_client.send_message("/live/song/continue_playing", None)
+            print(f"▶️ AbletonOSC: Play continuado na posição {seconds:.2f}s")
+        else:
+            if bpm and bpm > 0:
+                beats = (seconds / 60.0) * bpm
+                osc_client.send_message("/live/song/set/current_song_time", float(beats))
+            osc_client.send_message("/live/song/start_playing", None)
+            print(f"▶️ AbletonOSC: Play iniciado na posição {seconds:.2f}s")
+    except Exception as e:
+        print(f"Erro ao enviar Play para AbletonOSC: {e}")
+
+def sync_stop_to_ableton():
+    """Para o playback no Ableton Live via OSC."""
+    try:
+        osc_client.send_message("/live/song/stop_playing", None)
+        print("⏹️ AbletonOSC: Playback pausado/parado")
+    except Exception as e:
+        print(f"Erro ao enviar Stop para AbletonOSC: {e}")
+
+def sync_seek_to_ableton(seconds: float, bpm: float | None = None):
+    """Ajusta a posição do playhead no Ableton Live via OSC (em beats)."""
+    try:
+        if seconds <= 0.05:
+            osc_client.send_message("/live/song/set/current_song_time", 0.0)
+            print("⏱️ AbletonOSC: Posição ajustada para 0.0 beats (1.1.1)")
+        elif bpm and bpm > 0:
+            beats = (seconds / 60.0) * bpm
+            osc_client.send_message("/live/song/set/current_song_time", float(beats))
+            print(f"⏱️ AbletonOSC: Posição ajustada para {beats:.2f} beats ({seconds:.2f}s)")
+    except Exception as e:
+        print(f"Erro ao sincronizar seek no AbletonOSC: {e}")
 
 # Gerenciador de conexões WebSocket para sincronia Mac <-> Android
 class ConnectionManager:
@@ -98,8 +135,30 @@ class ConnectionManager:
 manager = ConnectionManager()
 main_loop = None
 
-# Ponte do AudioEngine (Thread de Áudio CoreAudio) para o WebSocket (Asyncio)
+# Ponte do AudioEngine (Thread de Áudio CoreAudio) para o WebSocket (Asyncio) e Ableton Live (OSC)
 def on_engine_event(event_type: str, data: dict):
+    # Sincronização de transporte com Ableton Live via OSC
+    try:
+        if event_type == "play_state":
+            if data.get("is_playing"):
+                pos_sec = (engine.pos_frame / engine.sample_rate) if engine.sample_rate else 0.0
+                sync_play_to_ableton(seconds=pos_sec, bpm=engine.bpm, is_resume=(pos_sec > 0.2))
+            else:
+                sync_stop_to_ableton()
+        elif event_type in ("song_ended", "stop"):
+            sync_stop_to_ableton()
+            sync_seek_to_ableton(0.0)
+        elif event_type == "seek":
+            sec = data.get("seconds", 0.0)
+            sync_seek_to_ableton(sec, bpm=engine.bpm)
+        elif event_type == "cue_jumped":
+            cue_idx = data.get("current_cue_idx")
+            if cue_idx is not None and engine.cues and 0 <= cue_idx < len(engine.cues):
+                c_time = float(engine.cues[cue_idx].get("time", 0.0))
+                sync_seek_to_ableton(c_time, bpm=engine.bpm)
+    except Exception as e:
+        print(f"Erro ao sincronizar evento '{event_type}' com AbletonOSC: {e}")
+
     if main_loop and main_loop.is_running():
         try:
             asyncio.run_coroutine_threadsafe(
@@ -383,6 +442,8 @@ def load_song(req: LoadSongRequest):
         sync_tempo_to_ableton(song["bpm"])
     if song.get("time_signature"):
         sync_time_signature_to_ableton(song["time_signature"])
+    if not req.crossfade:
+        sync_seek_to_ableton(0.0)
 
     # Se a música não tiver capa, busca automaticamente em segundo plano
     if not song.get("has_cover"):
@@ -690,6 +751,9 @@ def api_update_metronome(req: MetronomeUpdateRequest):
 class AbletonSyncRequest(BaseModel):
     bpm: float | None = None
     time_signature: str | None = None
+    play: bool | None = None
+    stop: bool | None = None
+    seek: float | None = None
 
 @app.post("/api/sync_ableton")
 def api_sync_ableton(req: AbletonSyncRequest):
@@ -697,6 +761,12 @@ def api_sync_ableton(req: AbletonSyncRequest):
         sync_tempo_to_ableton(req.bpm)
     if req.time_signature:
         sync_time_signature_to_ableton(req.time_signature)
+    if req.seek is not None:
+        sync_seek_to_ableton(req.seek, bpm=req.bpm or engine.bpm)
+    if req.play is True:
+        sync_play_to_ableton()
+    elif req.stop is True:
+        sync_stop_to_ableton()
     return {"status": "ok", "bpm": req.bpm, "time_signature": req.time_signature}
 
 # ==========================
