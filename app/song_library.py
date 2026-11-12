@@ -259,7 +259,7 @@ class SongLibrary:
                 if ts_underscore in clean_name:
                     clean_name = clean_name.replace(ts_underscore, time_sig)
             # Fallback caso time_sig não esteja explícito ou regex geral
-            clean_name = re.sub(r'(Click\s+\d+)_(\d+)', r'\1/\2', clean_name, flags=re.IGNORECASE)
+            clean_name = re.sub(r'\b([1-9]|1[0-6])_(2|4|8|16)\b', r'\1/\2', clean_name)
 
         item = {
             "id": entry,

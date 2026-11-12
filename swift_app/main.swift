@@ -196,11 +196,10 @@ func resolveSongDisplayName(name: String, timeSignature: String? = nil, isMetron
             res = res.replacingOccurrences(of: tsUnderscore, with: ts)
         }
     }
-    if (isMetronome == true || res.lowercased().hasPrefix("click")) {
-        if let regex = try? NSRegularExpression(pattern: "(Click\\s+\\d+)_(\\d+)", options: .caseInsensitive) {
-            let range = NSRange(location: 0, length: res.utf16.count)
-            res = regex.stringByReplacingMatches(in: res, options: [], range: range, withTemplate: "$1/$2")
-        }
+    // Converte de forma resiliente qualquer fórmula de compasso salva com underscore no disco (ex: 6_8 -> 6/8, 3_4 -> 3/4, 12_8 -> 12/8)
+    if let regex = try? NSRegularExpression(pattern: #"\b([1-9]|1[0-6])_(2|4|8|16)\b"#) {
+        let range = NSRange(location: 0, length: res.utf16.count)
+        res = regex.stringByReplacingMatches(in: res, options: [], range: range, withTemplate: "$1/$2")
     }
     return res
 }
@@ -818,6 +817,9 @@ class PlaybackState: ObservableObject {
         // The correct ID will be resolved by name in fetchDevices().
         // Use -1 as sentinel to indicate "not yet resolved".
         self.selectedDeviceId = -1
+        
+        // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta 8080
+        NativeRemoteServer.shared.start(port: 8080)
         
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
         restoreInitialSetlistFromCache()
