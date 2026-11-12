@@ -821,6 +821,26 @@ class PlaybackState: ObservableObject {
         // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta 8080
         NativeRemoteServer.shared.start(port: 8080)
         
+        // Callbacks de eventos do motor de áudio nativo (Fim de música e Salto quantizado)
+        NativeAudioEngine.shared.onSongEnded = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.hasTriggeredCrossfade { return }
+                self.isPlaying = false
+                if self.autoAdvance {
+                    self.advanceToNextSetlistSong()
+                }
+            }
+        }
+        
+        NativeAudioEngine.shared.onCueJumped = { [weak self] jumpedIdx in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.currentCueIdx = jumpedIdx
+                self.queuedCueIdx = nil
+            }
+        }
+        
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
         restoreInitialSetlistFromCache()
         
@@ -898,11 +918,24 @@ class PlaybackState: ObservableObject {
             guard let self = self else { return }
             let engine = NativeAudioEngine.shared
             if engine.isPlaying != self.isPlaying {
+                let wasPlaying = self.isPlaying
                 self.isPlaying = engine.isPlaying
+                
+                // Fallback robusto para avanço automático de setlist no fim da música
+                if wasPlaying && !engine.isPlaying && self.totalSeconds > 0 && self.currentSeconds >= self.totalSeconds - 0.5 {
+                    if self.autoAdvance && !self.hasTriggeredCrossfade {
+                        self.advanceToNextSetlistSong()
+                    }
+                }
             }
             let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : 0.0
             if abs(self.currentSeconds - curSec) > 0.015 {
                 self.currentSeconds = curSec
+            }
+            
+            // Reseta trava de crossfade quando a música entra em reprodução normal
+            if self.hasTriggeredCrossfade && curSec > 3.0 && curSec < (self.totalSeconds - 5.0) {
+                self.hasTriggeredCrossfade = false
             }
             if self.currentCueIdx != engine.currentCueIdx {
                 self.currentCueIdx = engine.currentCueIdx
@@ -1904,7 +1937,6 @@ class PlaybackState: ObservableObject {
         let cached = getOrLoadSongData(for: songToLoad, fallbackCues: cues)
         
         // 2. ATUALIZAÇÃO ATÔMICA DE TODOS OS ESTADOS DA TIMELINE NO MESMO FRAME
-        self.currentSong = songToLoad
         if let d = cached {
             self.bpm = d.bpm
             self.timeSignature = d.timeSignature
@@ -1914,14 +1946,21 @@ class PlaybackState: ObservableObject {
             }
             self.currentCues = d.cues
             self.fullWaveform = d.waveform
+            
+            songToLoad.bpm = d.bpm
+            songToLoad.time_signature = d.timeSignature
+            songToLoad.cues = d.cues
+            songToLoad.total_duration = d.totalSeconds
+            songToLoad.full_waveform = d.waveform
         } else {
-            if let b = song.bpm { self.bpm = b }
-            if let ts = song.time_signature { self.timeSignature = ts }
+            if let b = song.bpm { self.bpm = b; songToLoad.bpm = b }
+            if let ts = song.time_signature { self.timeSignature = ts; songToLoad.time_signature = ts }
             self.syncAbleton(bpm: song.bpm, timeSignature: song.time_signature)
-            if let dur = song.total_duration, dur > 0 { self.totalSeconds = dur }
-            if let wf = song.full_waveform { self.fullWaveform = wf }
-            if let cs = cues ?? song.cues { self.currentCues = cs }
+            if let dur = song.total_duration, dur > 0 { self.totalSeconds = dur; songToLoad.total_duration = dur }
+            if let wf = song.full_waveform { self.fullWaveform = wf; songToLoad.full_waveform = wf }
+            if let cs = cues ?? song.cues { self.currentCues = cs; songToLoad.cues = cs }
         }
+        self.currentSong = songToLoad
         
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
