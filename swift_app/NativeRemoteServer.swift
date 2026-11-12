@@ -33,6 +33,7 @@ public final class NativeRemoteServer {
                 case .ready:
                     print("🚀 [NativeRemoteServer] Servidor nativo ouvindo na porta \(port)")
                     self?.isRunning = true
+                    self?.startBroadcastTimer()
                 case .failed(let error):
                     print("❌ [NativeRemoteServer] Falha ao iniciar: \(error.localizedDescription)")
                     self?.isRunning = false
@@ -55,6 +56,7 @@ public final class NativeRemoteServer {
     }
     
     public func stop() {
+        stopBroadcastTimer()
         listener?.cancel()
         listener = nil
         lock.lock()
@@ -64,6 +66,42 @@ public final class NativeRemoteServer {
         activeConnections.removeAll()
         lock.unlock()
         isRunning = false
+    }
+    
+    private var broadcastTimer: DispatchSourceTimer?
+    
+    private func startBroadcastTimer() {
+        stopBroadcastTimer()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(33))
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            self.lock.lock()
+            let conns = Array(self.activeConnections.values)
+            self.lock.unlock()
+            
+            let wsConns = conns.filter { $0.isWebSocket }
+            guard !wsConns.isEmpty else { return }
+            
+            let status = NativeAudioEngine.shared.buildStatusDictionary()
+            let payload: [String: Any] = [
+                "event": "tick",
+                "data": status
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
+               let str = String(data: data, encoding: .utf8) {
+                for c in wsConns {
+                    c.sendWebSocketText(str)
+                }
+            }
+        }
+        timer.resume()
+        self.broadcastTimer = timer
+    }
+    
+    private func stopBroadcastTimer() {
+        broadcastTimer?.cancel()
+        broadcastTimer = nil
     }
     
     private func handleNewConnection(_ connection: NWConnection) {
@@ -392,7 +430,11 @@ fileprivate final class RemoteConnection {
     private func sendCurrentStatus() {
         DispatchQueue.main.async { [weak self] in
             let status = NativeAudioEngine.shared.buildStatusDictionary()
-            if let data = try? JSONSerialization.data(withJSONObject: status),
+            let payload: [String: Any] = [
+                "event": "status",
+                "data": status
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
                let str = String(data: data, encoding: .utf8) {
                 self?.sendWebSocketText(str)
             }
@@ -420,6 +462,28 @@ fileprivate final class RemoteConnection {
             ]
             sendJsonResponse(resp)
             
+        case ("GET", "/api/status"):
+            sendJsonResponse(NativeAudioEngine.shared.buildStatusDictionary())
+            
+        case ("GET", "/api/tracks/folder"):
+            let dir = NativeSongLibrary.shared.getTracksDirectory().path
+            sendJsonResponse(["path": dir])
+            
+        case ("POST", "/api/tracks/folder"):
+            var dir = ""
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let p = json["path"] as? String {
+                dir = p
+            }
+            if !dir.isEmpty {
+                _ = NativeSongLibrary.shared.setTracksDirectory(dir)
+            }
+            sendJsonResponse(["status": "ok", "path": NativeSongLibrary.shared.getTracksDirectory().path])
+            
+        case ("POST", "/api/tracks/refresh"):
+            _ = NativeSongLibrary.shared.getAllSongs()
+            sendJsonResponse(["status": "refreshed"])
+            
         case ("GET", "/api/devices"):
             let devs = NativeAudioEngine.shared.getOutputDevices().map { dev in
                 ["id": dev.id, "name": dev.name, "is_default": dev.isDefault]
@@ -434,6 +498,23 @@ fileprivate final class RemoteConnection {
             } else {
                 sendJsonResponse([])
             }
+            
+        case ("POST", "/api/load"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String,
+               let song = NativeSongLibrary.shared.findSong(byId: songId) {
+                let cf = (payload["crossfade"] as? Bool) ?? false
+                NativeAudioEngine.shared.loadSong(song, crossfade: cf)
+                if let data = try? JSONEncoder().encode(song),
+                   let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    sendJsonResponse(["status": "loaded", "song": songDict])
+                    return
+                }
+            }
+            sendJsonResponse(["status": "ok"])
             
         case ("POST", let p) where p.starts(with: "/api/"):
             let actionName = p.replacingOccurrences(of: "/api/", with: "")

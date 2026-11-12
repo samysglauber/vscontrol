@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-12T20:24:19Z",
+  "createdAt" : "2026-11-12T20:35:09Z",
   "items" : [
     {
       "cues" : [
@@ -5318,7 +5318,6 @@
       ],
       "song" : {
         "bpm" : 76,
-        "cover_url" : "\/api\/covers?id=Ele%20Vem%20%2876bpm%29%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -7693,10 +7692,10 @@
           0.061,
           0.056
         ],
-        "has_cover" : true,
+        "has_cover" : false,
         "id" : "Ele Vem (76bpm) - vs.mp3",
         "is_metronome" : false,
-        "name" : "Ele Vem (76bpm)",
+        "name" : "Ele Vem (76bpm) - vs",
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Ele Vem (76bpm) - vs.mp3",
         "search_query" : "Ele Vem",
         "subdivide" : false,
@@ -8733,7 +8732,6 @@
       ],
       "song" : {
         "bpm" : 68,
-        "cover_url" : "\/api\/covers?id=Bondade%20de%20Deus%20%2868bpm%29%20%28com%20teclado%29%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -10962,10 +10960,10 @@
           0.04,
           0.04
         ],
-        "has_cover" : true,
+        "has_cover" : false,
         "id" : "Bondade de Deus (68bpm) (com teclado) - vs.mp3",
         "is_metronome" : false,
-        "name" : "Bondade de Deus (68bpm) (com teclado)",
+        "name" : "Bondade de Deus (68bpm) (com teclado) - vs",
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/Bondade de Deus (68bpm) (com teclado) - vs.mp3",
         "search_query" : "Bondade de Deus",
         "subdivide" : false,
@@ -12002,7 +12000,7 @@
       ],
       "song" : {
         "bpm" : 68,
-        "cover_url" : "\/api\/covers?id=A%20Ele%20a%20Glo%CC%81ria%20%2868bpm%29%20-%20vs.mp3",
+        "cover_url" : "\/covers\/A Ele a Glória (68bpm) - vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -14234,7 +14232,7 @@
         "has_cover" : true,
         "id" : "A Ele a Glória (68bpm) - vs.mp3",
         "is_metronome" : false,
-        "name" : "A Ele a Glória (68bpm)",
+        "name" : "A Ele a Glória (68bpm) - vs",
         "path" : "\/Users\/samysglauber\/Documents\/Vs\/A Ele a Glória (68bpm) - vs.mp3",
         "search_query" : "A Ele a Glória",
         "subdivide" : false,
@@ -19432,7 +19430,6 @@
       ],
       "song" : {
         "bpm" : 111,
-        "cover_url" : "\/api\/covers?id=Click%206_8%20%28114%20BPM%29.wav",
         "cues" : [
           {
             "bar" : 1,
@@ -25822,7 +25819,7 @@
           0.841,
           0.84
         ],
-        "has_cover" : true,
+        "has_cover" : false,
         "id" : "Click 6_8 (114 BPM).wav",
         "is_metronome" : true,
         "name" : "Click 2\/4 (111 BPM)",
@@ -25837,6 +25834,6 @@
     }
   ],
   "name" : "Setlist 1",
-  "updatedAt" : "2026-11-12T20:24:19Z",
+  "updatedAt" : "2026-11-12T20:35:09Z",
   "version" : 1
 }

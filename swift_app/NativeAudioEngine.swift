@@ -133,11 +133,13 @@ final class NativeAudioEngine {
     
     private func renderAudio(frameCount: Int, outputData: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
         let abl = UnsafeMutableAudioBufferListPointer(outputData)
-        guard abl.count >= 2,
-              let ptrL = abl[0].mData?.assumingMemoryBound(to: Float.self),
-              let ptrR = abl[1].mData?.assumingMemoryBound(to: Float.self) else {
+        guard abl.count > 0, let firstBuf = abl[0].mData?.assumingMemoryBound(to: Float.self) else {
             return noErr
         }
+        
+        let isDeinterleaved = (abl.count >= 2)
+        let ptrL = firstBuf
+        let ptrR = isDeinterleaved ? (abl[1].mData?.assumingMemoryBound(to: Float.self) ?? firstBuf) : firstBuf
         
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
@@ -145,10 +147,14 @@ final class NativeAudioEngine {
         if !isPlaying || totalFrames == 0 {
             // Silêncio ou apenas Pad se ativo
             if padActive && !padBuffer.isEmpty {
-                renderPadOnly(ptrL: ptrL, ptrR: ptrR, frames: frameCount)
+                renderPadOnly(ptrL: ptrL, ptrR: ptrR, frames: frameCount, isDeinterleaved: isDeinterleaved)
             } else {
-                ptrL.initialize(repeating: 0, count: frameCount)
-                ptrR.initialize(repeating: 0, count: frameCount)
+                if isDeinterleaved {
+                    ptrL.initialize(repeating: 0, count: frameCount)
+                    ptrR.initialize(repeating: 0, count: frameCount)
+                } else {
+                    ptrL.initialize(repeating: 0, count: frameCount * 2)
+                }
             }
             return noErr
         }
@@ -179,8 +185,12 @@ final class NativeAudioEngine {
         
         // 2. Fim da música atingido
         if endFrame >= totalFrames {
-            ptrL.initialize(repeating: 0, count: frameCount)
-            ptrR.initialize(repeating: 0, count: frameCount)
+            if isDeinterleaved {
+                ptrL.initialize(repeating: 0, count: frameCount)
+                ptrR.initialize(repeating: 0, count: frameCount)
+            } else {
+                ptrL.initialize(repeating: 0, count: frameCount * 2)
+            }
             isPlaying = false
             posFrame = 0
             currentCueIdx = 0
@@ -259,8 +269,15 @@ final class NativeAudioEngine {
                 padPos += 1
             }
             
-            ptrL[i] = effL + padSample
-            ptrR[i] = effR + padSample
+            let outL = effL + padSample
+            let outR = effR + padSample
+            if isDeinterleaved {
+                ptrL[i] = outL
+                ptrR[i] = outR
+            } else {
+                ptrL[2 * i] = outL
+                ptrL[2 * i + 1] = outR
+            }
         }
         
         // 4. Emite MIDI Clock baseado exatamente nos frames de áudio consumidos
@@ -272,12 +289,17 @@ final class NativeAudioEngine {
         return noErr
     }
     
-    private func renderPadOnly(ptrL: UnsafeMutablePointer<Float>, ptrR: UnsafeMutablePointer<Float>, frames: Int) {
+    private func renderPadOnly(ptrL: UnsafeMutablePointer<Float>, ptrR: UnsafeMutablePointer<Float>, frames: Int, isDeinterleaved: Bool) {
         for i in 0..<frames {
             let sample = padBuffer[padPos % padBuffer.count] * padVol
             padPos += 1
-            ptrL[i] = sample
-            ptrR[i] = sample
+            if isDeinterleaved {
+                ptrL[i] = sample
+                ptrR[i] = sample
+            } else {
+                ptrL[2 * i] = sample
+                ptrL[2 * i + 1] = sample
+            }
         }
     }
     
@@ -619,6 +641,12 @@ final class NativeAudioEngine {
         let curSec = sampleRate > 0 ? Double(posFrame) / sampleRate : 0.0
         let totSec = sampleRate > 0 ? Double(totalFrames) / sampleRate : 0.0
         
+        let beatSec = bpm > 0 ? (60.0 / bpm) : 0.5
+        let totalBeats = Int(curSec / beatSec)
+        let beatsPerBar = max(1, timeSignature.0)
+        let curBar = (totalBeats / beatsPerBar) + 1
+        let curBeat = (totalBeats % beatsPerBar) + 1
+        
         var cueDict: [String: Any]? = nil
         if currentCueIdx >= 0 && currentCueIdx < cues.count {
             let c = cues[currentCueIdx]
@@ -634,22 +662,35 @@ final class NativeAudioEngine {
         return [
             "type": "status",
             "is_playing": isPlaying,
+            "current_seconds": curSec,
             "current_time": curSec,
+            "total_seconds": totSec,
             "total_time": totSec,
             "current_cue": cueDict as Any,
             "current_cue_idx": currentCueIdx,
+            "queued_cue_idx": queuedCueIdx as Any,
+            "click_vol": Double(clickVol),
+            "vs_vol": Double(vsVol),
             "volume_l": Double(clickVol),
             "volume_r": Double(vsVol),
             "click_mute": clickMute,
             "vs_mute": vsMute,
+            "tracks_fade_state": tracksFadeState,
+            "is_faded_out": (tracksFadeState == "faded_out"),
             "fade_active": (tracksFadeState == "faded_out" || tracksFadeState == "fading_out"),
             "loop_active": loopActive,
-            "infinite_loop": loopInfinite,
+            "loop_infinite": loopInfinite,
+            "loop_cue_idx": loopCueIdx as Any,
             "bpm": bpm,
             "time_signature": "\(timeSignature.0)/\(timeSignature.1)",
+            "bar": curBar,
+            "beat": curBeat,
+            "pad_active": padActive,
             "pad_playing": padActive,
             "pad_key": padKey,
-            "device": currentDeviceName
+            "device": currentDeviceName,
+            "output_device_name": currentDeviceName,
+            "output_device_id": Int(currentDeviceId)
         ]
     }
     

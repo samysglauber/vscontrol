@@ -32,6 +32,7 @@ chmod +x swift_app/VSControl
 
 mkdir -p "VS Control.app/Contents/MacOS"
 cp swift_app/VSControl "VS Control.app/Contents/MacOS/VSControl"
+cp swift_app/VSControl "VS Control.app/Contents/MacOS/VS Control"
 
 echo "✅ Build nativo concluído com sucesso!"
-echo "   Binário: $DIR/VS Control.app/Contents/MacOS/VSControl"
+echo "   Binário: $DIR/VS Control.app/Contents/MacOS/VS Control"

@@ -824,6 +824,9 @@ class PlaybackState: ObservableObject {
         // 1. Restauração instantânea (0.00s) das músicas da Setlist salvas localmente
         restoreInitialSetlistFromCache()
         
+        // Sincronização direta com o motor nativo (0ms de latência)
+        startNativeEngineTimer()
+        
         // 2. Busca e atualiza apenas as músicas da Setlist no backend
         fetchSetlistSongs()
         fetchAllLibrarySongs()
@@ -883,6 +886,29 @@ class PlaybackState: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     self.setupWebSocket()
                 }
+            }
+        }
+    }
+    
+    private var nativeEngineTimer: Timer?
+    
+    private func startNativeEngineTimer() {
+        nativeEngineTimer?.invalidate()
+        nativeEngineTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let engine = NativeAudioEngine.shared
+            if engine.isPlaying != self.isPlaying {
+                self.isPlaying = engine.isPlaying
+            }
+            if engine.isPlaying {
+                let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : 0.0
+                if abs(self.currentSeconds - curSec) > 0.015 {
+                    self.currentSeconds = curSec
+                }
+                if self.currentCueIdx != engine.currentCueIdx {
+                    self.currentCueIdx = engine.currentCueIdx
+                }
+                self.checkSongTransitions(currentSeconds: self.currentSeconds)
             }
         }
     }
@@ -1487,95 +1513,71 @@ class PlaybackState: ObservableObject {
     }
     
     func fetchSetlistSongs(retryCount: Int = 0) {
-        // Carrega APENAS as músicas que estão na setlist para inicialização relâmpago
         let ids = setlist.map { $0.song.id }
         guard !ids.isEmpty else { return }
-        
-        let joined = ids.joined(separator: ",")
-        let encoded = joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined
-        let urlStr = "http://127.0.0.1:8080/api/songs?ids=\(encoded)"
-        
-        guard let url = URL(string: urlStr) else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            if let data = data, let songs = try? JSONDecoder().decode([SongItem].self, from: data), !songs.isEmpty {
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.songs = songs
-                    // Atualiza as instâncias da setlist com dados frescos do servidor
-                    for (idx, item) in self.setlist.enumerated() {
-                        if let updated = songs.first(where: { $0.id == item.song.id }) {
-                            var resolvedSong = updated
-                            if item.song.name.contains("/") && resolvedSong.name.contains("_") {
-                                resolvedSong.name = item.song.name
-                            }
-                            let songCues = item.cues ?? resolvedSong.cues
-                            let songDur = item.totalDuration ?? resolvedSong.total_duration
-                            let songWf = item.waveform ?? resolvedSong.full_waveform
-                            self.setlist[idx] = SetlistSong(
-                                id: item.id,
-                                song: resolvedSong,
-                                transitionType: item.transitionType,
-                                cues: songCues,
-                                totalDuration: songDur,
-                                waveform: songWf
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let songs = NativeSongLibrary.shared.loadSetlistSongs(ids: ids)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.songs = songs
+                for (idx, item) in self.setlist.enumerated() {
+                    if let updated = songs.first(where: { $0.id == item.song.id }) {
+                        var resolvedSong = updated
+                        if item.song.name.contains("/") && resolvedSong.name.contains("_") {
+                            resolvedSong.name = item.song.name
+                        }
+                        let songCues = item.cues ?? resolvedSong.cues
+                        let songDur = item.totalDuration ?? resolvedSong.total_duration
+                        let songWf = item.waveform ?? resolvedSong.full_waveform
+                        self.setlist[idx] = SetlistSong(
+                            id: item.id,
+                            song: resolvedSong,
+                            transitionType: item.transitionType,
+                            cues: songCues,
+                            totalDuration: songDur,
+                            waveform: songWf
+                        )
+                        if let dur = songDur, let cs = songCues {
+                            self.songCache[resolvedSong.id] = CachedSongData(
+                                bpm: resolvedSong.bpm ?? 120.0,
+                                timeSignature: resolvedSong.time_signature ?? "4/4",
+                                totalSeconds: dur,
+                                cues: cs,
+                                waveform: songWf ?? []
                             )
-                            if let dur = songDur, let cs = songCues {
-                                self.songCache[resolvedSong.id] = CachedSongData(
-                                    bpm: resolvedSong.bpm ?? 120.0,
-                                    timeSignature: resolvedSong.time_signature ?? "4/4",
-                                    totalSeconds: dur,
-                                    cues: cs,
-                                    waveform: songWf ?? []
-                                )
-                            }
                         }
-                    }
-                    if let current = self.currentSong, let updated = songs.first(where: { $0.id == current.id }) {
-                        var resolvedCurrent = updated
-                        if current.name.contains("/") && resolvedCurrent.name.contains("_") {
-                            resolvedCurrent.name = current.name
-                        }
-                        self.currentSong = resolvedCurrent
-                    } else if self.currentSong == nil, let first = self.setlist.first {
-                        self.loadSong(first.song, cues: first.cues)
                     }
                 }
-            } else {
-                // Tenta novamente enquanto o servidor Python inicializa
-                if retryCount < 15 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.fetchSetlistSongs(retryCount: retryCount + 1)
+                if let current = self.currentSong, let updated = songs.first(where: { $0.id == current.id }) {
+                    var resolvedCurrent = updated
+                    if current.name.contains("/") && resolvedCurrent.name.contains("_") {
+                        resolvedCurrent.name = current.name
                     }
+                    self.currentSong = resolvedCurrent
+                } else if self.currentSong == nil, let first = self.setlist.first {
+                    self.loadSong(first.song, cues: first.cues)
                 }
             }
-        }.resume()
+        }
     }
     
     func fetchAllLibrarySongs() {
         guard !isLoadingLibrary else { return }
         isLoadingLibrary = true
-        guard let url = URL(string: "http://127.0.0.1:8080/api/songs") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let songs = NativeSongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
                 self?.isLoadingLibrary = false
-                if let data = data, let songs = try? JSONDecoder().decode([SongItem].self, from: data) {
-                    self?.librarySongs = songs
-                    self?.songs = songs
-                }
+                self?.librarySongs = songs
+                self?.songs = songs
             }
-        }.resume()
+        }
     }
     
     func fetchTracksFolder() {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/folder") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data = data,
-                  let resp = try? JSONDecoder().decode(TracksFolderResponse.self, from: data) else { return }
-            DispatchQueue.main.async {
-                self?.tracksFolderPath = resp.path
-                UserDefaults.standard.set(resp.path, forKey: "saved_tracks_folder_path")
-            }
-        }.resume()
+        let dir = NativeSongLibrary.shared.getTracksDirectory().path
+        self.tracksFolderPath = dir
+        UserDefaults.standard.set(dir, forKey: "saved_tracks_folder_path")
     }
     
     func selectTracksFolder() {
@@ -1681,209 +1683,146 @@ class PlaybackState: ObservableObject {
     }
     
     func generateMetronome(name: String, bpm: Double, timeSignature: String, subdivision: String = "1/4", completion: @escaping (Result<SongItem, Error>) -> Void) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/generate") else {
-            completion(.failure(NSError(domain: "Invalid URL", code: 400)))
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let payload: [String: Any] = [
-            "name": name,
-            "bpm": bpm,
-            "time_signature": timeSignature,
-            "duration_sec": 600.0,
-            "subdivide": (subdivision != "1/4"),
-            "subdivision": subdivision
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            if let error = error {
-                DispatchQueue.main.async { completion(.failure(error)) }
-                return
-            }
-            guard let data = data,
-                  let resp = try? JSONDecoder().decode(MetronomeGenerateResponse.self, from: data) else {
-                DispatchQueue.main.async {
-                    completion(.failure(NSError(domain: "DecodeError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Falha ao decodificar metrônomo gerado"])))
-                }
-                return
-            }
-            
-            let song = resp.song
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                
-                // 1. Adiciona à biblioteca
-                if !self.librarySongs.contains(where: { $0.id == song.id }) {
-                    self.librarySongs.insert(song, at: 0)
-                }
-                if !self.songs.contains(where: { $0.id == song.id }) {
-                    self.songs.insert(song, at: 0)
-                }
-                
-                // 2. Adiciona ao setlist atual
-                let newSong = SetlistSong(
-                    song: song,
-                    cues: song.cues,
-                    totalDuration: song.total_duration,
-                    waveform: song.full_waveform
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let song = try NativeMetronomeGenerator.shared.generateMetronome(
+                    name: name,
+                    bpm: bpm,
+                    timeSignature: timeSignature,
+                    subdivision: subdivision,
+                    subdivide: (subdivision != "1/4")
                 )
-                self.setlist.append(newSong)
-                
-                // 3. Atualiza cache
-                if let dur = song.total_duration, let cs = song.cues {
-                    self.songCache[song.id] = CachedSongData(
-                        bpm: song.bpm ?? bpm,
-                        timeSignature: song.time_signature ?? timeSignature,
-                        totalSeconds: dur,
-                        cues: cs,
-                        waveform: song.full_waveform ?? []
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if !self.librarySongs.contains(where: { $0.id == song.id }) {
+                        self.librarySongs.insert(song, at: 0)
+                    }
+                    if !self.songs.contains(where: { $0.id == song.id }) {
+                        self.songs.insert(song, at: 0)
+                    }
+                    let newSong = SetlistSong(
+                        song: song,
+                        cues: song.cues,
+                        totalDuration: song.total_duration,
+                        waveform: song.full_waveform
                     )
+                    self.setlist.append(newSong)
+                    if let dur = song.total_duration, let cs = song.cues {
+                        self.songCache[song.id] = CachedSongData(
+                            bpm: song.bpm ?? bpm,
+                            timeSignature: song.time_signature ?? timeSignature,
+                            totalSeconds: dur,
+                            cues: cs,
+                            waveform: song.full_waveform ?? []
+                        )
+                    }
+                    self.saveSetlistState()
+                    completion(.success(song))
                 }
-                
-                self.saveSetlistState()
-                completion(.success(song))
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
             }
-        }.resume()
+        }
     }
     
     func updateMetronome(item: SetlistSong, name: String, bpm: Double, timeSignature: String, subdivision: String = "1/4", completion: @escaping (Result<SongItem, Error>) -> Void) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/metronome/update") else {
-            completion(.failure(NSError(domain: "Invalid URL", code: 400)))
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let payload: [String: Any] = [
-            "song_id": item.song.id,
-            "name": name,
-            "bpm": bpm,
-            "time_signature": timeSignature,
-            "duration_sec": 600.0,
-            "subdivide": (subdivision != "1/4"),
-            "subdivision": subdivision
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            if let error = error {
-                DispatchQueue.main.async { completion(.failure(error)) }
-                return
-            }
-            guard let data = data,
-                  let resp = try? JSONDecoder().decode(MetronomeGenerateResponse.self, from: data) else {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let updatedSong = try NativeMetronomeGenerator.shared.updateMetronome(
+                    existingItem: item.song,
+                    name: name,
+                    bpm: bpm,
+                    timeSignature: timeSignature,
+                    subdivision: subdivision,
+                    subdivide: (subdivision != "1/4")
+                )
                 DispatchQueue.main.async {
-                    completion(.failure(NSError(domain: "DecodeError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Falha ao atualizar metrônomo"])))
+                    guard let self = self else { return }
+                    if let idx = self.setlist.firstIndex(where: { $0.id == item.id }) {
+                        self.setlist[idx].song = updatedSong
+                        self.setlist[idx].cues = updatedSong.cues
+                        self.setlist[idx].totalDuration = updatedSong.total_duration
+                        self.setlist[idx].waveform = updatedSong.full_waveform
+                    }
+                    if let idx = self.librarySongs.firstIndex(where: { $0.id == updatedSong.id }) {
+                        self.librarySongs[idx] = updatedSong
+                    }
+                    if let idx = self.songs.firstIndex(where: { $0.id == updatedSong.id }) {
+                        self.songs[idx] = updatedSong
+                    }
+                    if let dur = updatedSong.total_duration, let cs = updatedSong.cues {
+                        self.songCache[updatedSong.id] = CachedSongData(
+                            bpm: updatedSong.bpm ?? bpm,
+                            timeSignature: updatedSong.time_signature ?? timeSignature,
+                            totalSeconds: dur,
+                            cues: cs,
+                            waveform: updatedSong.full_waveform ?? []
+                        )
+                    }
+                    if self.currentSong?.id == item.song.id {
+                        self.currentSong = updatedSong
+                        self.bpm = updatedSong.bpm ?? bpm
+                        self.timeSignature = updatedSong.time_signature ?? timeSignature
+                        self.syncAbleton(bpm: self.bpm, timeSignature: self.timeSignature)
+                        if let cs = updatedSong.cues { self.currentCues = cs }
+                        self.loadSong(updatedSong, autoPlay: self.isPlaying)
+                    }
+                    self.saveSetlistState()
+                    completion(.success(updatedSong))
                 }
-                return
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
             }
-            
-            let updatedSong = resp.song
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                
-                // 1. Atualiza no setlist atual
-                if let idx = self.setlist.firstIndex(where: { $0.id == item.id }) {
-                    self.setlist[idx].song = updatedSong
-                    self.setlist[idx].cues = updatedSong.cues
-                    self.setlist[idx].totalDuration = updatedSong.total_duration
-                    self.setlist[idx].waveform = updatedSong.full_waveform
-                }
-                
-                // 2. Atualiza na biblioteca
-                if let idx = self.librarySongs.firstIndex(where: { $0.id == updatedSong.id }) {
-                    self.librarySongs[idx] = updatedSong
-                }
-                if let idx = self.songs.firstIndex(where: { $0.id == updatedSong.id }) {
-                    self.songs[idx] = updatedSong
-                }
-                
-                // 3. Atualiza cache
-                if let dur = updatedSong.total_duration, let cs = updatedSong.cues {
-                    self.songCache[updatedSong.id] = CachedSongData(
-                        bpm: updatedSong.bpm ?? bpm,
-                        timeSignature: updatedSong.time_signature ?? timeSignature,
-                        totalSeconds: dur,
-                        cues: cs,
-                        waveform: updatedSong.full_waveform ?? []
-                    )
-                }
-                
-                // 4. Se a música editada for a que está carregada no player, atualiza os dados em tempo real
-                if self.currentSong?.id == item.song.id {
-                    self.currentSong = updatedSong
-                    self.bpm = updatedSong.bpm ?? bpm
-                    self.timeSignature = updatedSong.time_signature ?? timeSignature
-                    self.syncAbleton(bpm: self.bpm, timeSignature: self.timeSignature)
-                    if let cs = updatedSong.cues { self.currentCues = cs }
-                }
-                
-                self.saveSetlistState()
-                completion(.success(updatedSong))
-            }
-        }.resume()
+        }
     }
     
     func syncAbleton(bpm: Double? = nil, timeSignature: String? = nil) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/sync_ableton") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var payload: [String: Any] = [:]
-        if let b = bpm { payload["bpm"] = b }
-        if let ts = timeSignature { payload["time_signature"] = ts }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        URLSession.shared.dataTask(with: req).resume()
+        if let b = bpm {
+            NativeAudioEngine.shared.osc.sendTempo(b)
+        }
+        if let ts = timeSignature {
+            let parts = ts.split(separator: "/")
+            if parts.count >= 2, let n = Int(parts[0]), let d = Int(parts[1]) {
+                NativeAudioEngine.shared.osc.sendTimeSignature(numerator: n, denominator: d)
+            }
+        }
     }
     
     func fetchDevices(retryCount: Int = 0) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/devices") else { return }
-        var req = URLRequest(url: url)
-        req.cachePolicy = .reloadIgnoringLocalCacheData
-        req.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
-            if let data = data, let devs = try? JSONDecoder().decode([AudioDeviceItem].self, from: data), !devs.isEmpty {
-                DispatchQueue.main.async {
-                    self?.devices = devs
-                    
-                    let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
-                    
-                    // 1. Tenta restaurar pelo nome exato do dispositivo salvo
-                    if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
-                        self?.selectedDeviceId = match.id
-                        self?.selectedDeviceName = match.name
-                        self?.setAudioDevice(id: match.id, save: false)
-                    } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
-                        // 2. Se não houver preferência salva, prioriza BlackHole para Ableton Live
-                        self?.selectedDeviceId = blackhole.id
-                        self?.selectedDeviceName = blackhole.name
-                        self?.setAudioDevice(id: blackhole.id, save: true)
-                    } else if let def = devs.first(where: { $0.is_default }) {
-                        // 3. Saída padrão atual do macOS (fones/alto-falante)
-                        self?.selectedDeviceId = def.id
-                        self?.selectedDeviceName = def.name
-                        self?.setAudioDevice(id: def.id, save: true)
-                    } else if let first = devs.first {
-                        self?.selectedDeviceId = first.id
-                        self?.selectedDeviceName = first.name
-                        self?.setAudioDevice(id: first.id, save: true)
-                    }
-                }
-            } else {
-                if retryCount < 15 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.fetchDevices(retryCount: retryCount + 1)
-                    }
-                }
-            }
-        }.resume()
+        let rawDevs = NativeAudioEngine.shared.getOutputDevices()
+        let devs = rawDevs.map { dev in
+            AudioDeviceItem(
+                id: Int(dev.id),
+                name: dev.name,
+                channels: 2,
+                is_default: dev.isDefault,
+                is_blackhole: dev.name.lowercased().contains("blackhole")
+            )
+        }
+        self.devices = devs
+        
+        let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name")
+        if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
+            self.selectedDeviceId = match.id
+            self.selectedDeviceName = match.name
+            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(match.id), deviceName: match.name)
+        } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
+            self.selectedDeviceId = blackhole.id
+            self.selectedDeviceName = blackhole.name
+            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(blackhole.id), deviceName: blackhole.name)
+        } else if let def = devs.first(where: { $0.is_default }) {
+            self.selectedDeviceId = def.id
+            self.selectedDeviceName = def.name
+            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(def.id), deviceName: def.name)
+        } else if let first = devs.first {
+            self.selectedDeviceId = first.id
+            self.selectedDeviceName = first.name
+            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(first.id), deviceName: first.name)
+        }
     }
     
     func setAudioDevice(id: Int, save: Bool = true) {
@@ -1892,16 +1831,13 @@ class PlaybackState: ObservableObject {
         if let d = devices.first(where: { $0.id == id }) {
             self.selectedDeviceName = d.name
             devName = d.name
+            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(id), deviceName: d.name)
             if save {
                 UserDefaults.standard.set(d.name, forKey: "saved_audio_device_name")
                 UserDefaults.standard.set(id, forKey: "saved_audio_device_id")
             }
         }
-        var body: [String: Any] = ["device_id": id]
-        if !devName.isEmpty && devName != "Output" {
-            body["device_name"] = devName
-        }
-        sendAction("device", body: body)
+        sendAction("device", body: ["device_id": id, "device_name": devName])
     }
     
     func fetchNetworkInfo() {
@@ -1964,7 +1900,17 @@ class PlaybackState: ObservableObject {
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
         
-        // 3. REQUISIÇÃO AO MOTOR DE ÁUDIO NO BACKEND (EXECUTADA EM SEGUNDO PLANO)
+        // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
+        DispatchQueue.global(qos: .userInitiated).async {
+            NativeAudioEngine.shared.loadSong(songToLoad, crossfade: crossfade)
+            if autoPlay {
+                DispatchQueue.main.async {
+                    NativeAudioEngine.shared.play()
+                }
+            }
+        }
+        
+        // REQUISIÇÃO AO MOTOR DE ÁUDIO NO BACKEND (EXECUTADA EM SEGUNDO PLANO PARA DISPOSITIVOS REMOTOS)
         guard let url = URL(string: "http://127.0.0.1:8080/api/load") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -2831,6 +2777,49 @@ class PlaybackState: ObservableObject {
     }
     
     private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
+        let engine = NativeAudioEngine.shared
+        switch endpoint {
+        case "play":
+            engine.play()
+        case "pause":
+            engine.pause()
+        case "play_pause":
+            engine.togglePlayPause()
+        case "stop":
+            engine.stop()
+        case "seek":
+            if let sec = body?["time"] as? Double {
+                engine.seek(to: sec)
+            }
+        case "trigger_cue":
+            if let idx = body?["cue_index"] as? Int {
+                engine.triggerCue(index: idx)
+            }
+        case "toggle_loop":
+            engine.toggleLoop()
+        case "toggle_infinite":
+            engine.toggleInfiniteLoop()
+        case "fade_stop":
+            engine.fadeStop()
+        case "fade_tracks":
+            engine.fadeTracks()
+        case "pad":
+            if let key = body?["key"] as? String {
+                let active = (body?["active"] as? Bool) ?? true
+                engine.setPadKey(key, active: active)
+            }
+        case "volumes":
+            let vl = (body?["volume_l"] as? Double) ?? Double(self.clickVol)
+            let vr = (body?["volume_r"] as? Double) ?? Double(self.vsVol)
+            engine.setVolumes(clickVolume: Float(vl), vsVolume: Float(vr))
+        case "device":
+            if let devId = body?["device_id"] as? UInt32 {
+                _ = engine.setOutputDevice(deviceId: devId)
+            }
+        default:
+            break
+        }
+        
         guard let url = URL(string: "http://127.0.0.1:8080/api/\(endpoint)") else { return }
         var req = URLRequest(url: url)
         req.cachePolicy = .reloadIgnoringLocalCacheData
@@ -2839,13 +2828,7 @@ class PlaybackState: ObservableObject {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        URLSession.shared.dataTask(with: req) { _, response, error in
-            if let error = error {
-                print("⚠️ [sendAction] Erro ao enviar para /\(endpoint): \(error)")
-            } else if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-                print("⚠️ [sendAction] HTTP \(http.statusCode) para /\(endpoint)")
-            }
-        }.resume()
+        URLSession.shared.dataTask(with: req).resume()
     }
 }
 
