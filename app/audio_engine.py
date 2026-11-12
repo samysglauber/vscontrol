@@ -19,11 +19,13 @@ import sounddevice as sd
 import soundfile as sf
 import numpy as np
 from app.pad_generator import AmbientPadGenerator
+from app.midi_clock import MidiClockManager
 
 class LiveAudioEngine:
     def __init__(self):
         self.stream = None
         self.lock = threading.RLock()
+        self.midi_clock = MidiClockManager()
         
         # Estado do áudio
         self.audio_data = None      # np.ndarray shape (N, 2)
@@ -308,8 +310,13 @@ class LiveAudioEngine:
             self.pad_buffer = self.pad_gen.get_pad_chunk(self.pad_key, duration_sec=10.0)
             self.pad_pos = 0
 
+            # Alinha MIDI Clock
+            self.midi_clock.send_spp(0)
+            self.midi_clock.reset_tick(0, self.sample_rate, self.bpm)
+
             if crossfade:
                 self.is_playing = True
+                self.midi_clock.send_start()
                 if self.stream is None:
                     self._start_stream()
                 self._notify_event("play_state", {"is_playing": True})
@@ -326,6 +333,14 @@ class LiveAudioEngine:
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
             self.is_playing = True
+
+            # Disparo do MIDI Clock com precisão de amostra
+            if self.pos_frame <= 512:
+                self.midi_clock.send_start()
+            else:
+                sixteenths = int(((self.pos_frame / self.sample_rate) / 60.0) * self.bpm * 4.0) if self.sample_rate else 0
+                self.midi_clock.send_continue(sixteenths)
+
             if self.stream is None:
                 self._start_stream()
         self._notify_event("play_state", {"is_playing": True})
@@ -334,6 +349,7 @@ class LiveAudioEngine:
         """Pausa a reprodução mantendo a posição."""
         with self.lock:
             self.is_playing = False
+            self.midi_clock.send_stop()
             self.fade_stop_active = False
             self.tracks_fade_gain = 1.0
             self.tracks_fade_state = "normal"
@@ -356,6 +372,9 @@ class LiveAudioEngine:
             self.is_playing = False
             self.pos_frame = 0
             self.current_cue_idx = 0
+            self.midi_clock.send_stop()
+            self.midi_clock.send_spp(0)
+            self.midi_clock.reset_tick(0, self.sample_rate, self.bpm)
             self.queued_cue_idx = None
             self.queued_jump = None
             self.guide_lead_in = None
@@ -427,6 +446,11 @@ class LiveAudioEngine:
             self.tracks_fade_state = "normal"
             self.tracks_fade_frames_left = 0
             self._update_current_cue_idx()
+            
+            # Reposiciona o ponteiro de música (SPP) do MIDI Clock
+            sixteenths = int((seconds / 60.0) * self.bpm * 4.0) if self.bpm else 0
+            self.midi_clock.send_spp(sixteenths)
+            self.midi_clock.reset_tick(self.pos_frame, self.sample_rate, self.bpm)
         self._notify_event("seek", {"pos_frame": self.pos_frame, "seconds": seconds})
         self._notify_event("cue_queued", {"queued_cue_idx": None})
 
@@ -690,6 +714,8 @@ class LiveAudioEngine:
                 "vs_mute": self.vs_mute,
                 "output_device_id": self.output_device,
                 "output_device_name": self.output_device_name,
+                "midi_sync_active": self.midi_clock.client is not None,
+                "midi_port": self.midi_clock.port_name,
                 "fade_stop_active": self.tracks_fade_state != "normal",
                 "tracks_fade_state": self.tracks_fade_state,
                 "tracks_fade_gain": self.tracks_fade_gain,
@@ -971,6 +997,9 @@ class LiveAudioEngine:
                     slice_r = np.concatenate((r1, r2)) if frames_before > 0 else r2
 
                     self.pos_frame = target_downbeat + frames_after
+                    sixteenths = int(((self.pos_frame / self.sample_rate) / 60.0) * self.bpm * 4.0) if self.sample_rate else 0
+                    self.midi_clock.send_spp(sixteenths)
+                    self.midi_clock.reset_tick(self.pos_frame, self.sample_rate, self.bpm)
                     was_loop = bool(self.guide_lead_in.get("is_loop"))
                     self.guide_lead_in = None
                     self.current_cue_idx = target_cue_idx
@@ -1090,7 +1119,10 @@ class LiveAudioEngine:
                 self.pos_frame = 0
                 self.current_cue_idx = 0
                 self.guide_lead_in = None
+                self.midi_clock.send_stop()
                 self._notify_event("song_ended", {"song_path": self.filepath or ""})
+            else:
+                self.midi_clock.process_frames(self.pos_frame - frames, frames, self.sample_rate, self.bpm)
 
             chunk = np.column_stack((slice_l, slice_r))
             self._apply_volumes_and_pad(chunk, outdata, frames)
