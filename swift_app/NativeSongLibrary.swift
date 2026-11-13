@@ -36,6 +36,9 @@ final class NativeSongLibrary {
     
     func getAllSongs() -> [SongItem] {
         let dir = getTracksDirectory()
+        // Executa migração única automática dos arquivos .cues.json para o banco SQLite e limpa os arquivos soltos
+        _ = NativeDatabase.shared.migrateLegacyFilesIfNeeded(tracksDirectory: dir, deleteLegacy: true)
+        
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
             return []
         }
@@ -89,6 +92,14 @@ final class NativeSongLibrary {
         }
         lock.unlock()
         
+        // 1. Tenta carregar diretamente do banco de dados SQLite nativo
+        if let fromDb = NativeDatabase.shared.getSong(id: entry) {
+            lock.lock()
+            songsCache[entry] = fromDb
+            lock.unlock()
+            return fromDb
+        }
+        
         let filePath = directory.appendingPathComponent(entry).path
         guard FileManager.default.fileExists(atPath: filePath) else { return nil }
         
@@ -99,7 +110,7 @@ final class NativeSongLibrary {
         var totalDuration: Double? = nil
         var cues: [CueSection]? = nil
         var fullWaveform: [Double]? = nil
-        var hasCover = false
+        var hasCover = hasCover(for: entry)
         var isMetronome = false
         var subdivide = false
         var subdivision = "1/4"
@@ -115,74 +126,20 @@ final class NativeSongLibrary {
             timeSignature = tsMatch
         }
         
-        // 2. Leitura do arquivo de metadados .cues.json
-        let cuesPath = filePath + ".cues.json"
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let savedName = json["name"] as? String, !savedName.isEmpty {
-                cleanName = savedName
-            }
-            if let savedBpm = json["bpm"] as? Double, savedBpm > 0 {
-                bpm = savedBpm
-            }
-            if let savedTs = json["time_signature"] as? String, !savedTs.isEmpty {
-                timeSignature = savedTs
-            }
-            if let savedKey = json["default_key"] as? String, !savedKey.isEmpty {
-                defaultKey = savedKey
-            }
-            if let savedDur = json["total_duration"] as? Double, savedDur > 0 {
-                totalDuration = savedDur
-            }
-            if let wf = json["full_waveform"] as? [Double], !wf.isEmpty {
-                fullWaveform = wf
-            }
-            if let isMetro = json["is_metronome"] as? Bool {
-                isMetronome = isMetro
-            }
-            if let sub = json["subdivide"] as? Bool {
-                subdivide = sub
-            }
-            if let subdiv = json["subdivision"] as? String {
-                subdivision = subdiv
-            }
-            if let cuesRaw = json["cues"] as? [[String: Any]],
-               let cuesData = try? JSONSerialization.data(withJSONObject: cuesRaw),
-               let parsedCues = try? JSONDecoder().decode([CueSection].self, from: cuesData) {
-                cues = parsedCues
-            }
-            if let covImg = json["cover_image"] as? String {
-                let covPath = directory.appendingPathComponent(covImg).path
-                hasCover = FileManager.default.fileExists(atPath: covPath)
+        // 2. Lê a duração diretamente do cabeçalho do arquivo de áudio
+        if let af = try? AVAudioFile(forReading: URL(fileURLWithPath: filePath)) {
+            let sr = af.processingFormat.sampleRate
+            if sr > 0 {
+                totalDuration = Double(af.length) / sr
             }
         }
         
-        // Se a capa JPG existir com o mesmo nome do áudio
-        let baseCover = filePath.replacingOccurrences(of: (filePath as NSString).pathExtension, with: "jpg")
-        if FileManager.default.fileExists(atPath: baseCover) {
-            hasCover = true
-        }
-        
-        // Se a duração não estava no .cues.json, lê diretamente do cabeçalho do arquivo de áudio em 0.1ms
-        if totalDuration == nil || totalDuration == 0 {
-            if let af = try? AVAudioFile(forReading: URL(fileURLWithPath: filePath)) {
-                let sr = af.processingFormat.sampleRate
-                if sr > 0 {
-                    totalDuration = Double(af.length) / sr
-                }
-            }
-        }
-        
-        // Se a música não tem seções salvas (.cues.json ausente), gera seções padrão imediatas
-        if let dur = totalDuration, dur > 0, (cues == nil || cues?.isEmpty == true) {
+        // 3. Seções padrão imediatas
+        if let dur = totalDuration, dur > 0 {
             cues = generateDefaultCues(totalDuration: dur, bpm: bpm, timeSignature: timeSignature)
         }
         
-        // Se não tiver forma de onda pré-salva, gera placeholder uniforme até a decodificação
-        if fullWaveform == nil || fullWaveform?.isEmpty == true {
-            fullWaveform = [Double](repeating: 0.15, count: 400)
-        }
-        
+        fullWaveform = [Double](repeating: 0.15, count: 400)
         cleanName = resolveSongDisplayName(name: cleanName, timeSignature: timeSignature, isMetronome: isMetronome)
         
         let item = SongItem(
@@ -203,6 +160,9 @@ final class NativeSongLibrary {
             subdivide: subdivide,
             subdivision: subdivision
         )
+        
+        // Salva no SQLite
+        NativeDatabase.shared.saveSong(item: item)
         
         lock.lock()
         songsCache[entry] = item
@@ -251,7 +211,7 @@ final class NativeSongLibrary {
         return result
     }
     
-    // MARK: - Salvar Cues e Formas de Onda
+    // MARK: - Salvar Cues e Formas de Onda no Banco de Dados SQLite
     
     func saveCues(
         songId: String,
@@ -260,36 +220,15 @@ final class NativeSongLibrary {
         timeSignature: String? = nil,
         fullWaveform: [Double]? = nil
     ) {
-        let dir = getTracksDirectory()
-        let audioPath = dir.appendingPathComponent(songId).path
-        let cuesPath = audioPath + ".cues.json"
+        NativeDatabase.shared.saveCues(
+            songId: songId,
+            cues: cues,
+            bpm: bpm,
+            timeSignature: timeSignature,
+            fullWaveform: fullWaveform
+        )
         
-        var payload: [String: Any] = [:]
-        if let existingData = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            payload = existing
-        }
-        
-        payload["version"] = 6
-        payload["cues"] = cues.map { cue -> [String: Any] in
-            [
-                "id": cue.id,
-                "name": cue.name,
-                "time": cue.time,
-                "bar": cue.bar,
-                "color": cue.color,
-                "waveform": cue.waveform ?? []
-            ]
-        }
-        if let b = bpm { payload["bpm"] = b }
-        if let ts = timeSignature { payload["time_signature"] = ts }
-        if let wf = fullWaveform { payload["full_waveform"] = wf }
-        
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
-            try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
-        }
-        
-        // Atualiza cache
+        // Atualiza cache em memória
         lock.lock()
         if var cached = songsCache[songId] {
             cached.cues = cues
@@ -390,13 +329,10 @@ final class NativeSongLibrary {
         }.resume()
     }
     
-    // MARK: - Gerenciamento e Armazenamento de Capas (.covers/)
+    // MARK: - Gerenciamento e Armazenamento de Capas (Application Support/VSControl/covers)
     
     func getCoverPath(for songId: String) -> String {
-        let dir = getTracksDirectory()
-        let coversDir = dir.appendingPathComponent(".covers").path
-        try? FileManager.default.createDirectory(atPath: coversDir, withIntermediateDirectories: true)
-        return (coversDir as NSString).appendingPathComponent("\(songId).jpg")
+        return NativeDatabase.shared.getCoverFilePath(for: songId)
     }
     
     func hasCover(for songId: String) -> Bool {
@@ -450,27 +386,7 @@ final class NativeSongLibrary {
     }
     
     func updateCuesJsonCover(songId: String, hasCover: Bool) {
-        let dir = getTracksDirectory()
-        let audioPath = dir.appendingPathComponent(songId).path
-        let cuesPath = audioPath + ".cues.json"
-        
-        var payload: [String: Any] = [:]
-        if let existingData = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            payload = existing
-        }
-        
-        if hasCover {
-            payload["cover_image"] = ".covers/\(songId).jpg"
-            payload.removeValue(forKey: "no_cover")
-        } else {
-            payload.removeValue(forKey: "cover_image")
-            payload["no_cover"] = true
-        }
-        
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
-            try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
-        }
+        NativeDatabase.shared.setCoverStatus(songId: songId, hasCover: hasCover, noCover: !hasCover)
     }
     
     func saveCoverFromUrl(songId: String, artworkUrl: String, completion: @escaping (Bool) -> Void) {
@@ -544,11 +460,7 @@ final class NativeSongLibrary {
             return
         }
         
-        let dir = getTracksDirectory()
-        let cuesPath = dir.appendingPathComponent(song.id).path + ".cues.json"
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           (json["no_cover"] as? Bool) == true {
+        if NativeDatabase.shared.isNoCoverRequested(songId: song.id) {
             completion(false)
             return
         }

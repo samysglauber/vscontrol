@@ -325,10 +325,16 @@ class CoverImageCache {
         if let cached = cache.object(forKey: key) {
             return cached
         }
-        let dir = (song.path as NSString).deletingLastPathComponent
-        let coverPath = (dir as NSString).appendingPathComponent(".covers/\(song.id).jpg")
+        let coverPath = NativeSongLibrary.shared.getCoverPath(for: song.id)
         if FileManager.default.fileExists(atPath: coverPath),
            let img = NSImage(contentsOfFile: coverPath) {
+            cache.setObject(img, forKey: key)
+            return img
+        }
+        let dir = (song.path as NSString).deletingLastPathComponent
+        let legacyCoverPath = (dir as NSString).appendingPathComponent(".covers/\(song.id).jpg")
+        if FileManager.default.fileExists(atPath: legacyCoverPath),
+           let img = NSImage(contentsOfFile: legacyCoverPath) {
             cache.setObject(img, forKey: key)
             return img
         }
