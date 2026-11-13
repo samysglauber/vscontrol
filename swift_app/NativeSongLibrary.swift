@@ -1,5 +1,6 @@
 import Foundation
 import Accelerate
+import AVFoundation
 
 /// Biblioteca de Canções 100% Nativa em Swift.
 /// Varre o diretório de VS, lê e persiste os metadados (.cues.json), calcula formas de onda contínuas
@@ -161,6 +162,26 @@ final class NativeSongLibrary {
             hasCover = true
         }
         
+        // Se a duração não estava no .cues.json, lê diretamente do cabeçalho do arquivo de áudio em 0.1ms
+        if totalDuration == nil || totalDuration == 0 {
+            if let af = try? AVAudioFile(forReading: URL(fileURLWithPath: filePath)) {
+                let sr = af.processingFormat.sampleRate
+                if sr > 0 {
+                    totalDuration = Double(af.length) / sr
+                }
+            }
+        }
+        
+        // Se a música não tem seções salvas (.cues.json ausente), gera seções padrão imediatas
+        if let dur = totalDuration, dur > 0, (cues == nil || cues?.isEmpty == true) {
+            cues = generateDefaultCues(totalDuration: dur, bpm: bpm, timeSignature: timeSignature)
+        }
+        
+        // Se não tiver forma de onda pré-salva, gera placeholder uniforme até a decodificação
+        if fullWaveform == nil || fullWaveform?.isEmpty == true {
+            fullWaveform = [Double](repeating: 0.15, count: 400)
+        }
+        
         cleanName = resolveSongDisplayName(name: cleanName, timeSignature: timeSignature, isMetronome: isMetronome)
         
         let item = SongItem(
@@ -186,6 +207,47 @@ final class NativeSongLibrary {
         songsCache[entry] = item
         lock.unlock()
         return item
+    }
+    
+    // MARK: - Geração de Cues Padrão
+    
+    func generateDefaultCues(totalDuration: Double, bpm: Double, timeSignature: String) -> [CueSection] {
+        let parts = timeSignature.split(separator: "/")
+        let num = Double(parts.first ?? "4") ?? 4.0
+        let secPerBeat = (bpm > 30 ? 60.0 / bpm : 0.5)
+        let secPerBar = secPerBeat * num
+        let bars = Int(totalDuration / max(0.5, secPerBar))
+        
+        let template: [(name: String, bar: Int, color: String)] = [
+            ("Count-In", 1, "#64748b"),
+            ("Intro", 3, "#38bdf8"),
+            ("Verse 1", max(7, Int(Double(bars) * 0.12)), "#a855f7"),
+            ("Verse 2", max(13, Int(Double(bars) * 0.25)), "#a855f7"),
+            ("Chorus", max(21, Int(Double(bars) * 0.40)), "#ef4444"),
+            ("Instrumental", max(29, Int(Double(bars) * 0.55)), "#10b981"),
+            ("Bridge", max(37, Int(Double(bars) * 0.70)), "#f97316"),
+            ("Chorus", max(45, Int(Double(bars) * 0.82)), "#ef4444"),
+            ("Ending", max(51, Int(Double(bars) * 0.92)), "#64748b")
+        ]
+        
+        var result: [CueSection] = []
+        for (i, sec) in template.enumerated() {
+            let t = round(Double(sec.bar - 1) * secPerBar * 100.0) / 100.0
+            if t < totalDuration - 5.0 {
+                result.append(CueSection(
+                    id: "cue_\(i)",
+                    name: sec.name,
+                    time: t,
+                    bar: Double(sec.bar),
+                    color: sec.color,
+                    waveform: nil
+                ))
+            }
+        }
+        if result.isEmpty {
+            result.append(CueSection(id: "cue_0", name: "Intro", time: 0.0, bar: 1.0, color: "#38bdf8", waveform: nil))
+        }
+        return result
     }
     
     // MARK: - Salvar Cues e Formas de Onda

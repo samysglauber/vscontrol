@@ -51,6 +51,10 @@ final class NativeAudioEngine {
     var bpm: Double = 120.0
     var timeSignature: (Int, Int) = (4, 4)
     var cues: [CueSection] = []
+    var fullWaveform: [Double] = []
+    var totalDuration: Double {
+        return sampleRate > 0 ? Double(totalFrames) / sampleRate : 0.0
+    }
     
     // Estado do Transporte
     var isPlaying: Bool = false
@@ -426,7 +430,31 @@ final class NativeAudioEngine {
             self.timeSignature = (4, 4)
         }
         
-        self.cues = cues
+        let totSec = sr > 0 ? Double(left.count) / sr : 0.0
+        var resolvedCues = cues
+        if resolvedCues.isEmpty && totSec > 0 {
+            resolvedCues = NativeSongLibrary.shared.generateDefaultCues(
+                totalDuration: totSec,
+                bpm: self.bpm,
+                timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)"
+            )
+        }
+        self.cues = resolvedCues
+        
+        // Computa forma de onda real com Accelerate vDSP
+        let peaks = NativeSongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 1200)
+        self.fullWaveform = peaks
+        
+        // Salva na biblioteca e no arquivo .cues.json para que a música nova fique permanentemente salva
+        let filename = url.lastPathComponent
+        NativeSongLibrary.shared.saveCues(
+            songId: filename,
+            cues: resolvedCues,
+            bpm: self.bpm,
+            timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
+            fullWaveform: peaks
+        )
+        
         self.currentCueIdx = 0
         self.queuedCueIdx = nil
         self.queuedJump = nil

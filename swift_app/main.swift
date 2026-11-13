@@ -934,6 +934,10 @@ class PlaybackState: ObservableObject {
             if abs(self.currentSeconds - curSec) > 0.015 {
                 self.currentSeconds = curSec
             }
+            let engineTot = engine.totalDuration
+            if engineTot > 0 && abs(self.totalSeconds - engineTot) > 0.05 {
+                self.totalSeconds = engineTot
+            }
             
             // Reseta trava de crossfade quando a música entra em reprodução normal
             if self.hasTriggeredCrossfade && curSec > 3.0 && curSec < (self.totalSeconds - 5.0) {
@@ -1459,6 +1463,8 @@ class PlaybackState: ObservableObject {
             var songToUse: SongItem
             if let found = librarySongs.first(where: { $0.id == it.song.id }) {
                 songToUse = found
+            } else if let found = NativeSongLibrary.shared.findSong(byId: it.song.id) {
+                songToUse = found
             } else {
                 songToUse = it.song
             }
@@ -1481,9 +1487,9 @@ class PlaybackState: ObservableObject {
                 songToUse.cues = it.cues
             }
             
-            let songCues = it.cues ?? songToUse.cues
-            let songWf = songToUse.full_waveform ?? it.song.full_waveform
-            let songDur = songToUse.total_duration ?? it.song.total_duration
+            let songCues = (songToUse.cues != nil && !songToUse.cues!.isEmpty) ? songToUse.cues : it.cues
+            let songWf = (songToUse.full_waveform != nil && !songToUse.full_waveform!.isEmpty) ? songToUse.full_waveform : it.song.full_waveform
+            let songDur = (songToUse.total_duration != nil && songToUse.total_duration! > 0) ? songToUse.total_duration : it.song.total_duration
             
             let item = SetlistSong(
                 song: songToUse,
@@ -1592,9 +1598,9 @@ class PlaybackState: ObservableObject {
                         if item.song.name.contains("/") && resolvedSong.name.contains("_") {
                             resolvedSong.name = item.song.name
                         }
-                        let songCues = item.cues ?? resolvedSong.cues
-                        let songDur = item.totalDuration ?? resolvedSong.total_duration
-                        let songWf = item.waveform ?? resolvedSong.full_waveform
+                        let songCues = (resolvedSong.cues != nil && !resolvedSong.cues!.isEmpty) ? resolvedSong.cues : item.cues
+                        let songDur = (resolvedSong.total_duration != nil && resolvedSong.total_duration! > 0) ? resolvedSong.total_duration : item.totalDuration
+                        let songWf = (resolvedSong.full_waveform != nil && !resolvedSong.full_waveform!.isEmpty) ? resolvedSong.full_waveform : item.waveform
                         self.setlist[idx] = SetlistSong(
                             id: item.id,
                             song: resolvedSong,
@@ -1993,8 +1999,31 @@ class PlaybackState: ObservableObject {
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
             NativeAudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
-            if autoPlay {
-                DispatchQueue.main.async {
+            let engine = NativeAudioEngine.shared
+            let engineCues = engine.cues
+            let engineTot = engine.totalDuration
+            let engineWaveform = engine.fullWaveform
+            
+            DispatchQueue.main.async {
+                if self.currentSong?.id == song.id {
+                    if !engineCues.isEmpty {
+                        self.currentCues = engineCues
+                    }
+                    if !engineWaveform.isEmpty {
+                        self.fullWaveform = engineWaveform
+                    }
+                    if engineTot > 0 {
+                        self.totalSeconds = engineTot
+                    }
+                    self.songCache[song.id] = CachedSongData(
+                        bpm: self.bpm,
+                        timeSignature: self.timeSignature,
+                        totalSeconds: self.totalSeconds,
+                        cues: self.currentCues,
+                        waveform: self.fullWaveform
+                    )
+                }
+                if autoPlay {
                     NativeAudioEngine.shared.play()
                     self.isPlaying = true
                 }
