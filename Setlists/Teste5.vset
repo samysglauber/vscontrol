@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-12T21:28:12Z",
+  "createdAt" : "2026-11-13T04:02:21Z",
   "items" : [
     {
       "cues" : [
@@ -8928,7 +8928,7 @@
         "subdivide" : false,
         "subdivision" : "1\/4",
         "time_signature" : "4\/4",
-        "total_duration" : 412.02938775510205
+        "total_duration" : 213.99510204081633
       },
       "transitionType" : "CROSSFADE"
     },
@@ -9594,6 +9594,7 @@
       ],
       "song" : {
         "bpm" : 119.9,
+        "cover_url" : "\/api\/covers?id=Algo%20Novo%20(final)%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -11457,7 +11458,7 @@
           0.04,
           0.04
         ],
-        "has_cover" : false,
+        "has_cover" : true,
         "id" : "Algo Novo (final) - vs.mp3",
         "is_metronome" : false,
         "name" : "Algo Novo (final) - vs",
@@ -11472,6 +11473,6 @@
     }
   ],
   "name" : "Teste5",
-  "updatedAt" : "2026-11-12T21:28:12Z",
+  "updatedAt" : "2026-11-13T04:02:21Z",
   "version" : 1
 }

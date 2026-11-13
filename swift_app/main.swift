@@ -4983,24 +4983,33 @@ struct ContinuousWaveformShape: Shape {
         guard peaks.count > 1 else { return path }
         
         let midY = rect.midY
-        // Amplitude moderada da onda (respiro apenas no topo e no fundo; sem margens nas laterais)
-        let maxHeight = rect.height * 0.30
+        // Amplitude generosa preenchendo a seção verticalmente (estilo MultiTracks Playback / DAW)
+        let maxHeight = rect.height * 0.44
         let step = rect.width / CGFloat(peaks.count - 1)
         
+        // Calibração e normalização dinâmica:
+        // Caso os picos gravados ou em cache estejam com ganho baixo (< 0.85),
+        // eleva os picos proporcionalmente até ~0.95 preservando fielmente a dinâmica musical
+        let maxPeak = peaks.max() ?? 1.0
+        let normFactor: Double = (maxPeak > 0.05 && maxPeak < 0.85) ? (0.95 / maxPeak) : 1.0
+        
         // Linha superior
-        let firstY = midY - CGFloat(peaks[0]) * maxHeight
+        let firstVal = min(1.0, peaks[0] * normFactor)
+        let firstY = midY - CGFloat(firstVal) * maxHeight
         path.move(to: CGPoint(x: 0, y: firstY))
         
         for i in 1..<peaks.count {
             let x = CGFloat(i) * step
-            let y = midY - CGFloat(peaks[i]) * maxHeight
+            let val = min(1.0, peaks[i] * normFactor)
+            let y = midY - CGFloat(val) * maxHeight
             path.addLine(to: CGPoint(x: x, y: y))
         }
         
         // Linha inferior espelhada
         for i in (0..<peaks.count).reversed() {
             let x = CGFloat(i) * step
-            let y = midY + CGFloat(peaks[i]) * maxHeight
+            let val = min(1.0, peaks[i] * normFactor)
+            let y = midY + CGFloat(val) * maxHeight
             path.addLine(to: CGPoint(x: x, y: y))
         }
         

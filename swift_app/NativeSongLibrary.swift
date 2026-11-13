@@ -309,8 +309,16 @@ final class NativeSongLibrary {
         
         let total = audioRight.count
         let step = max(1, total / targetPeaks)
-        var peaks = [Double](repeating: 0.04, count: targetPeaks)
+        var rawPeaks = [Float](repeating: 0.04, count: targetPeaks)
         
+        // 1. Encontra o pico global com vDSP
+        var globalMax: Float = 0.0
+        audioRight.withUnsafeBufferPointer { ptr in
+            vDSP_maxmgv(ptr.baseAddress!, 1, &globalMax, vDSP_Length(total))
+        }
+        if globalMax < 0.01 { globalMax = 1.0 }
+        
+        // 2. Extrai picos locais por segmento com vDSP
         for i in 0..<targetPeaks {
             let start = i * step
             let end = min(total, start + step)
@@ -320,9 +328,21 @@ final class NativeSongLibrary {
                 audioRight.withUnsafeBufferPointer { ptr in
                     vDSP_maxmgv(ptr.baseAddress! + start, 1, &maxVal, vDSP_Length(count))
                 }
-                peaks[i] = max(0.04, min(1.0, Double(maxVal)))
+                rawPeaks[i] = maxVal
             }
         }
+        
+        // 3. Normalização perceptual (estilo DAW / MultiTracks) com curva suave tanh para dar corpo visual
+        var peaks = [Double](repeating: 0.04, count: targetPeaks)
+        let invGlobal = 1.0 / (Double(globalMax) * 1.05)
+        let tanhDenom = tanh(1.5)
+        
+        for i in 0..<targetPeaks {
+            let ratio = Double(rawPeaks[i]) * invGlobal
+            let scaled = (tanh(ratio * 1.5) / tanhDenom) * 0.95
+            peaks[i] = max(0.04, min(0.96, scaled))
+        }
+        
         return peaks
     }
     
