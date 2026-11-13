@@ -1,5 +1,5 @@
 {
-  "createdAt" : "2026-11-13T13:15:27Z",
+  "createdAt" : "2026-11-13T23:11:24Z",
   "items" : [
     {
       "cues" : [
@@ -9886,7 +9886,7 @@
       ],
       "song" : {
         "bpm" : 128,
-        "cover_url" : "\/covers\/ABERTURA MORADA - vs.mp3",
+        "cover_url" : "\/api\/covers?id=ABERTURA%20MORADA%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -16131,6 +16131,7 @@
       ],
       "song" : {
         "bpm" : 134,
+        "cover_url" : "\/api\/covers?id=Le%C3%A3o%20(134bpm)%20-%20vs.mp3",
         "cues" : [
           {
             "bar" : 1,
@@ -17556,7 +17557,7 @@
           0.04,
           0.04
         ],
-        "has_cover" : false,
+        "has_cover" : true,
         "id" : "Leão (134bpm) - vs.mp3",
         "is_metronome" : false,
         "name" : "Leão (134bpm) - vs",
@@ -17571,6 +17572,6 @@
     }
   ],
   "name" : "Teste2",
-  "updatedAt" : "2026-11-13T13:15:27Z",
+  "updatedAt" : "2026-11-13T23:11:24Z",
   "version" : 1
 }

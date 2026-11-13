@@ -509,6 +509,103 @@ fileprivate final class RemoteConnection {
                 sendJsonResponse([])
             }
             
+        case ("GET", let p) where p.starts(with: "/covers/"):
+            let songId = p.replacingOccurrences(of: "/covers/", with: "")
+            let coverPath = NativeSongLibrary.shared.getCoverPath(for: songId)
+            if let fileData = try? Data(contentsOf: URL(fileURLWithPath: coverPath)) {
+                serveImageData(fileData)
+            } else {
+                sendHttpError(404, message: "Cover not found")
+            }
+            
+        case ("GET", let p) where p.starts(with: "/api/covers/search"):
+            var query = ""
+            if let q = path.components(separatedBy: "?").last, q.starts(with: "q=") {
+                query = q.replacingOccurrences(of: "q=", with: "").removingPercentEncoding ?? ""
+            }
+            NativeSongLibrary.shared.searchCovers(query: query) { [weak self] results in
+                if let data = try? JSONEncoder().encode(results),
+                   let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                    self?.sendJsonResponse(list)
+                } else {
+                    self?.sendJsonResponse([])
+                }
+            }
+            
+        case ("GET", "/api/covers"):
+            var songId = ""
+            if let q = path.components(separatedBy: "?").last, q.starts(with: "id=") {
+                songId = q.replacingOccurrences(of: "id=", with: "").removingPercentEncoding ?? ""
+            }
+            let coverPath = NativeSongLibrary.shared.getCoverPath(for: songId)
+            if let fileData = try? Data(contentsOf: URL(fileURLWithPath: coverPath)) {
+                serveImageData(fileData)
+            } else {
+                sendHttpError(404, message: "Cover not found")
+            }
+            
+        case ("POST", "/api/covers/select"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String,
+               let artworkUrl = payload["artwork_url"] as? String {
+                NativeSongLibrary.shared.saveCoverFromUrl(songId: songId, artworkUrl: artworkUrl) { [weak self] success in
+                    if success {
+                        self?.sendJsonResponse(["status": "ok", "song_id": songId])
+                    } else {
+                        self?.sendHttpError(500, message: "Failed to download and save cover")
+                    }
+                }
+                return
+            }
+            sendHttpError(400, message: "Missing song_id or artwork_url")
+            
+        case ("POST", "/api/covers/upload"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String,
+               let filePath = payload["file_path"] as? String {
+                NativeSongLibrary.shared.saveCoverFromFile(songId: songId, filePath: filePath) { [weak self] success in
+                    if success {
+                        self?.sendJsonResponse(["status": "ok", "song_id": songId])
+                    } else {
+                        self?.sendHttpError(500, message: "Failed to save cover from file")
+                    }
+                }
+                return
+            }
+            sendHttpError(400, message: "Missing song_id or file_path")
+            
+        case ("POST", "/api/covers/remove"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String {
+                NativeSongLibrary.shared.removeCover(songId: songId)
+                sendJsonResponse(["status": "ok", "song_id": songId])
+                return
+            }
+            sendHttpError(400, message: "Missing song_id")
+            
+        case ("POST", "/api/covers/auto"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String,
+               let song = NativeSongLibrary.shared.findSong(byId: songId) {
+                NativeSongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
+                    self?.sendJsonResponse(["status": success ? "ok" : "failed", "song_id": songId])
+                }
+                return
+            }
+            sendHttpError(400, message: "Missing song_id")
+            
         case ("POST", "/api/metronome/generate"):
             var payload: [String: Any] = [:]
             if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
@@ -677,6 +774,21 @@ fileprivate final class RemoteConnection {
         } else {
             sendHttpError(404, message: "File not found: \(filename)")
         }
+    }
+    
+    private func serveImageData(_ fileData: Data, mimeType: String = "image/jpeg") {
+        var header = "HTTP/1.1 200 OK\r\n"
+        header += "Content-Type: \(mimeType)\r\n"
+        header += "Content-Length: \(fileData.count)\r\n"
+        header += "Cache-Control: public, max-age=86400\r\n"
+        header += "Access-Control-Allow-Origin: *\r\n"
+        header += "Connection: close\r\n\r\n"
+        
+        var fullData = header.data(using: .utf8)!
+        fullData.append(fileData)
+        connection.send(content: fullData, completion: .contentProcessed { [weak self] _ in
+            self?.connection.cancel()
+        })
     }
     
     private func sendJsonResponse(_ object: Any) {

@@ -1,6 +1,7 @@
 import Foundation
 import Accelerate
 import AVFoundation
+import AppKit
 
 /// Biblioteca de Canções 100% Nativa em Swift.
 /// Varre o diretório de VS, lê e persiste os metadados (.cues.json), calcula formas de onda contínuas
@@ -387,6 +388,184 @@ final class NativeSongLibrary {
             }
             DispatchQueue.main.async { completion(items) }
         }.resume()
+    }
+    
+    // MARK: - Gerenciamento e Armazenamento de Capas (.covers/)
+    
+    func getCoverPath(for songId: String) -> String {
+        let dir = getTracksDirectory()
+        let coversDir = dir.appendingPathComponent(".covers").path
+        try? FileManager.default.createDirectory(atPath: coversDir, withIntermediateDirectories: true)
+        return (coversDir as NSString).appendingPathComponent("\(songId).jpg")
+    }
+    
+    func hasCover(for songId: String) -> Bool {
+        let p = getCoverPath(for: songId)
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: p),
+           let size = attrs[.size] as? UInt64, size > 0 {
+            return true
+        }
+        return false
+    }
+    
+    func saveAndOptimizeCover(data: Data, destinationPath: String) -> Bool {
+        guard let image = NSImage(data: data) else { return false }
+        let targetSize = NSSize(width: 300, height: 300)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 300,
+            pixelsHigh: 300,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return false }
+        
+        rep.size = targetSize
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: NSRect(origin: .zero, size: image.size),
+            operation: .copy,
+            fraction: 1.0
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        
+        if let jpegData = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
+            let url = URL(fileURLWithPath: destinationPath)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try jpegData.write(to: url)
+                return true
+            } catch {
+                print("[NativeSongLibrary] Error writing cover: \(error)")
+                return false
+            }
+        }
+        return false
+    }
+    
+    func updateCuesJsonCover(songId: String, hasCover: Bool) {
+        let dir = getTracksDirectory()
+        let audioPath = dir.appendingPathComponent(songId).path
+        let cuesPath = audioPath + ".cues.json"
+        
+        var payload: [String: Any] = [:]
+        if let existingData = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+            payload = existing
+        }
+        
+        if hasCover {
+            payload["cover_image"] = ".covers/\(songId).jpg"
+            payload.removeValue(forKey: "no_cover")
+        } else {
+            payload.removeValue(forKey: "cover_image")
+            payload["no_cover"] = true
+        }
+        
+        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
+            try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
+        }
+    }
+    
+    func saveCoverFromUrl(songId: String, artworkUrl: String, completion: @escaping (Bool) -> Void) {
+        let highresUrl = artworkUrl
+            .replacingOccurrences(of: "/100x100bb.jpg", with: "/600x600bb.jpg")
+            .replacingOccurrences(of: "/60x60bb.jpg", with: "/600x600bb.jpg")
+        
+        guard let url = URL(string: highresUrl) else {
+            completion(false)
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            
+            let dstPath = self.getCoverPath(for: songId)
+            let success = self.saveAndOptimizeCover(data: data, destinationPath: dstPath)
+            if success {
+                self.updateCuesJsonCover(songId: songId, hasCover: true)
+                self.lock.lock()
+                if var cached = self.songsCache[songId] {
+                    cached.has_cover = true
+                    cached.cover_url = "/covers/\(songId)"
+                    self.songsCache[songId] = cached
+                }
+                self.lock.unlock()
+            }
+            DispatchQueue.main.async { completion(success) }
+        }.resume()
+    }
+    
+    func saveCoverFromFile(songId: String, filePath: String, completion: @escaping (Bool) -> Void) {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)) else {
+            completion(false)
+            return
+        }
+        let dstPath = getCoverPath(for: songId)
+        let success = saveAndOptimizeCover(data: data, destinationPath: dstPath)
+        if success {
+            updateCuesJsonCover(songId: songId, hasCover: true)
+            lock.lock()
+            if var cached = songsCache[songId] {
+                cached.has_cover = true
+                cached.cover_url = "/covers/\(songId)"
+                songsCache[songId] = cached
+            }
+            lock.unlock()
+        }
+        DispatchQueue.main.async { completion(success) }
+    }
+    
+    func removeCover(songId: String) {
+        let dstPath = getCoverPath(for: songId)
+        try? FileManager.default.removeItem(atPath: dstPath)
+        updateCuesJsonCover(songId: songId, hasCover: false)
+        lock.lock()
+        if var cached = songsCache[songId] {
+            cached.has_cover = false
+            cached.cover_url = nil
+            songsCache[songId] = cached
+        }
+        lock.unlock()
+    }
+    
+    func autoFetchCover(song: SongItem, completion: @escaping (Bool) -> Void) {
+        if hasCover(for: song.id) {
+            completion(true)
+            return
+        }
+        
+        let dir = getTracksDirectory()
+        let cuesPath = dir.appendingPathComponent(song.id).path + ".cues.json"
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           (json["no_cover"] as? Bool) == true {
+            completion(false)
+            return
+        }
+        
+        let query = cleanSongTitleForSearch(song.search_query ?? song.name)
+        guard !query.isEmpty else {
+            completion(false)
+            return
+        }
+        
+        searchCovers(query: query) { [weak self] results in
+            guard let self = self, let first = results.first else {
+                completion(false)
+                return
+            }
+            self.saveCoverFromUrl(songId: song.id, artworkUrl: first.artwork_url, completion: completion)
+        }
     }
     
     // MARK: - Processamento com IA (Vosk Speech Recognition & Downbeat Detection)

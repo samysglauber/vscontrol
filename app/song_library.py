@@ -21,9 +21,13 @@ def clean_song_title_for_search(name: str) -> str:
     s = re.sub(r'\.(mp3|wav|m4a|aif|aiff)$', '', name, flags=re.IGNORECASE)
     s = re.sub(r'^\d+\s*[-_]\s*', '', s)
     s = re.sub(r'[-_]\s*vs\b.*$', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\(\s*\d+\s*bpm\s*\)', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\(\s*[A-Ga-g][#b]?m?\s*\)', '', s)
-    s = re.sub(r'\(com[^\)]*\)', '', s, flags=re.IGNORECASE)
+    # Remove BPM com números inteiros ou decimais (ex: (68,5 bpm), (68.5bpm), [68,5 bpm], 68,5 bpm)
+    s = re.sub(r'[\(\[]\s*\d+(?:[\.,]\d+)?\s*bpm\s*[\)\]]', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\b\d+(?:[\.,]\d+)?\s*bpm\b', '', s, flags=re.IGNORECASE)
+    # Remove Key (ex: (D), [F#m])
+    s = re.sub(r'[\(\[]\s*[A-Ga-g][#b]?m?\s*[\)\]]', '', s)
+    # Remove tags comuns (ex: (original), (com teclado), (playback), [guia])
+    s = re.sub(r'[\(\[](?:com\b[^\)\]]*|original|cover|playback|guitar|violao|violão|baixo|bass|teclado|guia|multitrack|vs)[\)\]]', '', s, flags=re.IGNORECASE)
     s = re.sub(r'[-_]\s*$', '', s).strip()
     return s or name
 

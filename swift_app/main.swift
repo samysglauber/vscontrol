@@ -181,9 +181,15 @@ func cleanSongTitleForSearch(_ name: String) -> String {
     if let match = s.range(of: #"[-_]\s*vs\b.*$"#, options: [.regularExpression, .caseInsensitive]) {
         s.removeSubrange(match)
     }
-    s = s.replacingOccurrences(of: #"\(\s*\d+\s*bpm\s*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
-    s = s.replacingOccurrences(of: #"\(\s*[A-Ga-g][#b]?m?\s*\)"#, with: "", options: .regularExpression)
-    s = s.replacingOccurrences(of: #"\(com[^\)]*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
+    // Remove BPM com números inteiros ou decimais (ex: (68,5 bpm), (68.5bpm), [68,5 bpm], 68,5 bpm)
+    s = s.replacingOccurrences(of: #"[\(\[]\s*\d+(?:[\.,]\d+)?\s*bpm\s*[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
+    s = s.replacingOccurrences(of: #"\b\d+(?:[\.,]\d+)?\s*bpm\b"#, with: "", options: [.regularExpression, .caseInsensitive])
+    // Remove tonalidade / Key entre parênteses ou colchetes (ex: (D), [F#m])
+    s = s.replacingOccurrences(of: #"[\(\[]\s*[A-Ga-g][#b]?m?\s*[\)\]]"#, with: "", options: .regularExpression)
+    // Remove anotações comuns entre parênteses ou colchetes (ex: (original), (com teclado), (playback), [guia])
+    s = s.replacingOccurrences(of: #"[\(\[](?:com\b[^\)\]]*|original|cover|playback|guitar|violao|violão|baixo|bass|teclado|guia|multitrack|vs)[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
+    // Remove traços ou underscores pendentes no final
+    s = s.replacingOccurrences(of: #"[-_]\s*$"#, with: "", options: .regularExpression)
     s = s.trimmingCharacters(in: .whitespacesAndNewlines)
     return s.isEmpty ? name : s
 }
@@ -2037,7 +2043,7 @@ class PlaybackState: ObservableObject {
     func openCoverPicker(for song: SongItem) {
         guard !song.isMetronomeTrack else { return }
         self.coverPickerSong = song
-        let cleanQuery = song.search_query ?? cleanSongTitleForSearch(song.name)
+        let cleanQuery = cleanSongTitleForSearch(song.search_query ?? song.name)
         self.coverSearchQuery = cleanQuery
         self.coverSearchResults = []
         self.coverPickerError = nil
@@ -2047,54 +2053,39 @@ class PlaybackState: ObservableObject {
     
     func searchCovers(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "http://127.0.0.1:8080/api/covers/search?q=\(encoded)") else { return }
+        guard !trimmed.isEmpty else {
+            self.coverSearchResults = []
+            return
+        }
         
         self.isSearchingCovers = true
         self.coverPickerError = nil
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+        NativeSongLibrary.shared.searchCovers(query: trimmed) { [weak self] results in
             DispatchQueue.main.async {
                 self?.isSearchingCovers = false
-                if let error = error {
-                    self?.coverPickerError = "Search failed: \(error.localizedDescription)"
-                    return
-                }
-                guard let data = data,
-                      let results = try? JSONDecoder().decode([CoverSearchResult].self, from: data) else {
-                    self?.coverSearchResults = []
-                    return
-                }
                 self?.coverSearchResults = results
+                if results.isEmpty {
+                    self?.coverPickerError = nil
+                }
             }
-        }.resume()
+        }
     }
     
     func selectCover(song: SongItem, artworkUrl: String) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/select") else { return }
         self.isSavingCover = true
-        
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
-            "song_id": song.id,
-            "artwork_url": artworkUrl
-        ]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
-            DispatchQueue.main.async {
-                self?.isSavingCover = false
-                guard error == nil else { return }
-                
-                // Limpa cache de imagem para renderizar imediatamente
+        NativeSongLibrary.shared.saveCoverFromUrl(songId: song.id, artworkUrl: artworkUrl) { [weak self] success in
+            guard let self = self else { return }
+            self.isSavingCover = false
+            if success {
                 CoverImageCache.shared.remove(for: song.id)
-                self?.updateSongCoverState(songId: song.id, hasCover: true)
-                self?.isCoverPickerPresented = false
+                self.updateSongCoverState(songId: song.id, hasCover: true)
+                self.isCoverPickerPresented = false
+                self.coverRefreshTrigger += 1
+            } else {
+                self.coverPickerError = "Failed to download and save cover image"
             }
-        }.resume()
+        }
     }
     
     func chooseCoverFromFile(song: SongItem) {
@@ -2107,45 +2098,27 @@ class PlaybackState: ObservableObject {
         panel.prompt = "Choose Cover"
         
         if panel.runModal() == .OK, let fileUrl = panel.url {
-            guard let url = URL(string: "http://127.0.0.1:8080/api/covers/upload") else { return }
             self.isSavingCover = true
-            
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let body: [String: Any] = [
-                "song_id": song.id,
-                "file_path": fileUrl.path
-            ]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            
-            URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
-                DispatchQueue.main.async {
-                    self?.isSavingCover = false
-                    guard error == nil else { return }
-                    
+            NativeSongLibrary.shared.saveCoverFromFile(songId: song.id, filePath: fileUrl.path) { [weak self] success in
+                guard let self = self else { return }
+                self.isSavingCover = false
+                if success {
                     CoverImageCache.shared.remove(for: song.id)
-                    self?.updateSongCoverState(songId: song.id, hasCover: true)
-                    self?.isCoverPickerPresented = false
+                    self.updateSongCoverState(songId: song.id, hasCover: true)
+                    self.isCoverPickerPresented = false
+                    self.coverRefreshTrigger += 1
+                } else {
+                    self.coverPickerError = "Failed to load image file"
                 }
-            }.resume()
+            }
         }
     }
     
     func removeCover(for song: SongItem) {
-        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/remove") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["song_id": song.id]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
-            DispatchQueue.main.async {
-                CoverImageCache.shared.remove(for: song.id)
-                self?.updateSongCoverState(songId: song.id, hasCover: false)
-            }
-        }.resume()
+        NativeSongLibrary.shared.removeCover(songId: song.id)
+        CoverImageCache.shared.remove(for: song.id)
+        self.updateSongCoverState(songId: song.id, hasCover: false)
+        self.coverRefreshTrigger += 1
     }
     
     func autoFetchCoversIfNeeded() {
@@ -2161,23 +2134,13 @@ class PlaybackState: ObservableObject {
         guard !attemptedCoverAutoFetchSongIds.contains(song.id) else { return }
         attemptedCoverAutoFetchSongIds.insert(song.id)
         
-        guard let url = URL(string: "http://127.0.0.1:8080/api/covers/auto") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["song_id": song.id]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
-            guard error == nil, let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let status = json["status"] as? String, status == "ok" else { return }
-            
-            DispatchQueue.main.async {
+        NativeSongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
+            if success {
                 CoverImageCache.shared.remove(for: song.id)
                 self?.updateSongCoverState(songId: song.id, hasCover: true)
+                self?.coverRefreshTrigger += 1
             }
-        }.resume()
+        }
     }
     
     func updateSongCoverState(songId: String, hasCover: Bool) {
@@ -3961,7 +3924,18 @@ struct CoverPickerSheetView: View {
         }
         .frame(width: 720, height: 520)
         .onAppear {
-            queryText = state.coverSearchQuery
+            if queryText.isEmpty {
+                queryText = state.coverSearchQuery
+            }
+            if !queryText.isEmpty && state.coverSearchResults.isEmpty && !state.isSearchingCovers {
+                state.searchCovers(query: queryText)
+            }
+        }
+        .onChange(of: state.coverSearchQuery) { _, newQ in
+            queryText = newQ
+            if !newQ.isEmpty && state.coverSearchResults.isEmpty && !state.isSearchingCovers {
+                state.searchCovers(query: newQ)
+            }
         }
     }
 }
