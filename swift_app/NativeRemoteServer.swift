@@ -624,6 +624,27 @@ fileprivate final class RemoteConnection {
             }
             sendJsonResponse(["status": "ok"])
             
+        case ("POST", "/api/reprocess"):
+            var payload: [String: Any] = [:]
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                payload = json
+            }
+            if let songId = payload["song_id"] as? String {
+                let bpm = payload["bpm"] as? Double
+                let ts = payload["time_signature"] as? String
+                NativeSongLibrary.shared.reprocessWithAI(songId: songId, bpm: bpm, timeSignature: ts) { [weak self] updatedSong in
+                    if let song = updatedSong,
+                       let data = try? JSONEncoder().encode(song),
+                       let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        self?.sendJsonResponse(["status": "success", "song": songDict])
+                    } else {
+                        self?.sendHttpError(500, message: "AI Reprocess Failed")
+                    }
+                }
+                return
+            }
+            sendHttpError(400, message: "Missing song_id")
+            
         case ("POST", let p) where p.starts(with: "/api/"):
             let actionName = p.replacingOccurrences(of: "/api/", with: "")
             var payload: [String: Any] = [:]

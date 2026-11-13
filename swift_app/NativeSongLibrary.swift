@@ -368,6 +368,93 @@ final class NativeSongLibrary {
             DispatchQueue.main.async { completion(items) }
         }.resume()
     }
+    
+    // MARK: - Processamento com IA (Vosk Speech Recognition & Downbeat Detection)
+    
+    func reprocessWithAI(
+        songId: String,
+        bpm: Double? = nil,
+        timeSignature: String? = nil,
+        completion: @escaping (SongItem?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tracksDir = self.getTracksDirectory().path
+            
+            let possibleScriptPaths = [
+                "/Users/samysglauber/Documents/AbletonTracks/scripts/detect_cues.py",
+                URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("scripts/detect_cues.py").path,
+                Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("scripts/detect_cues.py").path
+            ]
+            let scriptPath = possibleScriptPaths.first { FileManager.default.fileExists(atPath: $0) } ?? possibleScriptPaths[0]
+            
+            let possiblePythons = [
+                "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3",
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/usr/bin/python3"
+            ]
+            let pythonBin = possiblePythons.first { FileManager.default.fileExists(atPath: $0) } ?? "/usr/bin/python3"
+            
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: pythonBin)
+            
+            var args = [scriptPath, songId]
+            if let b = bpm {
+                args.append(String(b))
+            } else {
+                args.append("null")
+            }
+            if let ts = timeSignature {
+                args.append(ts)
+            } else {
+                args.append("null")
+            }
+            args.append(tracksDir)
+            
+            process.arguments = args
+            
+            var env = ProcessInfo.processInfo.environment
+            let customPath = "/Library/Frameworks/Python.framework/Versions/3.15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+            env["PATH"] = customPath + ":" + (env["PATH"] ?? "")
+            env["PYTHONPATH"] = URL(fileURLWithPath: scriptPath).deletingLastPathComponent().deletingLastPathComponent().path
+            process.environment = env
+            
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            process.standardOutput = outPipe
+            process.standardError = errPipe
+            
+            do {
+                try process.run()
+                process.waitUntilExit()
+                
+                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                if let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+                   let status = json["status"] as? String, status == "success" {
+                    self.lock.lock()
+                    self.songsCache.removeValue(forKey: songId)
+                    self.lock.unlock()
+                    
+                    let reindexed = self.getSong(id: songId)
+                    DispatchQueue.main.async {
+                        completion(reindexed)
+                    }
+                    return
+                } else {
+                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errStr = String(data: errData, encoding: .utf8) ?? ""
+                    let outStr = String(data: outData, encoding: .utf8) ?? ""
+                    print("[NativeSongLibrary] AI reprocess output: \(outStr), err: \(errStr)")
+                }
+            } catch {
+                print("[NativeSongLibrary] Error executing AI reprocess: \(error)")
+            }
+            
+            DispatchQueue.main.async {
+                completion(nil)
+            }
+        }
+    }
 }
 
 // MARK: - Utilitários de Regex

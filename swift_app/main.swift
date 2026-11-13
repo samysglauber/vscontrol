@@ -2269,42 +2269,19 @@ class PlaybackState: ObservableObject {
         // Fecha o editor imediatamente com resposta visual ágil
         self.isSongEditorPresented = false
         
-        guard let cuesData = try? encoder.encode(cues),
-              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
-        
-        let body: [String: Any] = [
-            "song_id": song.id,
-            "bpm": bpm,
-            "time_signature": timeSignature,
-            "cues": cuesJson
-        ]
-        
-        guard let url = URL(string: "http://127.0.0.1:8080/api/save_cues") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let songData = json["song"] as? [String: Any],
-                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
-            
-            let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw)
-            guard let updatedCues = try? JSONDecoder().decode([CueSection].self, from: rawData ?? Data()) else { return }
-            
-            DispatchQueue.main.async {
-                guard let self = self, self.currentSong?.id == song.id else { return }
-                for (idx, updated) in updatedCues.enumerated() {
-                    if idx < self.currentCues.count && self.currentCues[idx].id == updated.id {
-                        self.currentCues[idx].waveform = updated.waveform
-                    }
-                }
+        NativeSongLibrary.shared.saveCues(
+            songId: song.id,
+            cues: cues,
+            bpm: bpm,
+            timeSignature: timeSignature
+        )
+        if let updated = NativeSongLibrary.shared.findSong(byId: song.id) {
+            self.currentSong = updated
+            if let newCues = updated.cues {
+                self.currentCues = newCues
+                self.editorCues = newCues
             }
-        }.resume()
-        
-        self.isSongEditorPresented = false
+        }
     }
     
     func reprocessWithAI() {
@@ -2312,41 +2289,38 @@ class PlaybackState: ObservableObject {
         pushUndoSnapshot(description: "AI Re-analysis")
         self.isReprocessing = true
         
-        let body: [String: Any] = [
-            "song_id": song.id,
-            "bpm": editorBpm,
-            "time_signature": editorTimeSignature
-        ]
-        
-        guard let url = URL(string: "http://127.0.0.1:8080/api/reprocess") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            DispatchQueue.main.async {
-                self?.isReprocessing = false
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let songDict = json["song"] as? [String: Any] else { return }
-                
-                if let newBpm = songDict["bpm"] as? Double {
-                    self?.bpm = newBpm
-                    self?.editorBpm = newBpm
-                }
-                if let newTs = songDict["time_signature"] as? String {
-                    self?.timeSignature = newTs
-                    self?.editorTimeSignature = newTs
-                }
-                if let cuesRaw = songDict["cues"],
-                   let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw),
-                   let newCues = try? JSONDecoder().decode([CueSection].self, from: rawData) {
-                    self?.currentCues = newCues
-                    self?.editorCues = newCues
-                }
+        NativeSongLibrary.shared.reprocessWithAI(
+            songId: song.id,
+            bpm: editorBpm,
+            timeSignature: editorTimeSignature
+        ) { [weak self] updatedSong in
+            guard let self = self else { return }
+            self.isReprocessing = false
+            guard let updated = updatedSong else {
+                self.showUndoFeedback("AI analysis failed or returned no cues")
+                return
             }
-        }.resume()
+            
+            if let newBpm = updated.bpm {
+                self.bpm = newBpm
+                self.editorBpm = newBpm
+            }
+            if let newTs = updated.time_signature {
+                self.timeSignature = newTs
+                self.editorTimeSignature = newTs
+            }
+            
+            if let newCues = updated.cues {
+                self.currentCues = newCues
+                self.editorCues = newCues
+            }
+            if let wf = updated.full_waveform {
+                self.fullWaveform = wf
+            }
+            self.currentSong = updated
+            NativeAudioEngine.shared.loadSong(updated, crossfade: false)
+            self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
+        }
     }
     
     func playPause() {
@@ -2689,40 +2663,13 @@ class PlaybackState: ObservableObject {
             UserDefaults.standard.synchronize()
         }
         
-        guard let cuesData = try? encoder.encode(currentCues),
-              let cuesJson = try? JSONSerialization.jsonObject(with: cuesData) as? [[String: Any]] else { return }
-        
-        let body: [String: Any] = [
-            "song_id": song.id,
-            "bpm": bpm,
-            "time_signature": timeSignature,
-            "cues": cuesJson
-        ]
-        
-        guard let url = URL(string: "http://127.0.0.1:8080/api/save_cues") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let songData = json["song"] as? [String: Any],
-                  let cuesRaw = songData["cues"] as? [[String: Any]] else { return }
-            
-            let rawData = try? JSONSerialization.data(withJSONObject: cuesRaw)
-            guard let updatedCues = try? JSONDecoder().decode([CueSection].self, from: rawData ?? Data()) else { return }
-            
-            DispatchQueue.main.async {
-                guard let self = self, self.currentSong?.id == song.id else { return }
-                for (idx, updated) in updatedCues.enumerated() {
-                    if idx < self.currentCues.count && self.currentCues[idx].id == updated.id {
-                        self.currentCues[idx].waveform = updated.waveform
-                    }
-                }
-            }
-        }.resume()
+        // 2. Persiste diretamente no arquivo .cues.json via NativeSongLibrary
+        NativeSongLibrary.shared.saveCues(
+            songId: song.id,
+            cues: currentCues,
+            bpm: bpm,
+            timeSignature: timeSignature
+        )
     }
     
     var canUndo: Bool { !undoStack.isEmpty }
