@@ -800,6 +800,7 @@ class PlaybackState: ObservableObject {
     @Published var editorTimeSignature: String = "4/4"
     @Published var editorCues: [CueSection] = []
     @Published var isReprocessing: Bool = false
+    @Published var isAutoAnalyzing: Bool = false
     @Published var quickEditingCueIdx: Int? = nil
     @Published var autoAdvance: Bool = true {
         didSet {
@@ -861,26 +862,47 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs in
+        NativeSongLibrary.shared.onAutoAnalysisStarted = { [weak self] songId in
             DispatchQueue.main.async {
                 guard let self = self, self.currentSong?.id == songId else { return }
-                NativeAudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
-                self.currentCues = cues
-                if let ts = detectedTs {
-                    self.timeSignature = ts
-                    self.editorTimeSignature = ts
-                    NativeAudioEngine.shared.setTimeSignature(ts)
+                self.isAutoAnalyzing = true
+                self.showUndoFeedback("Analisando seções com IA nativa...")
+            }
+        }
+        
+        NativeSongLibrary.shared.onAutoAnalysisFailed = { [weak self] songId in
+            DispatchQueue.main.async {
+                guard let self = self, self.currentSong?.id == songId else { return }
+                self.isAutoAnalyzing = false
+                self.showUndoFeedback("Análise de seções concluída sem alterações.")
+            }
+        }
+        
+        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.currentSong?.id == songId {
+                    self.isAutoAnalyzing = false
                 }
-                if !self.isSongEditorPresented { self.editorCues = cues }
                 self.songCache[songId]?.cues = cues
-                self.currentSong?.cues = cues
                 if let idx = self.setlist.firstIndex(where: { $0.song.id == songId }) {
                     self.setlist[idx].song.cues = cues
                     self.setlist[idx].cues = cues
                     if let ts = detectedTs { self.setlist[idx].song.time_signature = ts }
                     self.saveSetlistState(writeToDisk: true)
                 }
-                self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
+                if self.currentSong?.id == songId {
+                    NativeAudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
+                    self.currentCues = cues
+                    self.currentSong?.cues = cues
+                    if let ts = detectedTs {
+                        self.timeSignature = ts
+                        self.editorTimeSignature = ts
+                        NativeAudioEngine.shared.setTimeSignature(ts)
+                    }
+                    if !self.isSongEditorPresented { self.editorCues = cues }
+                    self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
+                }
             }
         }
         
@@ -3294,6 +3316,22 @@ struct TopBarView: View {
                         Text("/ \(formatTime(state.totalSeconds))")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundColor(.gray)
+                    }
+                    
+                    if state.isAutoAnalyzing {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .progressViewStyle(CircularProgressViewStyle(tint: Color.cyan))
+                            Text("IA ANALISANDO...")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.cyan)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.cyan.opacity(0.12))
+                        .cornerRadius(6)
+                        .transition(.opacity)
                     }
                     
                     Spacer()

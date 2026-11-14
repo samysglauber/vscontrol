@@ -47,8 +47,6 @@ final class NativeDatabase {
             execute(sql: "PRAGMA journal_mode = WAL;")
             execute(sql: "PRAGMA synchronous = NORMAL;")
             execute(sql: "PRAGMA foreign_keys = ON;")
-            execute(sql: "ALTER TABLE songs ADD COLUMN auto_analysis TEXT;")
-            execute(sql: "UPDATE songs SET auto_analysis = 'done' WHERE auto_analysis IS NULL AND id IN (SELECT DISTINCT song_id FROM cues);")
         } else {
             print("[NativeDatabase] Failed to open SQLite database at \(dbPath)")
         }

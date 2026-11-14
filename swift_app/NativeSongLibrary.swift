@@ -14,6 +14,8 @@ final class NativeSongLibrary {
     private let lock = NSLock()
     
     var onAutoCuesReady: ((String, [CueSection], String?) -> Void)?
+    var onAutoAnalysisStarted: ((String) -> Void)?
+    var onAutoAnalysisFailed: ((String) -> Void)?
     private var analyzingSongIds: Set<String> = []
     
     // MARK: - Diretório de Músicas
@@ -161,7 +163,8 @@ final class NativeSongLibrary {
             cues: cues,
             is_metronome: isMetronome,
             subdivide: subdivide,
-            subdivision: subdivision
+            subdivision: subdivision,
+            auto_analysis: "pending"
         )
         
         // Salva no SQLite
@@ -293,6 +296,7 @@ final class NativeSongLibrary {
             }
             if let auto = json["auto_analysis"] as? String {
                 if auto == "pending" { return true }
+                if auto == "done" { return false }
                 if auto == "failed" { return false }
             }
             guard let cues = json["cues"] as? [[String: Any]], !cues.isEmpty else {
@@ -306,20 +310,17 @@ final class NativeSongLibrary {
             if hasGenericNames {
                 return true
             }
-            if let auto = json["auto_analysis"] as? String, auto == "done" {
-                return false
-            }
             return false
         }
         
         if let dbSong = NativeDatabase.shared.getSong(id: songId) {
             if dbSong.is_metronome == true { return false }
             if dbSong.auto_analysis == "pending" { return true }
+            if dbSong.auto_analysis == "done" { return false }
             if let cues = dbSong.cues, !cues.isEmpty {
                 if cues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) {
                     return true
                 }
-                if dbSong.auto_analysis == "done" { return false }
             }
         }
         
@@ -343,6 +344,10 @@ final class NativeSongLibrary {
         analyzingSongIds.insert(songId)
         lock.unlock()
         
+        DispatchQueue.main.async {
+            self.onAutoAnalysisStarted?(songId)
+        }
+        
         NativeCueDetector.shared.analyze(
             left: left,
             right: right,
@@ -364,12 +369,16 @@ final class NativeSongLibrary {
                     timeSignature: timeSignature,
                     autoAnalysis: "failed"
                 )
+                DispatchQueue.main.async {
+                    self.onAutoAnalysisFailed?(songId)
+                }
                 return
             }
             
             let detectedTs = res.timeSignature
             let currentSavedCues = self.getSong(id: songId)?.cues ?? []
-            if self.areCuesEqual(currentSavedCues, templateCues) {
+            let isGeneric = currentSavedCues.isEmpty || currentSavedCues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) || self.areCuesEqual(currentSavedCues, templateCues)
+            if isGeneric {
                 self.saveCues(
                     songId: songId,
                     cues: res.cues,
