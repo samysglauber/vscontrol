@@ -381,22 +381,63 @@ final class NativeCueDetector {
         let countInEnd = anchor + Double(countInBars) * bar
         let hasCountIn = countInBars >= 1
 
-        var candidates: [Candidate] = []
+        // 9. Transcrição e Filtragem com Whisper e Dinâmica
+        var rawCandidates: [(cand: Candidate, label: Label?, isDynamic: Bool)] = []
         for p in phrases {
             if p.start < countInEnd - 0.2 { continue }
             let j = Int(ceil((p.start - 0.15 - anchor) / bar))
             let tc = anchor + Double(j) * bar
             if tc >= totalDuration - 1.0 { continue }
-            if let last = candidates.last, abs(last.time - tc) < 0.65 * bar {
-                candidates[candidates.count - 1].end = p.end     // palavra composta ("pré" + "refrão")
+            
+            // Recorta áudio limpo da frase falada (-0.25s a +0.35s)
+            let a = max(0, Int((p.start - 0.25) * sr))
+            let b = min(cleaned.count, Int((p.end + 0.35) * sr))
+            let slice = cleaned[a..<b]
+            
+            var label: Label? = nil
+            var isDynamic = false
+            
+            if let whisperRes = NativeCueDetector.transcribeWithWhisper(slice: slice, sr: sr) {
+                isDynamic = whisperRes.isDynamic
+                label = whisperRes.label
+            }
+            
+            // Se for aviso de dinâmica ("cresce", "pausa", "segura"), IGNORA como corte de seção!
+            if isDynamic {
+                print(String(format: "[NativeCueDetector] Aviso de dinâmica ignorado como corte de bloco em %.2fs", tc))
                 continue
             }
-            candidates.append(Candidate(time: tc, start: p.start, end: p.end))
+            
+            let cand = Candidate(time: tc, start: p.start, end: p.end)
+            rawCandidates.append((cand: cand, label: label, isDynamic: false))
+        }
+        
+        // Unificação de seções adjacentes e garantia de duração mínima (mínimo 1.45 compassos)
+        var candidates: [Candidate] = []
+        var labels: [Label?] = []
+        for item in rawCandidates {
+            if let last = candidates.last, abs(item.cand.time - last.time) < 1.45 * bar {
+                candidates[candidates.count - 1].end = max(last.end, item.cand.end)
+                if labels.last == nil && item.label != nil {
+                    labels[labels.count - 1] = item.label
+                }
+                continue
+            }
+            candidates.append(item.cand)
+            labels.append(item.label)
         }
         guard !candidates.isEmpty else { return nil }
 
-        // 9. Nomes (Speech framework com fallback para Classificação Estrutural Musical)
-        let labels = recognizeLabels(candidates: candidates, samples: cleaned, sr: sr)
+        // Se alguma seção ficou sem label pelo Whisper, tenta o fallback com Apple Speech
+        for i in 0..<candidates.count {
+            if labels[i] == nil {
+                let a = max(0, Int((candidates[i].start - 0.25) * sr))
+                let b = min(cleaned.count, Int((candidates[i].end + 0.35) * sr))
+                if a < b {
+                    labels[i] = recognizeSingleLabel(slice: cleaned[a..<b], sr: sr)
+                }
+            }
+        }
 
         var cues: [CueSection] = []
         func add(_ name: String, _ time: Double, _ color: String) {
@@ -567,11 +608,175 @@ final class NativeCueDetector {
         return (cx * cx + cy * cy).squareRoot() / Double(starts.count)
     }
 
-    // MARK: - Reconhecimento de fala (on-device)
+    // MARK: - Whisper.cpp Nativo & Reconhecimento de Voz
+
+    private static let dynamicKeywords: [String] = [
+        "cresce", "crescendo", "cresceu", "sobe", "subindo", "subiu", "pressao", "pressão",
+        "pausa", "pause", "ausa", "parada", "para", "parou",
+        "segura", "segurou", "segure",
+        "corta", "cortou", "corte",
+        "suave", "abaixa", "desce", "cai", "caindo", "diminui",
+        "todos", "toda banda", "juntos",
+        "bumbo", "baixo", "só piano", "piano", "violao", "violão",
+        "convencao", "convenção",
+        "prepara", "atencao", "atenção"
+    ]
+
+    private static func findWhisperCli() -> String? {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let candidates: [String?] = [
+            Bundle.main.resourcePath.map { "\($0)/whisper-cli" },
+            Bundle.main.bundlePath + "/Contents/Resources/whisper-cli",
+            Bundle.main.bundlePath + "/Contents/MacOS/whisper-cli",
+            appSupport.appendingPathComponent("VSControl/whisper-cli").path,
+            "/Users/samysglauber/Documents/AbletonTracks/swift_app/whisper/whisper-cli",
+            "/tmp/whisper.cpp/main"
+        ]
+        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private static func findWhisperModel() -> String? {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupportModel = appSupport.appendingPathComponent("VSControl/models/ggml-tiny.bin").path
+        let candidates: [String?] = [
+            Bundle.main.resourcePath.map { "\($0)/models/ggml-tiny.bin" },
+            Bundle.main.bundlePath + "/Contents/Resources/models/ggml-tiny.bin",
+            appSupportModel,
+            "/Users/samysglauber/Documents/AbletonTracks/swift_app/whisper/models/ggml-tiny.bin",
+            "/tmp/whisper.cpp/models/ggml-tiny.bin"
+        ]
+        if let found = candidates.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            return found
+        }
+        
+        let targetDir = appSupport.appendingPathComponent("VSControl/models")
+        try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+        let targetPath = targetDir.appendingPathComponent("ggml-tiny.bin").path
+        let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin")!
+        let sem = DispatchSemaphore(value: 0)
+        var success = false
+        print("[NativeCueDetector] Baixando modelo Whisper Tiny para \(targetPath)...")
+        let task = URLSession.shared.downloadTask(with: url) { tempFile, _, err in
+            if let tempFile = tempFile, err == nil {
+                try? FileManager.default.removeItem(atPath: targetPath)
+                do {
+                    try FileManager.default.moveItem(at: tempFile, to: URL(fileURLWithPath: targetPath))
+                    success = true
+                } catch {
+                    print("[NativeCueDetector] Erro ao mover modelo: \(error)")
+                }
+            }
+            sem.signal()
+        }
+        task.resume()
+        _ = sem.wait(timeout: .now() + 60)
+        return success ? targetPath : nil
+    }
+
+    private static func writeWav16k(samples: ArraySlice<Float>, srcSR: Double, to url: URL) -> Bool {
+        let targetSR: Double = 16000.0
+        let count = samples.count
+        guard count > 0 else { return false }
+        
+        let targetCount = Int(Double(count) * targetSR / srcSR)
+        guard targetCount > 0 else { return false }
+        
+        var outSamples = [Int16](repeating: 0, count: targetCount)
+        samples.withUnsafeBufferPointer { srcPtr in
+            guard let base = srcPtr.baseAddress else { return }
+            for i in 0..<targetCount {
+                let srcIdx = min(count - 1, Int(Double(i) * srcSR / targetSR))
+                let s = max(-1.0, min(1.0, base[srcIdx]))
+                outSamples[i] = Int16(s * 32767.0)
+            }
+        }
+        
+        let dataSize = Int32(targetCount * 2)
+        let chunkSize = 36 + dataSize
+        var header = Data()
+        header.append("RIFF".data(using: .ascii)!)
+        var cs = chunkSize; header.append(Data(bytes: &cs, count: 4))
+        header.append("WAVEfmt ".data(using: .ascii)!)
+        var sub1: Int32 = 16; header.append(Data(bytes: &sub1, count: 4))
+        var fmt: Int16 = 1; header.append(Data(bytes: &fmt, count: 2))
+        var ch: Int16 = 1; header.append(Data(bytes: &ch, count: 2))
+        var sr = Int32(targetSR); header.append(Data(bytes: &sr, count: 4))
+        var br = Int32(targetSR * 2); header.append(Data(bytes: &br, count: 4))
+        var ba: Int16 = 2; header.append(Data(bytes: &ba, count: 2))
+        var bps: Int16 = 16; header.append(Data(bytes: &bps, count: 2))
+        header.append("data".data(using: .ascii)!)
+        var ds = dataSize; header.append(Data(bytes: &ds, count: 4))
+        
+        var fileData = header
+        outSamples.withUnsafeBufferPointer { p in
+            fileData.append(Data(buffer: p))
+        }
+        
+        do {
+            try fileData.write(to: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func transcribeWithWhisper(slice: ArraySlice<Float>, sr: Double) -> (text: String, isDynamic: Bool, label: Label?)? {
+        guard let whisperBin = findWhisperCli(),
+              let modelPath = findWhisperModel() else {
+            return nil
+        }
+        
+        let tempWav = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("whisper_\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: tempWav) }
+        
+        guard writeWav16k(samples: slice, srcSR: sr, to: tempWav) else { return nil }
+        
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: whisperBin)
+        proc.arguments = [
+            "-m", modelPath,
+            "-f", tempWav.path,
+            "-l", "pt",
+            "-nt",
+            "-t", "4",
+            "--prompt", "intro verso refrão ponte pré-refrão instrumental solo final cresce pausa segura"
+        ]
+        
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            guard proc.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let rawText = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawText.isEmpty else { return nil }
+            
+            let normalized = rawText.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+            
+            // 1. Verifica se é aviso de dinâmica (NÃO GERA CORTE)
+            for dyn in dynamicKeywords {
+                if normalized.contains(dyn) {
+                    return (text: rawText, isDynamic: true, label: nil)
+                }
+            }
+            
+            // 2. Verifica se é seção estrutural
+            if let label = mapLabel(rawText) {
+                return (text: rawText, isDynamic: false, label: label)
+            }
+            
+            return (text: rawText, isDynamic: false, label: nil)
+        } catch {
+            return nil
+        }
+    }
 
     private static let vocabulary: [String] = [
         "intro", "verse", "chorus", "pre-chorus", "bridge", "instrumental", "solo", "interlude", "ending", "outro", "tag",
-        "verso", "estrofe", "refrão", "pré-refrão", "ponte", "interlúdio", "final", "fim", "coda", "entrou", "berço", "fonte", "cresce",
+        "verso", "estrofe", "refrão", "pré-refrão", "ponte", "interlúdio", "final", "fim", "coda", "entrou", "berço", "fonte",
         "one", "two", "three", "four", "um", "dois", "três", "quatro", "primeiro", "segundo", "terceiro"
     ]
 
@@ -596,38 +801,24 @@ final class NativeCueDetector {
         }
     }
 
-    private func recognizeLabels(candidates: [Candidate], samples: [Float], sr: Double) -> [Label?] {
-        var result = [Label?](repeating: nil, count: candidates.count)
-        guard ensureSpeechAuthorization() else { return result }
-
+    private func recognizeSingleLabel(slice: ArraySlice<Float>, sr: Double) -> Label? {
+        guard ensureSpeechAuthorization() else { return nil }
         let recognizers: [SFSpeechRecognizer] = ["pt-BR", "en-US"].compactMap { id in
             guard let r = SFSpeechRecognizer(locale: Locale(identifier: id)),
                   r.isAvailable else { return nil }
             r.queue = OperationQueue()
             return r
         }
-        guard !recognizers.isEmpty else {
-            return result
-        }
-
-        for (idx, cand) in candidates.enumerated() {
-            let a = max(0, Int((cand.start - 0.25) * sr))
-            let b = min(samples.count, Int((cand.end + 0.35) * sr))
-            guard a < b else { continue }
-            let slice = samples[a..<b]
-
-            var bestLabel: Label? = nil
-            var bestConf: Float = -1
-            for rec in recognizers {
-                if let (text, conf) = transcribe(slice, sr: sr, recognizer: rec),
-                   let lab = NativeCueDetector.mapLabel(text), conf > bestConf {
-                    bestLabel = lab
-                    bestConf = conf
-                }
+        var bestLabel: Label? = nil
+        var bestConf: Float = -1
+        for rec in recognizers {
+            if let (text, conf) = transcribe(slice, sr: sr, recognizer: rec),
+               let lab = NativeCueDetector.mapLabel(text), conf > bestConf {
+                bestLabel = lab
+                bestConf = conf
             }
-            result[idx] = bestLabel
         }
-        return result
+        return bestLabel
     }
 
     private func transcribe(_ samples: ArraySlice<Float>, sr: Double, recognizer: SFSpeechRecognizer) -> (String, Float)? {
@@ -682,16 +873,30 @@ final class NativeCueDetector {
 
         func has(_ words: [String]) -> Bool { tokens.contains { words.contains($0) } }
 
-        if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") || joined.contains("pre") || joined.contains("pré") {
+        if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") || joined.contains("posse") || joined.contains("posrefrao") || joined.contains("derrefram") || joined.contains("pre") || joined.contains("pré") {
             return Label(base: "Pre-Chorus", color: "#ec4899", number: nil)
         }
-        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus"]) { return Label(base: "Chorus", color: "#ef4444", number: number) }
-        if has(["verse", "verso", "versos", "berco", "berço", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) { return Label(base: "Verse", color: "#a855f7", number: number) }
-        if has(["bridge", "ponte", "fonte"]) { return Label(base: "Bridge", color: "#f97316", number: number) }
-        if has(["intro", "entrou", "introducao", "introdução"]) { return Label(base: "Intro", color: "#38bdf8", number: nil) }
-        if has(["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio"]) { return Label(base: "Instrumental", color: "#10b981", number: nil) }
-        if has(["ending", "end", "final", "fim", "outro", "termina", "corta", "coda"]) { return Label(base: "Ending", color: "#64748b", number: nil) }
-        if has(["tag", "cresce", "crescendo", "ministracao", "ministração", "espontaneo", "espontâneo"]) { return Label(base: "Tag", color: "#eab308", number: nil) }
+        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus", "frao", "frão"]) || joined.contains("refrao") || joined.contains("refrão") {
+            return Label(base: "Chorus", color: "#ef4444", number: number)
+        }
+        if has(["verse", "verso", "versos", "berco", "berço", "derso", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) || joined.contains("verso") {
+            return Label(base: "Verse", color: "#a855f7", number: number)
+        }
+        if has(["bridge", "ponte", "fonte"]) || joined.contains("ponte") {
+            return Label(base: "Bridge", color: "#f97316", number: number)
+        }
+        if has(["intro", "entrou", "introducao", "introdução"]) || joined.contains("intro") {
+            return Label(base: "Intro", color: "#38bdf8", number: nil)
+        }
+        if has(["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio", "interloujo"]) || joined.contains("interlude") || joined.contains("instrumental") {
+            return Label(base: "Instrumental", color: "#10b981", number: nil)
+        }
+        if has(["ending", "end", "final", "fim", "outro", "termina", "coda"]) || joined.contains("final") {
+            return Label(base: "Ending", color: "#64748b", number: nil)
+        }
+        if has(["tag", "ministracao", "ministração", "espontaneo", "espontâneo"]) || joined.contains("tag") {
+            return Label(base: "Tag", color: "#eab308", number: nil)
+        }
         return nil
     }
 }

@@ -35,8 +35,18 @@ swiftc -O \
 chmod +x swift_app/VSControl
 
 mkdir -p "VS Control.app/Contents/MacOS"
+mkdir -p "VS Control.app/Contents/Resources/models"
 cp swift_app/VSControl "VS Control.app/Contents/MacOS/VSControl"
 cp swift_app/VSControl "VS Control.app/Contents/MacOS/VS Control"
+
+if [ -f "swift_app/whisper/whisper-cli" ]; then
+    cp "swift_app/whisper/whisper-cli" "VS Control.app/Contents/Resources/whisper-cli"
+    chmod +x "VS Control.app/Contents/Resources/whisper-cli"
+fi
+
+if [ -f "swift_app/whisper/models/ggml-tiny.bin" ]; then
+    cp "swift_app/whisper/models/ggml-tiny.bin" "VS Control.app/Contents/Resources/models/ggml-tiny.bin"
+fi
 
 echo "✅ Build nativo concluído com sucesso!"
 echo "   Binário: $DIR/VS Control.app/Contents/MacOS/VS Control"

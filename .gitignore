@@ -21,3 +21,6 @@ app/device_config.json
 
 # Swift intermediate build artifacts
 swift_app/VSControl
+library.db
+*.bin
+*.wav
