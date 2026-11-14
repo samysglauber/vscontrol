@@ -518,7 +518,7 @@ final class NativeDatabase {
             let audioPath = tracksDirectory.appendingPathComponent(songId).path
             
             // Lê metadados
-            let bpm = json["bpm"] as? Double ?? extractBpmFromFilename(songId) ?? 120.0
+            let bpm = parseBpm(json["bpm"]) ?? extractBpmFromFilename(songId) ?? 120.0
             let timeSig = json["time_signature"] as? String ?? extractTimeSignatureFromFilename(songId) ?? "4/4"
             let defaultKey = json["default_key"] as? String ?? extractKeyFromFilename(songId) ?? "D"
             let totalDur = json["total_duration"] as? Double

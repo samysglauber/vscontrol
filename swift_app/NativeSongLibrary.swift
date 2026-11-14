@@ -13,7 +13,7 @@ final class NativeSongLibrary {
     private var songsCache: [String: SongItem] = [:]
     private let lock = NSLock()
     
-    var onAutoCuesReady: ((String, [CueSection], String?) -> Void)?
+    var onAutoCuesReady: ((String, [CueSection], String?, Double?) -> Void)?
     var onAutoAnalysisStarted: ((String) -> Void)?
     var onAutoAnalysisFailed: ((String) -> Void)?
     private var analyzingSongIds: Set<String> = []
@@ -376,24 +376,26 @@ final class NativeSongLibrary {
             }
             
             let detectedTs = res.timeSignature
+            let fileBpm = extractBpmFromFilename(songId)
+            let finalBpm = fileBpm ?? (bpm > 30 && bpm != 120.0 ? bpm : (res.gridBpm > 30 ? round(res.gridBpm * 10) / 10.0 : bpm))
             let currentSavedCues = self.getSong(id: songId)?.cues ?? []
             let isGeneric = currentSavedCues.isEmpty || currentSavedCues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) || self.areCuesEqual(currentSavedCues, templateCues)
             if isGeneric {
                 self.saveCues(
                     songId: songId,
                     cues: res.cues,
-                    bpm: bpm,
+                    bpm: finalBpm,
                     timeSignature: detectedTs,
                     autoAnalysis: "done"
                 )
                 DispatchQueue.main.async {
-                    self.onAutoCuesReady?(songId, res.cues, detectedTs)
+                    self.onAutoCuesReady?(songId, res.cues, detectedTs, finalBpm)
                 }
             } else {
                 self.saveCues(
                     songId: songId,
                     cues: currentSavedCues,
-                    bpm: bpm,
+                    bpm: finalBpm,
                     timeSignature: detectedTs,
                     autoAnalysis: "done"
                 )
@@ -713,13 +715,35 @@ final class NativeSongLibrary {
     }
 }
 
-// MARK: - Utilitários de Regex
+// MARK: - Utilitários de Regex e Parsing de BPM
+
+func parseBpm(_ val: Any?) -> Double? {
+    if let d = val as? Double { return d }
+    if let i = val as? Int { return Double(i) }
+    if let s = val as? String {
+        let cleaned = s.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Double(cleaned)
+    }
+    return nil
+}
 
 func extractBpmFromFilename(_ name: String) -> Double? {
-    if let match = name.range(of: #"(?i)\((\d+(?:\.\d+)?)\s*bpm\)"#, options: .regularExpression) {
-        let sub = String(name[match])
-        let digits = sub.filter { "0123456789.".contains($0) }
-        return Double(digits)
+    let patterns = [
+        #"(?i)[\(\[]\s*(\d+(?:[\.,]\d+)?)\s*bpm\s*[\)\]]"#,
+        #"(?i)\b(\d+(?:[\.,]\d+)?)\s*bpm\b"#
+    ]
+    for pattern in patterns {
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(location: 0, length: name.utf16.count)
+            if let match = regex.firstMatch(in: name, options: [], range: range),
+               match.numberOfRanges > 1,
+               let numRange = Range(match.range(at: 1), in: name) {
+                let numStr = String(name[numRange]).replacingOccurrences(of: ",", with: ".")
+                if let val = Double(numStr), val >= 20.0 && val <= 400.0 {
+                    return val
+                }
+            }
+        }
     }
     return nil
 }

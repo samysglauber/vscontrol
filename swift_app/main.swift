@@ -134,8 +134,12 @@ extension Color {
 func formatBpm(_ bpm: Double) -> String {
     if bpm.truncatingRemainder(dividingBy: 1) == 0 {
         return "\(Int(bpm))"
-    } else {
+    }
+    let rounded1 = (bpm * 10).rounded() / 10.0
+    if abs(rounded1 - bpm) < 0.001 {
         return String(format: "%.1f", bpm).replacingOccurrences(of: ".", with: ",")
+    } else {
+        return String(format: "%.2f", bpm).replacingOccurrences(of: ".", with: ",")
     }
 }
 
@@ -633,7 +637,7 @@ class PlaybackState: ObservableObject {
                let fileData = try? Data(contentsOf: URL(fileURLWithPath: path)),
                let json = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] {
                 
-                let bpmVal = (json["bpm"] as? Double) ?? (song.bpm ?? 120.0)
+                let bpmVal = parseBpm(json["bpm"]) ?? (song.bpm ?? 120.0)
                 let tsVal = (json["time_signature"] as? String) ?? (song.time_signature ?? "4/4")
                 let wf = (json["full_waveform"] as? [Double]) ?? (song.full_waveform ?? [])
                 
@@ -878,7 +882,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs in
+        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs, detectedBpm in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if self.currentSong?.id == songId {
@@ -889,6 +893,7 @@ class PlaybackState: ObservableObject {
                     self.setlist[idx].song.cues = cues
                     self.setlist[idx].cues = cues
                     if let ts = detectedTs { self.setlist[idx].song.time_signature = ts }
+                    if let b = detectedBpm { self.setlist[idx].song.bpm = b }
                     self.saveSetlistState(writeToDisk: true)
                 }
                 if self.currentSong?.id == songId {
@@ -899,6 +904,11 @@ class PlaybackState: ObservableObject {
                         self.timeSignature = ts
                         self.editorTimeSignature = ts
                         NativeAudioEngine.shared.setTimeSignature(ts)
+                    }
+                    if let b = detectedBpm {
+                        self.bpm = b
+                        self.editorBpm = b
+                        NativeAudioEngine.shared.bpm = b
                     }
                     if !self.isSongEditorPresented { self.editorCues = cues }
                     self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
@@ -6802,8 +6812,8 @@ struct SongEditorSheetView: View {
                         HStack(spacing: 6) {
                             Button(action: {
                                 if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
-                                    let next = round(val - 1.0)
-                                    localBpmText = String(format: "%.1f", next)
+                                    let next = val - 1.0
+                                    localBpmText = formatBpm(next)
                                     updateCueGrid()
                                 }
                             }) {
@@ -6830,8 +6840,8 @@ struct SongEditorSheetView: View {
                             
                             Button(action: {
                                 if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
-                                    let next = round(val + 1.0)
-                                    localBpmText = String(format: "%.1f", next)
+                                    let next = val + 1.0
+                                    localBpmText = formatBpm(next)
                                     updateCueGrid()
                                 }
                             }) {

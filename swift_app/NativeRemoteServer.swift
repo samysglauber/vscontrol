@@ -612,7 +612,7 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             let name = (payload["name"] as? String) ?? "Click"
-            let bpm = (payload["bpm"] as? Double) ?? 120.0
+            let bpm = parseBpm(payload["bpm"]) ?? 120.0
             let ts = (payload["time_signature"] as? String) ?? "4/4"
             let sub = (payload["subdivision"] as? String) ?? "1/4"
             let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
@@ -643,7 +643,7 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             let name = (payload["name"] as? String) ?? "Click"
-            let bpm = (payload["bpm"] as? Double) ?? 120.0
+            let bpm = parseBpm(payload["bpm"]) ?? 120.0
             let ts = (payload["time_signature"] as? String) ?? "4/4"
             let sub = (payload["subdivision"] as? String) ?? "1/4"
             let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
@@ -703,7 +703,7 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             if let songId = payload["song_id"] as? String {
-                let bpm = payload["bpm"] as? Double
+                let bpm = parseBpm(payload["bpm"])
                 let ts = payload["time_signature"] as? String
                 var parsedCues: [CueSection] = []
                 if let cuesRaw = payload["cues"] as? [[String: Any]],
@@ -727,7 +727,7 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             if let songId = payload["song_id"] as? String {
-                let bpm = payload["bpm"] as? Double
+                let bpm = parseBpm(payload["bpm"])
                 let ts = payload["time_signature"] as? String
                 NativeSongLibrary.shared.reprocessWithAI(songId: songId, bpm: bpm, timeSignature: ts) { [weak self] updatedSong in
                     if let song = updatedSong,
