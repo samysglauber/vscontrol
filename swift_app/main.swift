@@ -646,7 +646,10 @@ class PlaybackState: ObservableObject {
                 var dur = (json["total_duration"] as? Double) ?? (song.total_duration ?? 0.0)
                 if dur <= 0, let lastCue = cues.last {
                     let secPerBeat = 60.0 / bpmVal
-                    let beatsPerBar = Double(tsVal.split(separator: "/").first ?? "4") ?? 4.0
+                    let tsParts = tsVal.split(separator: "/")
+                    let n = Double(tsParts.first ?? "4") ?? 4.0
+                    let d = tsParts.count > 1 ? (Double(tsParts[1]) ?? 4.0) : 4.0
+                    let beatsPerBar = n * (4.0 / d)
                     dur = max(lastCue.time + 10.0, lastCue.time + (secPerBeat * beatsPerBar * 4.0))
                 }
                 
@@ -857,11 +860,16 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues in
+        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs in
             DispatchQueue.main.async {
                 guard let self = self, self.currentSong?.id == songId else { return }
                 NativeAudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
                 self.currentCues = cues
+                if let ts = detectedTs {
+                    self.timeSignature = ts
+                    self.editorTimeSignature = ts
+                    NativeAudioEngine.shared.setTimeSignature(ts)
+                }
                 if !self.isSongEditorPresented { self.editorCues = cues }
                 self.songCache[songId]?.cues = cues
                 self.currentSong?.cues = cues
@@ -996,10 +1004,13 @@ class PlaybackState: ObservableObject {
             }
             
             let beatSec = engine.bpm > 0 ? (60.0 / engine.bpm) : 0.5
-            let totalBeats = Int(curSec / beatSec)
-            let beatsPerBar = max(1, engine.timeSignature.0)
-            let bNum = (totalBeats / beatsPerBar) + 1
-            let bBeat = (totalBeats % beatsPerBar) + 1
+            let tsParts = self.timeSignature.split(separator: "/")
+            let num = Double(tsParts.first ?? "4") ?? 4.0
+            let den = tsParts.count > 1 ? (Double(tsParts[1]) ?? 4.0) : 4.0
+            let beatsPerBar = num * (4.0 / den)
+            let secPerBar = max(0.01, beatSec * beatsPerBar)
+            let bNum = Int(curSec / secPerBar) + 1
+            let bBeat = Int((curSec.truncatingRemainder(dividingBy: secPerBar)) / max(0.01, beatSec)) + 1
             if self.currentBar != bNum { self.currentBar = bNum }
             if self.currentBeat != bBeat { self.currentBeat = bBeat }
             
@@ -1163,7 +1174,9 @@ class PlaybackState: ObservableObject {
         // Se não tiver cues, calcula 2 compassos baseado em BPM e Fórmula de Compasso
         let bpm = song.bpm ?? 120.0
         let parts = (song.time_signature ?? "4/4").split(separator: "/")
-        let beatsPerBar = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let num = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
+        let beatsPerBar = num * (4.0 / den)
         let secPerBeat = 60.0 / max(30.0, bpm)
         let twoBarsDuration = secPerBeat * beatsPerBar * 2.0
         return max(2.0, min(8.0, twoBarsDuration))
@@ -2356,7 +2369,9 @@ class PlaybackState: ObservableObject {
         // 3. Fallback: tempo de contagem estimado baseado em 2 compassos do BPM
         let bpmVal = bpm > 30 ? bpm : 120.0
         let parts = timeSignature.split(separator: "/")
-        let beatsPerBar = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let num = parts.count > 0 ? (Double(parts[0]) ?? 4.0) : 4.0
+        let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
+        let beatsPerBar = num * (4.0 / den)
         let secPerBeat = 60.0 / bpmVal
         let estimatedCountIn = max(2.0, min(8.0, secPerBeat * beatsPerBar * 2.0))
         if currentSeconds < estimatedCountIn {
@@ -2516,8 +2531,9 @@ class PlaybackState: ObservableObject {
     func calculateSecPerBar() -> Double {
         let bpmVal = bpm > 20 ? bpm : 120.0
         let parts = timeSignature.split(separator: "/")
-        let beatsPerBar = Double(parts.first ?? "4") ?? 4.0
-        return (60.0 / bpmVal) * beatsPerBar
+        let num = Double(parts.first ?? "4") ?? 4.0
+        let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
+        return (60.0 / bpmVal) * (num * (4.0 / den))
     }
     
     // Métodos para Ajuste Rápido de Duração e Cues via Right-Click (Suporta Meios Compassos / 2/4)
@@ -2527,9 +2543,7 @@ class PlaybackState: ObservableObject {
         if index + 1 < currentCues.count {
             return max(0.5, currentCues[index + 1].bar - curBar)
         } else {
-            let secPerBeat = 60.0 / bpm
-            let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
-            let secPerBar = secPerBeat * beatsPerBar
+            let secPerBar = calculateSecPerBar()
             let totalBars = max(curBar, totalSeconds / secPerBar)
             let rawDuration = totalBars - curBar + 1.0
             return max(0.5, round(rawDuration * 2.0) / 2.0)
@@ -2561,9 +2575,7 @@ class PlaybackState: ObservableObject {
         let deltaStr = deltaBars > 0 ? "+\(formatBars(deltaBars))" : "\(formatBars(deltaBars))"
         pushUndoSnapshot(description: "Bar Adjustment (\(deltaStr) bars)")
         
-        let secPerBeat = 60.0 / bpm
-        let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
-        let secPerBar = secPerBeat * beatsPerBar
+        let secPerBar = calculateSecPerBar()
         
         // Desloca APENAS a fronteira do bloco à direita (index + 1).
         // Nenhuma outra seção subsequente (index + 2 em diante) é alterada!
@@ -2590,9 +2602,7 @@ class PlaybackState: ObservableObject {
         pushUndoSnapshot(description: "Split Section (\(cur.cleanFullName))")
         let totalBars = calculateDurationBars(for: index)
         
-        let secPerBeat = 60.0 / bpm
-        let beatsPerBar = Double(timeSignature.split(separator: "/").first ?? "4") ?? 4.0
-        let secPerBar = secPerBeat * beatsPerBar
+        let secPerBar = calculateSecPerBar()
         
         // Divide os compassos ao meio com precisão de meio compasso
         let firstHalfBars = max(0.5, round((totalBars / 2.0) * 2.0) / 2.0)
@@ -4463,8 +4473,10 @@ struct SpectrogramWaveformView: View {
         
         let secPerBar: Double = {
             let b = state.bpm > 30 ? state.bpm : 120.0
-            let num = Double(state.timeSignature.split(separator: "/").first ?? "4") ?? 4.0
-            return (60.0 / b) * num
+            let parts = state.timeSignature.split(separator: "/")
+            let num = Double(parts.first ?? "4") ?? 4.0
+            let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
+            return (60.0 / b) * (num * (4.0 / den))
         }()
         
         let fitPxPerSec = totalAvailableWidth / CGFloat(max(1.0, state.totalSeconds))
@@ -6742,7 +6754,7 @@ struct SongEditorSheetView: View {
                                 if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
                                     let next = round(val - 1.0)
                                     localBpmText = String(format: "%.1f", next)
-                                    recalculateCueTimes()
+                                    updateCueGrid()
                                 }
                             }) {
                                 Image(systemName: "minus")
@@ -6763,14 +6775,14 @@ struct SongEditorSheetView: View {
                                 .cornerRadius(6)
                                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.15), lineWidth: 1))
                                 .onChange(of: localBpmText) { _, _ in
-                                    recalculateCueTimes()
+                                    updateCueGrid()
                                 }
                             
                             Button(action: {
                                 if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
                                     let next = round(val + 1.0)
                                     localBpmText = String(format: "%.1f", next)
-                                    recalculateCueTimes()
+                                    updateCueGrid()
                                 }
                             }) {
                                 Image(systemName: "plus")
@@ -6800,7 +6812,7 @@ struct SongEditorSheetView: View {
                         }
                         .pickerStyle(SegmentedPickerStyle())
                         .onChange(of: localTimeSignature) { _, _ in
-                            recalculateCueTimes()
+                            updateCueGrid()
                         }
                     }
                     .padding(12)
@@ -6951,13 +6963,33 @@ struct SongEditorSheetView: View {
     
     private func calculateSecPerBar() -> Double {
         guard let bpm = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), bpm > 20 else { return 2.0 }
-        let beatsPerBar: Double = {
-            let parts = localTimeSignature.split(separator: "/")
-            if let first = parts.first, let num = Double(first) { return num }
-            return 4.0
-        }()
+        let parts = localTimeSignature.split(separator: "/")
+        let num = Double(parts.first ?? "4") ?? 4.0
+        let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
         let secPerBeat = 60.0 / bpm
-        return secPerBeat * beatsPerBar
+        return secPerBeat * (num * (4.0 / den))
+    }
+    
+    private func updateBarsFromTimes() {
+        let secPerBar = calculateSecPerBar()
+        for i in 0..<localCues.count {
+            if i == 0 {
+                localCues[i].bar = 1.0
+                localCues[i].time = 0.0
+            } else {
+                let calculatedBar = Double(Int((localCues[i].time / secPerBar).rounded()) + 1)
+                localCues[i].bar = max(localCues[i - 1].bar + 0.5, calculatedBar)
+            }
+        }
+    }
+    
+    private func updateCueGrid() {
+        let hasRealTimes = localCues.contains { $0.time > 0.0 }
+        if hasRealTimes {
+            updateBarsFromTimes()
+        } else {
+            recalculateCueTimes()
+        }
     }
     
     private func recalculateCueTimes() {

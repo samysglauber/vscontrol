@@ -13,7 +13,7 @@ final class NativeSongLibrary {
     private var songsCache: [String: SongItem] = [:]
     private let lock = NSLock()
     
-    var onAutoCuesReady: ((String, [CueSection]) -> Void)?
+    var onAutoCuesReady: ((String, [CueSection], String?) -> Void)?
     private var analyzingSongIds: Set<String> = []
     
     // MARK: - Diretório de Músicas
@@ -178,8 +178,9 @@ final class NativeSongLibrary {
     func generateDefaultCues(totalDuration: Double, bpm: Double, timeSignature: String) -> [CueSection] {
         let parts = timeSignature.split(separator: "/")
         let num = Double(parts.first ?? "4") ?? 4.0
+        let den = parts.count > 1 ? (Double(parts[1]) ?? 4.0) : 4.0
         let secPerBeat = (bpm > 30 ? 60.0 / bpm : 0.5)
-        let secPerBar = secPerBeat * num
+        let secPerBar = secPerBeat * (num * (4.0 / den))
         let bars = Int(totalDuration / max(0.5, secPerBar))
         
         let template: [(name: String, bar: Int, color: String)] = [
@@ -315,6 +316,7 @@ final class NativeSongLibrary {
     func autoAnalyzeCues(
         songId: String,
         left: [Float],
+        right: [Float] = [],
         sampleRate: Double,
         bpm: Double,
         timeSignature: String,
@@ -330,6 +332,7 @@ final class NativeSongLibrary {
         
         NativeCueDetector.shared.analyze(
             left: left,
+            right: right,
             sampleRate: sampleRate,
             bpmHint: bpm,
             timeSignature: timeSignature
@@ -351,24 +354,25 @@ final class NativeSongLibrary {
                 return
             }
             
+            let detectedTs = res.timeSignature
             let currentSavedCues = self.getSong(id: songId)?.cues ?? []
             if self.areCuesEqual(currentSavedCues, templateCues) {
                 self.saveCues(
                     songId: songId,
                     cues: res.cues,
                     bpm: bpm,
-                    timeSignature: timeSignature,
+                    timeSignature: detectedTs,
                     autoAnalysis: "done"
                 )
                 DispatchQueue.main.async {
-                    self.onAutoCuesReady?(songId, res.cues)
+                    self.onAutoCuesReady?(songId, res.cues, detectedTs)
                 }
             } else {
                 self.saveCues(
                     songId: songId,
                     cues: currentSavedCues,
                     bpm: bpm,
-                    timeSignature: timeSignature,
+                    timeSignature: detectedTs,
                     autoAnalysis: "done"
                 )
             }
@@ -648,9 +652,10 @@ final class NativeSongLibrary {
             let resolvedTs = timeSignature ?? song.time_signature ?? "4/4"
             
             do {
-                let (left, _, sr) = try loadAudioFileStereo(url: audioUrl)
+                let (left, right, sr) = try loadAudioFileStereo(url: audioUrl)
                 NativeCueDetector.shared.analyze(
                     left: left,
+                    right: right,
                     sampleRate: sr,
                     bpmHint: resolvedBpm,
                     timeSignature: resolvedTs
@@ -660,11 +665,12 @@ final class NativeSongLibrary {
                         return
                     }
                     
+                    let finalTs = result.timeSignature
                     self.saveCues(
                         songId: songId,
                         cues: result.cues,
                         bpm: resolvedBpm,
-                        timeSignature: resolvedTs,
+                        timeSignature: finalTs,
                         autoAnalysis: "done"
                     )
                     

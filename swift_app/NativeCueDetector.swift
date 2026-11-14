@@ -23,14 +23,16 @@ final class NativeCueDetector {
         var gridBpm: Double      // BPM da grade usada para ajustar os cortes
         var clickBpm: Double     // BPM medido no click
         var namedCount: Int      // quantas seções tiveram o nome reconhecido
+        var timeSignature: String // Fórmula de compasso detectada ou confirmada (ex: "6/8", "4/4", "3/4")
     }
 
     // MARK: - API
 
-    /// `left` é o canal L já decodificado (o engine já o tem em memória).
+    /// `left` é o canal L (Click + Guia); `right` opcional é o canal R (Playback/Instrumentos para análise estrutural).
     /// O completion é chamado numa fila de background; devolve nil se não achar click ou voz.
     func analyze(
         left: [Float],
+        right: [Float] = [],
         sampleRate: Double,
         bpmHint: Double,
         timeSignature: String,
@@ -39,6 +41,7 @@ final class NativeCueDetector {
         DispatchQueue.global(qos: .utility).async {
             let result = self.analyzeSync(
                 left: left,
+                right: right,
                 sr: sampleRate,
                 bpmHint: bpmHint,
                 timeSignature: timeSignature
@@ -109,7 +112,7 @@ final class NativeCueDetector {
 
     // MARK: - Pipeline
 
-    private func analyzeSync(left: [Float], sr: Double, bpmHint: Double, timeSignature: String) -> Result? {
+    private func analyzeSync(left: [Float], right: [Float] = [], sr: Double, bpmHint: Double, timeSignature: String) -> Result? {
         guard sr > 8000, left.count > Int(sr * 20.0) else { return nil }
         let totalDuration = Double(left.count) / sr
 
@@ -221,15 +224,63 @@ final class NativeCueDetector {
             runStartIdx = times.indices.first { good[$0] } ?? 0
         }
 
-        // 5. Cliques por compasso e fase do acento (tempo 1)
-        let clicksPerBar: Int = {
-            if hasHint {
-                let beats = Double(num) * (4.0 / Double(den))
-                let barTheoretical = (60.0 / bpmHint) * beats
-                return max(1, Int((barTheoretical / per).rounded()))
+        // 5. Detecção de Fórmula de Compasso por Periodicidade de Acentos
+        let candidatesTS = [3, 4, 6, 8, 12, 16]
+        var bestCandidateTS = 4
+        var bestContrastTS: Float = 0
+        for k in candidatesTS {
+            var phases = [[Float]](repeating: [], count: k)
+            var sampleCount = 0
+            for i in runStartIdx..<times.count where good[i] {
+                let ph = ((kIdx[i] % k) + k) % k
+                phases[ph].append(heights[i])
+                sampleCount += 1
+                if sampleCount >= 300 { break }
             }
-            return num
-        }()
+            let medians = phases.map { ph -> Float in
+                guard !ph.isEmpty else { return 0 }
+                let s = ph.sorted()
+                return s[s.count / 2]
+            }
+            guard let maxMed = medians.max() else { continue }
+            let otherMeds = medians.filter { $0 < maxMed }
+            let avgOther = otherMeds.isEmpty ? 1.0 : (otherMeds.reduce(0, +) / Float(otherMeds.count))
+            let ratio = maxMed / max(0.001, avgOther)
+            if ratio > bestContrastTS {
+                bestContrastTS = ratio
+                bestCandidateTS = k
+            }
+        }
+
+        var detectedTs = "4/4"
+        if (bestCandidateTS == 12 || bestCandidateTS == 6) && bestContrastTS >= 1.15 {
+            detectedTs = "6/8"
+        } else if bestCandidateTS == 3 && bestContrastTS >= 1.15 {
+            detectedTs = "3/4"
+        }
+
+        let finalTs: String
+        if timeSignature == "4/4" && detectedTs != "4/4" {
+            finalTs = detectedTs
+        } else if !timeSignature.isEmpty {
+            finalTs = timeSignature
+        } else {
+            finalTs = detectedTs
+        }
+
+        let tsParts = finalTs.split(separator: "/")
+        if let first = tsParts.first, let n = Int(first), n > 0 { num = n }
+        if tsParts.count > 1, let d = Int(tsParts[1]), d > 0 { den = d }
+
+        var clicksPerBar = bestCandidateTS
+        if hasHint {
+            let beats = Double(num) * (4.0 / Double(den))
+            let expectedBarSec = (60.0 / bpmHint) * beats
+            let expectedClicks = Int(round(expectedBarSec / per))
+            if expectedClicks > 0 && abs(Double(expectedClicks) * per - expectedBarSec) < 0.15 * expectedBarSec {
+                clicksPerBar = expectedClicks
+            }
+        }
         var perPhase = [[Float]](repeating: [], count: clicksPerBar)
         var used = 0
         for i in runStartIdx..<times.count where good[i] {
@@ -245,7 +296,6 @@ final class NativeCueDetector {
         others.remove(at: accentPhase)
         let contrast = meds[accentPhase] / max(median(others), 1e-6)
         if contrast < 1.15 {
-            // sem acento claro: assume que o primeiro click estável é o tempo 1
             accentPhase = ((kIdx[runStartIdx] % clicksPerBar) + clicksPerBar) % clicksPerBar
         }
 
@@ -313,13 +363,17 @@ final class NativeCueDetector {
         // 7. Grade de compassos: click medido ou BPM do arquivo? A voz guia decide.
         var bar = barClick
         let starts = phrases.map { $0.start }.filter { $0 > anchor + 1.2 * barClick }
-        if hasHint && starts.count >= 6 {
+        if hasHint {
             let beats = Double(num) * (4.0 / Double(den))
             let barHint = (60.0 / bpmHint) * beats
-            let rHint = resultant(starts, bar: barHint, anchor: anchor, num: num)
-            let rClick = resultant(starts, bar: barClick, anchor: anchor, num: num)
-            if rHint > rClick + 0.02 { bar = barHint }
-            print(String(format: "[NativeCueDetector] alinhamento da voz: click %.3f, BPM do arquivo %.3f", rClick, rHint))
+            if starts.count >= 6 {
+                let rHint = resultant(starts, bar: barHint, anchor: anchor, num: num)
+                let rClick = resultant(starts, bar: barClick, anchor: anchor, num: num)
+                if rHint > rClick + 0.02 { bar = barHint }
+                print(String(format: "[NativeCueDetector] alinhamento da voz: click %.3f, BPM do arquivo %.3f", rClick, rHint))
+            } else if abs(barHint - barClick) < 0.25 * barClick {
+                bar = barHint
+            }
         }
 
         // 8. Contagem protegida (máximo 2 compassos)
@@ -341,7 +395,7 @@ final class NativeCueDetector {
         }
         guard !candidates.isEmpty else { return nil }
 
-        // 9. Nomes falados
+        // 9. Nomes (Speech framework com fallback para Classificação Estrutural Musical)
         let labels = recognizeLabels(candidates: candidates, samples: cleaned, sr: sr)
 
         var cues: [CueSection] = []
@@ -352,32 +406,94 @@ final class NativeCueDetector {
         }
         if hasCountIn { add("Count-In", 0.0, "#64748b") }
         let introStart = hasCountIn ? countInEnd : 0.0
-        if candidates[0].time > introStart + 0.5 * bar { add("Intro", introStart, "#38bdf8") }
+        let hasIntro = candidates[0].time > introStart + 0.5 * bar
+        if hasIntro { add("Intro", introStart, "#38bdf8") }
 
-        var verseCount = 0
+        // Mede energia RMS das faixas para classificar musicalmente trechos não nomeados por voz
+        let refTrack = !right.isEmpty ? right : cleaned
+        var cueBoundaries = [0.0]
+        if hasCountIn && candidates[0].time != countInEnd { cueBoundaries.append(countInEnd) }
+        for c in candidates { cueBoundaries.append(c.time) }
+        cueBoundaries.append(totalDuration)
+        cueBoundaries = Array(Set(cueBoundaries)).sorted()
+
+        var sectionEnergies: [Double] = []
+        for idx in 0..<(cueBoundaries.count - 1) {
+            let sF = Int(cueBoundaries[idx] * sr)
+            let eF = min(refTrack.count, Int(cueBoundaries[idx + 1] * sr))
+            var sum = 0.0
+            for k in sF..<eF { sum += Double(refTrack[k] * refTrack[k]) }
+            sectionEnergies.append((sum / Double(max(1, eF - sF))).squareRoot())
+        }
+        let sortedRMS = sectionEnergies.sorted()
+        let medRMS = sortedRMS.isEmpty ? 0.05 : sortedRMS[sortedRMS.count / 2]
+
+        var verseNum = 1
+        var chorusNum = 0
+        var bridgeFound = false
         var named = 0
+        let totalCands = candidates.count
+
         for (idx, cand) in candidates.enumerated() {
             if let lab = labels[idx] {
                 named += 1
                 var name = lab.base
                 if lab.base == "Verse" {
-                    verseCount += 1
-                    name = "Verse \(lab.number ?? verseCount)"
+                    name = "Verse \(lab.number ?? verseNum)"
+                    verseNum += 1
+                } else if lab.base == "Chorus" {
+                    chorusNum += 1
+                    name = "Chorus" + (lab.number.map { " \($0)" } ?? (chorusNum > 1 ? " \(chorusNum)" : ""))
                 } else if let n = lab.number {
                     name = "\(lab.base) \(n)"
                 }
                 add(name, cand.time, lab.color)
             } else {
-                add("Section \(idx + 1)", cand.time, "#94a3b8")
+                // Classificação Estrutural Musical Inteligente
+                let secIdx = min(sectionEnergies.count - 1, idx + (hasCountIn ? 1 : 0) + (hasIntro ? 1 : 0))
+                let rms = sectionEnergies[secIdx]
+                let isLast = (idx == totalCands - 1)
+
+                let name: String
+                let color: String
+                if isLast && cand.time > totalDuration - (bar * 8) {
+                    name = "Ending"
+                    color = "#64748b"
+                } else if rms > medRMS * 1.20 {
+                    if chorusNum >= 2 && !bridgeFound && Double(idx) > Double(totalCands) * 0.45 {
+                        name = "Bridge"
+                        color = "#f97316"
+                        bridgeFound = true
+                    } else {
+                        chorusNum += 1
+                        name = "Chorus" + (chorusNum > 1 ? " \(chorusNum)" : "")
+                        color = "#ef4444"
+                    }
+                } else if rms > medRMS * 1.05 && idx + 1 < totalCands && sectionEnergies[min(sectionEnergies.count - 1, secIdx + 1)] > medRMS * 1.20 {
+                    name = "Pre-Chorus"
+                    color = "#ec4899"
+                } else if chorusNum >= 1 && !bridgeFound && Double(idx) > Double(totalCands) * 0.50 {
+                    name = "Bridge"
+                    color = "#f97316"
+                    bridgeFound = true
+                } else if rms < medRMS * 0.70 && Double(idx) > Double(totalCands) * 0.25 {
+                    name = "Instrumental"
+                    color = "#10b981"
+                } else {
+                    name = "Verse \(verseNum)"
+                    color = "#a855f7"
+                    verseNum += 1
+                }
+                add(name, cand.time, color)
             }
         }
         if let f = cues.first, f.time > 0.01 { cues[0].time = 0.0 }
 
         let gridBpm = 60.0 * Double(num) * (4.0 / Double(den)) / bar
         let clickBpm = 60.0 * Double(num) * (4.0 / Double(den)) / barClick
-        print(String(format: "[NativeCueDetector] %ld seções (%ld com nome) | grade %.3f BPM | click %.3f BPM",
-                     cues.count, named, gridBpm, clickBpm))
-        return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: named)
+        print(String(format: "[NativeCueDetector] %ld seções (%ld via fala, %ld estrutural) | compasso %@ | grade %.3f BPM | click %.3f BPM",
+                     cues.count, named, cues.count - named, finalTs, gridBpm, clickBpm))
+        return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: named, timeSignature: finalTs)
     }
 
     // MARK: - Sinal
@@ -455,13 +571,12 @@ final class NativeCueDetector {
 
     private static let vocabulary: [String] = [
         "intro", "verse", "chorus", "pre-chorus", "bridge", "instrumental", "solo", "interlude", "ending", "outro", "tag",
-        "verso", "estrofe", "refrão", "pré-refrão", "ponte", "interlúdio", "final", "fim", "coda",
-        "one", "two", "three", "four", "um", "dois", "três", "quatro"
+        "verso", "estrofe", "refrão", "pré-refrão", "ponte", "interlúdio", "final", "fim", "coda", "entrou", "berço", "fonte", "cresce",
+        "one", "two", "three", "four", "um", "dois", "três", "quatro", "primeiro", "segundo", "terceiro"
     ]
 
     private func ensureSpeechAuthorization() -> Bool {
         guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
-            print("[NativeCueDetector] NSSpeechRecognitionUsageDescription ausente no Info.plist; seções ficarão sem nome.")
             return false
         }
         switch SFSpeechRecognizer.authorizationStatus() {
@@ -474,7 +589,7 @@ final class NativeCueDetector {
                 ok.value = (status == .authorized)
                 sem.signal()
             }
-            _ = sem.wait(timeout: .now() + 120)
+            _ = sem.wait(timeout: .now() + 10)
             return ok.value
         default:
             return false
@@ -487,12 +602,11 @@ final class NativeCueDetector {
 
         let recognizers: [SFSpeechRecognizer] = ["pt-BR", "en-US"].compactMap { id in
             guard let r = SFSpeechRecognizer(locale: Locale(identifier: id)),
-                  r.isAvailable, r.supportsOnDeviceRecognition else { return nil }
+                  r.isAvailable else { return nil }
             r.queue = OperationQueue()
             return r
         }
         guard !recognizers.isEmpty else {
-            print("[NativeCueDetector] sem reconhecedor on-device disponível (pt-BR/en-US)")
             return result
         }
 
@@ -529,7 +643,7 @@ final class NativeCueDetector {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = false
-        request.requiresOnDeviceRecognition = true
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request.contextualStrings = NativeCueDetector.vocabulary
         request.append(buffer)
         request.endAudio()
@@ -546,7 +660,7 @@ final class NativeCueDetector {
                 sem.signal()
             }
         }
-        if sem.wait(timeout: .now() + 12) == .timedOut { task.cancel() }
+        if sem.wait(timeout: .now() + 8) == .timedOut { task.cancel() }
         return out.value
     }
 
@@ -558,26 +672,26 @@ final class NativeCueDetector {
         let joined = tokens.joined()
 
         let numberWords: [String: Int] = [
-            "1": 1, "um": 1, "uma": 1, "one": 1,
-            "2": 2, "dois": 2, "duas": 2, "two": 2,
-            "3": 3, "tres": 3, "three": 3,
-            "4": 4, "quatro": 4, "four": 4
+            "1": 1, "um": 1, "uma": 1, "one": 1, "primeiro": 1,
+            "2": 2, "dois": 2, "duas": 2, "two": 2, "segundo": 2,
+            "3": 3, "tres": 3, "three": 3, "terceiro": 3,
+            "4": 4, "quatro": 4, "four": 4, "quarto": 4
         ]
         var number: Int? = nil
         for t in tokens { if let n = numberWords[t] { number = n; break } }
 
         func has(_ words: [String]) -> Bool { tokens.contains { words.contains($0) } }
 
-        if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") {
+        if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") || joined.contains("pre") || joined.contains("pré") {
             return Label(base: "Pre-Chorus", color: "#ec4899", number: nil)
         }
-        if has(["chorus", "refrao", "coro", "corus"]) { return Label(base: "Chorus", color: "#ef4444", number: number) }
-        if has(["verse", "verso", "versos", "estrofe", "strofe"]) { return Label(base: "Verse", color: "#a855f7", number: number) }
-        if has(["bridge", "ponte"]) { return Label(base: "Bridge", color: "#f97316", number: number) }
-        if has(["intro", "introducao"]) { return Label(base: "Intro", color: "#38bdf8", number: nil) }
-        if has(["instrumental", "solo", "interlude", "interludio"]) { return Label(base: "Instrumental", color: "#10b981", number: nil) }
-        if has(["ending", "end", "final", "fim", "outro", "coda"]) { return Label(base: "Ending", color: "#64748b", number: nil) }
-        if has(["tag"]) { return Label(base: "Tag", color: "#eab308", number: nil) }
+        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus"]) { return Label(base: "Chorus", color: "#ef4444", number: number) }
+        if has(["verse", "verso", "versos", "berco", "berço", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) { return Label(base: "Verse", color: "#a855f7", number: number) }
+        if has(["bridge", "ponte", "fonte"]) { return Label(base: "Bridge", color: "#f97316", number: number) }
+        if has(["intro", "entrou", "introducao", "introdução"]) { return Label(base: "Intro", color: "#38bdf8", number: nil) }
+        if has(["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio"]) { return Label(base: "Instrumental", color: "#10b981", number: nil) }
+        if has(["ending", "end", "final", "fim", "outro", "termina", "corta", "coda"]) { return Label(base: "Ending", color: "#64748b", number: nil) }
+        if has(["tag", "cresce", "crescendo", "ministracao", "ministração", "espontaneo", "espontâneo"]) { return Label(base: "Tag", color: "#eab308", number: nil) }
         return nil
     }
 }

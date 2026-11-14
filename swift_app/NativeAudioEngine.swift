@@ -464,6 +464,7 @@ final class NativeAudioEngine {
             NativeSongLibrary.shared.autoAnalyzeCues(
                 songId: filename,
                 left: left,
+                right: right,
                 sampleRate: sr,
                 bpm: self.bpm,
                 timeSignature: "\(num)/\(den)",
@@ -579,6 +580,18 @@ final class NativeAudioEngine {
         }
     }
     
+    func setTimeSignature(_ tsString: String) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        let parts = tsString.split(separator: "/")
+        if parts.count >= 2, let n = Int(parts[0]), let d = Int(parts[1]) {
+            self.timeSignature = (n, d)
+        } else if let n = Int(parts[0]) {
+            self.timeSignature = (n, 4)
+        }
+        osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+    }
+    
     // MARK: - Salto Quantizado de Cues (Seamless Jump no Tempo 1 com Voz Guia)
     
     func triggerCue(idx: Int, quantize: Bool = true) {
@@ -631,7 +644,8 @@ final class NativeAudioEngine {
         // Fim da seção atual
         let endSec: Double = (activeIdx + 1 < cues.count) ? cues[activeIdx + 1].time : (sampleRate > 0 ? (Double(totalFrames) / sampleRate) : targetTime)
         let secPerBeat = bpm > 0 ? (60.0 / bpm) : 0.5
-        let secPerBar = secPerBeat * Double(max(1, timeSignature.0))
+        let beatsPerBar = Double(max(1, timeSignature.0)) * (4.0 / Double(max(1, timeSignature.1)))
+        let secPerBar = secPerBeat * beatsPerBar
         let leadInBars = max(0.5, guideLeadInBars)
         
         let leadInSec: Double
@@ -841,10 +855,10 @@ final class NativeAudioEngine {
         let totSec = sampleRate > 0 ? Double(totalFrames) / sampleRate : 0.0
         
         let beatSec = bpm > 0 ? (60.0 / bpm) : 0.5
-        let totalBeats = Int(curSec / beatSec)
-        let beatsPerBar = max(1, timeSignature.0)
-        let curBar = (totalBeats / beatsPerBar) + 1
-        let curBeat = (totalBeats % beatsPerBar) + 1
+        let beatsPerBar = Double(max(1, timeSignature.0)) * (4.0 / Double(max(1, timeSignature.1)))
+        let secPerBar = max(0.01, beatSec * beatsPerBar)
+        let curBar = Int(curSec / secPerBar) + 1
+        let curBeat = Int((curSec.truncatingRemainder(dividingBy: secPerBar)) / max(0.01, beatSec)) + 1
         
         var cueDict: [String: Any]? = nil
         if currentCueIdx >= 0 && currentCueIdx < cues.count {
