@@ -377,7 +377,29 @@ final class NativeCueDetector {
         }
 
         // 8. Contagem protegida (máximo 2 compassos)
-        let countInBars = min(2, max(0, Int(floor((firstClickTime - anchor) / bar + 0.1))))
+        var countInBars = min(2, max(0, Int(floor((firstClickTime - anchor) / bar + 0.1))))
+        
+        // Se o click começou já no compasso 1, verifica se as primeiras frases faladas são contagem numérica
+        if countInBars == 0 {
+            let maxCountInTime = anchor + 2.5 * bar
+            var countInPhraseEnd: Double? = nil
+            for p in phrases where p.start < maxCountInTime {
+                let a = max(0, Int((p.start - 0.2) * sr))
+                let b = min(left.count, Int((p.end + 0.3) * sr))
+                if let whisperRes = NativeCueDetector.transcribeWithWhisper(slice: left[a..<b], sr: sr) {
+                    let txt = whisperRes.text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+                    let countWords = ["1", "2", "3", "4", "5", "6", "um", "dois", "tres", "quatro", "cinco", "seis", "one", "two", "three", "four", "paixo", "paixa"]
+                    let hasCountWord = countWords.contains { txt.contains($0) }
+                    if hasCountWord && !txt.contains("verso") && !txt.contains("refrao") {
+                        countInPhraseEnd = max(countInPhraseEnd ?? 0.0, p.end)
+                    }
+                }
+            }
+            if let end = countInPhraseEnd {
+                countInBars = min(2, max(1, Int(round((end - anchor) / bar))))
+            }
+        }
+        
         let countInEnd = anchor + Double(countInBars) * bar
         let hasCountIn = countInBars >= 1
 
@@ -385,14 +407,16 @@ final class NativeCueDetector {
         var rawCandidates: [(cand: Candidate, label: Label?, isDynamic: Bool)] = []
         for p in phrases {
             if p.start < countInEnd - 0.2 { continue }
-            let j = Int(ceil((p.start - 0.15 - anchor) / bar))
-            let tc = anchor + Double(j) * bar
+            // A guia de voz vem antes do início do trecho: a divisão dos blocos fica 1 compasso após a guia
+            let barOfGuide = Int(floor((p.start + 0.15 - anchor) / bar))
+            let sectionBar = barOfGuide + 1
+            let tc = anchor + Double(sectionBar) * bar
             if tc >= totalDuration - 1.0 { continue }
             
-            // Recorta áudio limpo da frase falada (-0.25s a +0.35s)
+            // Recorta áudio limpo da frase falada (-0.25s a +0.35s) direto do canal L íntegro (sem entalhes de clique)
             let a = max(0, Int((p.start - 0.25) * sr))
-            let b = min(cleaned.count, Int((p.end + 0.35) * sr))
-            let slice = cleaned[a..<b]
+            let b = min(left.count, Int((p.end + 0.35) * sr))
+            let slice = left[a..<b]
             
             var label: Label? = nil
             var isDynamic = false
@@ -432,9 +456,9 @@ final class NativeCueDetector {
         for i in 0..<candidates.count {
             if labels[i] == nil {
                 let a = max(0, Int((candidates[i].start - 0.25) * sr))
-                let b = min(cleaned.count, Int((candidates[i].end + 0.35) * sr))
+                let b = min(left.count, Int((candidates[i].end + 0.35) * sr))
                 if a < b {
-                    labels[i] = recognizeSingleLabel(slice: cleaned[a..<b], sr: sr)
+                    labels[i] = recognizeSingleLabel(slice: left[a..<b], sr: sr)
                 }
             }
         }
@@ -477,6 +501,10 @@ final class NativeCueDetector {
 
         for (idx, cand) in candidates.enumerated() {
             if let lab = labels[idx] {
+                // Se a seção for Intro e já adicionamos a Intro inicial, não duplica
+                if lab.base == "Intro" && cues.last?.name == "Intro" {
+                    continue
+                }
                 named += 1
                 var name = lab.base
                 if lab.base == "Verse" {
@@ -619,7 +647,8 @@ final class NativeCueDetector {
         "todos", "toda banda", "juntos",
         "bumbo", "baixo", "só piano", "piano", "violao", "violão",
         "convencao", "convenção",
-        "prepara", "atencao", "atenção"
+        "prepara", "atencao", "atenção",
+        "paixa", "paixo", "em paz"
     ]
 
     private static func findWhisperCli() -> String? {
@@ -738,6 +767,7 @@ final class NativeCueDetector {
             "-f", tempWav.path,
             "-l", "pt",
             "-nt",
+            "-ng",
             "-t", "4",
             "--prompt", "intro verso refrão ponte pré-refrão instrumental solo final cresce pausa segura"
         ]
@@ -876,16 +906,16 @@ final class NativeCueDetector {
         if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") || joined.contains("posse") || joined.contains("posrefrao") || joined.contains("derrefram") || joined.contains("pre") || joined.contains("pré") {
             return Label(base: "Pre-Chorus", color: "#ec4899", number: nil)
         }
-        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus", "frao", "frão"]) || joined.contains("refrao") || joined.contains("refrão") {
+        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus", "frao", "frão", "refram", "efrao", "efrão"]) || joined.contains("refrao") || joined.contains("refrão") || joined.contains("refram") {
             return Label(base: "Chorus", color: "#ef4444", number: number)
         }
-        if has(["verse", "verso", "versos", "berco", "berço", "derso", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) || joined.contains("verso") {
+        if has(["verse", "verso", "versos", "berco", "berço", "verco", "derso", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) || joined.contains("verso") {
             return Label(base: "Verse", color: "#a855f7", number: number)
         }
         if has(["bridge", "ponte", "fonte"]) || joined.contains("ponte") {
             return Label(base: "Bridge", color: "#f97316", number: number)
         }
-        if has(["intro", "entrou", "introducao", "introdução"]) || joined.contains("intro") {
+        if has(["intro", "entrou", "introducao", "introdução", "quinto", "tentro", "tintro"]) || joined.contains("intro") || joined.contains("tentro") || joined.contains("tintro") {
             return Label(base: "Intro", color: "#38bdf8", number: nil)
         }
         if has(["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio", "interloujo"]) || joined.contains("interlude") || joined.contains("instrumental") {
