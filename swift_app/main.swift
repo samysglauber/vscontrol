@@ -754,7 +754,7 @@ class PlaybackState: ObservableObject {
     @Published var abletonSynced: Bool = false
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
-    @Published var zoomLevel: Double = 0.5 {
+    @Published var zoomLevel: Double = 0.3 {
         didSet {
             UserDefaults.standard.set(zoomLevel, forKey: "saved_timeline_zoom_level")
         }
@@ -5329,11 +5329,11 @@ struct BottomMixerDock: View {
             
             // Controle de Zoom da Timeline (Pílula 3 Níveis: Fit, 1x, 2x)
             HStack(spacing: 2) {
-                ForEach([("Fit", 0.0, "Ajustar à tela"), ("1x", 0.5, "Zoom padrão"), ("2x", 1.0, "Zoom ampliado")], id: \.0) { opt in
+                ForEach([("Fit", 0.0, "Ajustar à tela"), ("1x", 0.3, "Zoom padrão"), ("2x", 0.75, "Zoom ampliado")], id: \.0) { opt in
                     let isSelected: Bool = {
                         if opt.1 == 0.0 { return state.zoomLevel <= 0.15 }
-                        if opt.1 == 0.5 { return state.zoomLevel > 0.15 && state.zoomLevel < 0.75 }
-                        return state.zoomLevel >= 0.75
+                        if opt.1 == 0.3 { return state.zoomLevel > 0.15 && state.zoomLevel < 0.525 }
+                        return state.zoomLevel >= 0.525
                     }()
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.2)) {
