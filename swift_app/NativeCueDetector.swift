@@ -114,16 +114,20 @@ final class NativeCueDetector {
         let totalDuration = Double(left.count) / sr
 
         var num = 4
-        if let first = timeSignature.split(separator: "/").first, let n = Int(first), n > 0 { num = n }
+        var den = 4
+        let parts = timeSignature.split(separator: "/")
+        if let first = parts.first, let n = Int(first), n > 0 { num = n }
+        if parts.count > 1, let d = Int(parts[1]), d > 0 { den = d }
         let hasHint = bpmHint >= 30.0
 
-        // 1. Cliques: passa-altas 700 Hz + envelope RMS de 1 ms
+        // 1. Cliques: passa-altas 700 Hz + envelope RMS de 1 ms com distância adaptativa
         let hop1 = max(1, Int(sr * 0.001))
         let dt1 = Double(hop1) / sr
         let hp = applyFilters(left, [Biquad(highPass: 700.0, sampleRate: sr)])
         let env = rmsEnvelope(hp, hop: hop1)
         let thr = max(Float(0.02), 0.12 * percentile(env, 0.995))
-        let peakIdx = pickPeaks(env, threshold: thr, minDistance: Int(0.3 / dt1))
+        let minD = max(1, Int(0.065 / dt1))
+        let peakIdx = pickPeaks(env, threshold: thr, minDistance: minD)
         guard peakIdx.count >= 24 else {
             print("[NativeCueDetector] poucos picos de click (\(peakIdx.count)); sem faixa de click no L?")
             return nil
@@ -135,12 +139,12 @@ final class NativeCueDetector {
         var diffs: [Double] = []
         for i in 1..<times.count {
             let d = times[i] - times[i - 1]
-            if d > 0.12 && d < 1.5 { diffs.append(d) }
+            if d > 0.07 && d < 1.8 { diffs.append(d) }
         }
         guard diffs.count >= 16 else { return nil }
         let binW = 0.002
-        let lo = 0.12
-        var hist = [Int](repeating: 0, count: Int((1.5 - lo) / binW) + 3)
+        let lo = 0.07
+        var hist = [Int](repeating: 0, count: Int((1.8 - lo) / binW) + 3)
         for d in diffs { hist[Int((d - lo) / binW)] += 1 }
         var bestBin = 1
         var bestScore = -1
@@ -158,7 +162,7 @@ final class NativeCueDetector {
         var bestStart = 0
         var run = 0
         for i in 1..<times.count {
-            if abs((times[i] - times[i - 1]) - per) < 0.06 * per {
+            if abs((times[i] - times[i - 1]) - per) < 0.08 * per {
                 run += 1
                 if run > bestRun { bestRun = run; bestStart = i - run }
             } else {
@@ -168,16 +172,17 @@ final class NativeCueDetector {
         guard bestRun >= 8 else { return nil }
         var t0 = times[bestStart]
 
-        // 4. Ajuste por mínimos quadrados, expandindo a cobertura a cada iteração
+        // 4. Ajuste por mínimos quadrados adaptativo, expandindo a cobertura a cada iteração
         var good = [Bool](repeating: false, count: times.count)
         var goodCount = 0
+        let resThreshold = max(0.015, min(0.035, 0.15 * per))
         for _ in 0..<16 {
             var mask = [Bool](repeating: false, count: times.count)
             var sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0, c = 0.0
             for i in 0..<times.count {
                 let k = ((times[i] - t0) / per).rounded()
                 let res = times[i] - (t0 + k * per)
-                if abs(res) < 0.02 {
+                if abs(res) < resThreshold {
                     mask[i] = true
                     sx += k; sy += times[i]; sxx += k * k; sxy += k * times[i]; c += 1
                 }
@@ -197,7 +202,7 @@ final class NativeCueDetector {
         guard goodCount >= 16, per > 0.05 else { return nil }
         let kIdx = times.map { Int((($0 - t0) / per).rounded()) }
 
-        // Primeira sequência estável de 8 cliques consecutivos (ignora ruído da contagem falada)
+        // Primeira sequência estável de cliques consecutivos (ignora ruído inicial)
         var runStartIdx = -1
         var consecutive = 0
         var prevK = Int.min
@@ -212,12 +217,19 @@ final class NativeCueDetector {
             prevK = kIdx[i]
             if consecutive >= 8 { runStartIdx = candidateStart; break }
         }
-        guard runStartIdx >= 0 else { return nil }
+        if runStartIdx < 0 {
+            runStartIdx = times.indices.first { good[$0] } ?? 0
+        }
 
         // 5. Cliques por compasso e fase do acento (tempo 1)
-        let clicksPerBar = hasHint
-            ? max(1, Int((Double(num) * 60.0 / bpmHint / per).rounded()))
-            : num
+        let clicksPerBar: Int = {
+            if hasHint {
+                let beats = Double(num) * (4.0 / Double(den))
+                let barTheoretical = (60.0 / bpmHint) * beats
+                return max(1, Int((barTheoretical / per).rounded()))
+            }
+            return num
+        }()
         var perPhase = [[Float]](repeating: [], count: clicksPerBar)
         var used = 0
         for i in runStartIdx..<times.count where good[i] {
@@ -246,10 +258,10 @@ final class NativeCueDetector {
         let anchor = tAccEarly - floor((tAccEarly + 0.25) / barClick) * barClick
         let firstClickTime = times[runStartIdx]
 
-        // 6. Voz: apaga os cliques do L, passa-faixa 200–3500 Hz, energia de 20 ms
+        // 6. Voz: apaga os cliques do L com janela proporcional, passa-faixa 200–3500 Hz, energia adaptativa
         var cleaned = left
-        let zb = Int(0.005 * sr)
-        let za = Int(0.060 * sr)
+        let zb = Int(0.006 * sr)
+        let za = Int(min(0.045, per * 0.35) * sr)
         for t in times {
             let c = Int(t * sr)
             let a = max(0, c - zb)
@@ -269,10 +281,12 @@ final class NativeCueDetector {
                 envS[i] = ((envV[i] * envV[i] + envV[i - 1] * envV[i - 1]) / 2.0).squareRoot()
             }
         }
-        let thrV = max(Float(0.02), 0.12 * percentile(envS, 0.98))
+        let p50 = percentile(envS, 0.50)
+        let p95 = percentile(envS, 0.95)
+        let thrV = max(Float(0.015), max(p50 * 2.5, 0.14 * p95))
 
         var phrases: [Phrase] = []
-        let hang = Int((0.4 / dtV).rounded())
+        let hang = Int(min(0.35, max(0.18, per * 0.8)) / dtV)
         var i = 0
         while i < envS.count {
             if envS[i] > thrV {
@@ -283,7 +297,7 @@ final class NativeCueDetector {
                     j += 1
                 }
                 let e = last + 1
-                if Double(e - i) * dtV >= 0.25 {
+                if Double(e - i) * dtV >= 0.22 {
                     phrases.append(Phrase(start: Double(i) * dtV, end: Double(e) * dtV))
                 }
                 i = e
@@ -300,15 +314,16 @@ final class NativeCueDetector {
         var bar = barClick
         let starts = phrases.map { $0.start }.filter { $0 > anchor + 1.2 * barClick }
         if hasHint && starts.count >= 6 {
-            let barHint = Double(num) * 60.0 / bpmHint
+            let beats = Double(num) * (4.0 / Double(den))
+            let barHint = (60.0 / bpmHint) * beats
             let rHint = resultant(starts, bar: barHint, anchor: anchor, num: num)
             let rClick = resultant(starts, bar: barClick, anchor: anchor, num: num)
             if rHint > rClick + 0.02 { bar = barHint }
             print(String(format: "[NativeCueDetector] alinhamento da voz: click %.3f, BPM do arquivo %.3f", rClick, rHint))
         }
 
-        // 8. Contagem e seções
-        let countInBars = max(0, Int(floor((firstClickTime - anchor) / bar + 0.1)))
+        // 8. Contagem protegida (máximo 2 compassos)
+        let countInBars = min(2, max(0, Int(floor((firstClickTime - anchor) / bar + 0.1))))
         let countInEnd = anchor + Double(countInBars) * bar
         let hasCountIn = countInBars >= 1
 
@@ -318,7 +333,7 @@ final class NativeCueDetector {
             let j = Int(ceil((p.start - 0.15 - anchor) / bar))
             let tc = anchor + Double(j) * bar
             if tc >= totalDuration - 1.0 { continue }
-            if let last = candidates.last, abs(last.time - tc) < 0.5 * bar {
+            if let last = candidates.last, abs(last.time - tc) < 0.65 * bar {
                 candidates[candidates.count - 1].end = p.end     // palavra composta ("pré" + "refrão")
                 continue
             }
@@ -358,8 +373,8 @@ final class NativeCueDetector {
         }
         if let f = cues.first, f.time > 0.01 { cues[0].time = 0.0 }
 
-        let gridBpm = 60.0 * Double(num) / bar
-        let clickBpm = 60.0 * Double(num) / barClick
+        let gridBpm = 60.0 * Double(num) * (4.0 / Double(den)) / bar
+        let clickBpm = 60.0 * Double(num) * (4.0 / Double(den)) / barClick
         print(String(format: "[NativeCueDetector] %ld seções (%ld com nome) | grade %.3f BPM | click %.3f BPM",
                      cues.count, named, gridBpm, clickBpm))
         return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: named)
