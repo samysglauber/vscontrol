@@ -110,10 +110,10 @@ final class NativeSongLibrary {
         var totalDuration: Double? = nil
         var cues: [CueSection]? = nil
         var fullWaveform: [Double]? = nil
-        var hasCover = hasCover(for: entry)
-        var isMetronome = false
-        var subdivide = false
-        var subdivision = "1/4"
+        let hasCover = hasCover(for: entry)
+        let isMetronome = false
+        let subdivide = false
+        let subdivision = "1/4"
         
         // 1. Extração de BPM e Tonalidade do nome do arquivo
         if let bpmMatch = extractBpmFromFilename(entry) {

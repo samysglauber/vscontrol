@@ -754,7 +754,7 @@ class PlaybackState: ObservableObject {
     @Published var abletonSynced: Bool = false
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
-    @Published var zoomLevel: Double = 0.35 {
+    @Published var zoomLevel: Double = 0.5 {
         didSet {
             UserDefaults.standard.set(zoomLevel, forKey: "saved_timeline_zoom_level")
         }
@@ -5327,32 +5327,34 @@ struct BottomMixerDock: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1, height: 22)
             
-            // Controle de Zoom da Timeline (Minimalista)
-            HStack(spacing: 8) {
-                Image(systemName: "minus.magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(state.zoomLevel <= 0.05 ? Color.white.opacity(0.20) : Color.white.opacity(0.60))
-                    .onTapGesture {
+            // Controle de Zoom da Timeline (Pílula 3 Níveis: Fit, 1x, 2x)
+            HStack(spacing: 2) {
+                ForEach([("Fit", 0.0, "Ajustar à tela"), ("1x", 0.5, "Zoom padrão"), ("2x", 1.0, "Zoom ampliado")], id: \.0) { opt in
+                    let isSelected: Bool = {
+                        if opt.1 == 0.0 { return state.zoomLevel <= 0.15 }
+                        if opt.1 == 0.5 { return state.zoomLevel > 0.15 && state.zoomLevel < 0.75 }
+                        return state.zoomLevel >= 0.75
+                    }()
+                    Button(action: {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            state.zoomLevel = max(0.0, state.zoomLevel - 0.2)
+                            state.zoomLevel = opt.1
                         }
+                    }) {
+                        Text(opt.0)
+                            .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                            .foregroundColor(isSelected ? .white : .white.opacity(0.5))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(isSelected ? Color.white.opacity(0.20) : Color.clear)
+                            .clipShape(Capsule())
                     }
-                    .help("Zoom Out")
-                
-                Slider(value: $state.zoomLevel, in: 0.0...1.0)
-                    .frame(width: 75)
-                    .accentColor(.cyan)
-                
-                Image(systemName: "plus.magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(state.zoomLevel >= 0.95 ? Color.white.opacity(0.20) : Color.cyan)
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            state.zoomLevel = min(1.0, state.zoomLevel + 0.2)
-                        }
-                    }
-                    .help("Zoom In")
+                    .buttonStyle(PlainButtonStyle())
+                    .help(opt.2)
+                }
             }
+            .padding(2)
+            .background(Color.white.opacity(0.08))
+            .clipShape(Capsule())
             
             // Divisor vertical sutil
             Rectangle()
