@@ -911,7 +911,8 @@ class PlaybackState: ObservableObject {
                         NativeAudioEngine.shared.bpm = b
                     }
                     if !self.isSongEditorPresented { self.editorCues = cues }
-                    self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
+                    let bpmStr = detectedBpm != nil ? "\(formatBpm(detectedBpm!)) BPM, " : ""
+                    self.showUndoFeedback("Detectado do áudio: \(bpmStr)\(cues.count) seções")
                 }
             }
         }

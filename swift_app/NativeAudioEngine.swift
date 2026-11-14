@@ -465,12 +465,13 @@ final class NativeAudioEngine {
         if needsAuto {
             let num = self.timeSignature.0
             let den = self.timeSignature.1
+            let explicitBpm = extractBpmFromFilename(filename)
             NativeSongLibrary.shared.autoAnalyzeCues(
                 songId: filename,
                 left: left,
                 right: right,
                 sampleRate: sr,
-                bpm: self.bpm,
+                bpm: explicitBpm ?? 0.0,
                 timeSignature: "\(num)/\(den)",
                 templateCues: resolvedCues
             )

@@ -253,9 +253,18 @@ final class NativeCueDetector {
         }
 
         var detectedTs = "4/4"
-        if (bestCandidateTS == 12 || bestCandidateTS == 6) && bestContrastTS >= 1.15 {
+        if bestContrastTS < 1.15 {
+            let rawRate = 60.0 / per
+            if rawRate > 220.0 {
+                bestCandidateTS = 16
+            } else if rawRate > 135.0 {
+                bestCandidateTS = 8
+            } else {
+                bestCandidateTS = 4
+            }
+        } else if bestCandidateTS == 12 || bestCandidateTS == 6 {
             detectedTs = "6/8"
-        } else if bestCandidateTS == 3 && bestContrastTS >= 1.15 {
+        } else if bestCandidateTS == 3 {
             detectedTs = "3/4"
         }
 

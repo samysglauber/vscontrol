@@ -348,11 +348,14 @@ final class NativeSongLibrary {
             self.onAutoAnalysisStarted?(songId)
         }
         
+        let fileBpm = extractBpmFromFilename(songId)
+        let bpmHint = fileBpm ?? (bpm >= 30.0 && bpm != 120.0 ? bpm : 0.0)
+        
         NativeCueDetector.shared.analyze(
             left: left,
             right: right,
             sampleRate: sampleRate,
-            bpmHint: bpm,
+            bpmHint: bpmHint,
             timeSignature: timeSignature
         ) { [weak self] result in
             guard let self = self else { return }
@@ -365,7 +368,7 @@ final class NativeSongLibrary {
                 self.saveCues(
                     songId: songId,
                     cues: templateCues,
-                    bpm: bpm,
+                    bpm: bpm >= 30.0 ? bpm : 120.0,
                     timeSignature: timeSignature,
                     autoAnalysis: "failed"
                 )
@@ -376,8 +379,24 @@ final class NativeSongLibrary {
             }
             
             let detectedTs = res.timeSignature
-            let fileBpm = extractBpmFromFilename(songId)
-            let finalBpm = fileBpm ?? (bpm > 30 && bpm != 120.0 ? bpm : (res.gridBpm > 30 ? round(res.gridBpm * 10) / 10.0 : bpm))
+            let finalBpm: Double
+            if let fb = fileBpm {
+                finalBpm = fb
+            } else if res.gridBpm >= 30.0 {
+                let roundInt = round(res.gridBpm)
+                if abs(roundInt - res.gridBpm) < 0.25 {
+                    finalBpm = roundInt
+                } else {
+                    let roundHalf = (res.gridBpm * 2.0).rounded() / 2.0
+                    if abs(roundHalf - res.gridBpm) < 0.15 {
+                        finalBpm = roundHalf
+                    } else {
+                        finalBpm = round(res.gridBpm * 10.0) / 10.0
+                    }
+                }
+            } else {
+                finalBpm = bpm >= 30.0 ? bpm : 120.0
+            }
             let currentSavedCues = self.getSong(id: songId)?.cues ?? []
             let isGeneric = currentSavedCues.isEmpty || currentSavedCues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) || self.areCuesEqual(currentSavedCues, templateCues)
             if isGeneric {
@@ -672,7 +691,9 @@ final class NativeSongLibrary {
                 return
             }
             
-            let resolvedBpm = bpm ?? song.bpm ?? 120.0
+            let fileBpm = extractBpmFromFilename(songId)
+            let userBpm = bpm != nil && bpm! >= 30.0 && bpm! != 120.0 ? bpm : nil
+            let hintBpm = fileBpm ?? userBpm ?? 0.0
             let resolvedTs = timeSignature ?? song.time_signature ?? "4/4"
             
             do {
@@ -681,7 +702,7 @@ final class NativeSongLibrary {
                     left: left,
                     right: right,
                     sampleRate: sr,
-                    bpmHint: resolvedBpm,
+                    bpmHint: hintBpm,
                     timeSignature: resolvedTs
                 ) { result in
                     guard let result = result else {
@@ -690,10 +711,31 @@ final class NativeSongLibrary {
                     }
                     
                     let finalTs = result.timeSignature
+                    let finalBpm: Double
+                    if let fb = fileBpm {
+                        finalBpm = fb
+                    } else if let ub = userBpm {
+                        finalBpm = ub
+                    } else if result.gridBpm >= 30.0 {
+                        let roundInt = round(result.gridBpm)
+                        if abs(roundInt - result.gridBpm) < 0.25 {
+                            finalBpm = roundInt
+                        } else {
+                            let roundHalf = (result.gridBpm * 2.0).rounded() / 2.0
+                            if abs(roundHalf - result.gridBpm) < 0.15 {
+                                finalBpm = roundHalf
+                            } else {
+                                finalBpm = round(result.gridBpm * 10.0) / 10.0
+                            }
+                        }
+                    } else {
+                        finalBpm = 120.0
+                    }
+                    
                     self.saveCues(
                         songId: songId,
                         cues: result.cues,
-                        bpm: resolvedBpm,
+                        bpm: finalBpm,
                         timeSignature: finalTs,
                         autoAnalysis: "done"
                     )
