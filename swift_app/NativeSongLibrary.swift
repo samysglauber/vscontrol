@@ -293,10 +293,21 @@ final class NativeSongLibrary {
             }
             if let auto = json["auto_analysis"] as? String {
                 if auto == "pending" { return true }
-                if auto == "done" || auto == "failed" { return false }
+                if auto == "failed" { return false }
             }
             guard let cues = json["cues"] as? [[String: Any]], !cues.isEmpty else {
                 return true
+            }
+            // Se as seções tiverem nomes genéricos como "Section 1, Section 2...", PRECISA de análise nativa!
+            let hasGenericNames = cues.contains { cueDict in
+                guard let name = cueDict["name"] as? String else { return false }
+                return name.hasPrefix("Section ") || name == "Section"
+            }
+            if hasGenericNames {
+                return true
+            }
+            if let auto = json["auto_analysis"] as? String, auto == "done" {
+                return false
             }
             return false
         }
@@ -304,9 +315,11 @@ final class NativeSongLibrary {
         if let dbSong = NativeDatabase.shared.getSong(id: songId) {
             if dbSong.is_metronome == true { return false }
             if dbSong.auto_analysis == "pending" { return true }
-            if dbSong.auto_analysis == "done" || dbSong.auto_analysis == "failed" { return false }
             if let cues = dbSong.cues, !cues.isEmpty {
-                return false
+                if cues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) {
+                    return true
+                }
+                if dbSong.auto_analysis == "done" { return false }
             }
         }
         

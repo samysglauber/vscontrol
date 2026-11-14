@@ -606,9 +606,10 @@ class PlaybackState: ObservableObject {
         // 2. Setlist em memória RAM (0.00 ms)
         if let match = setlist.first(where: { $0.song.id == song.id }) {
             let matchedCues = match.cues ?? match.song.cues ?? fallbackCues
+            let isGeneric = matchedCues?.contains(where: { $0.name.hasPrefix("Section ") }) ?? false
             let matchedWf = match.waveform ?? match.song.full_waveform
             let matchedDur = match.totalDuration ?? match.song.total_duration
-            if let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
+            if !isGeneric, let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
                 let data = CachedSongData(
                     bpm: match.song.bpm ?? 120.0,
                     timeSignature: match.song.time_signature ?? "4/4",
@@ -873,6 +874,12 @@ class PlaybackState: ObservableObject {
                 if !self.isSongEditorPresented { self.editorCues = cues }
                 self.songCache[songId]?.cues = cues
                 self.currentSong?.cues = cues
+                if let idx = self.setlist.firstIndex(where: { $0.song.id == songId }) {
+                    self.setlist[idx].song.cues = cues
+                    self.setlist[idx].cues = cues
+                    if let ts = detectedTs { self.setlist[idx].song.time_signature = ts }
+                    self.saveSetlistState(writeToDisk: true)
+                }
                 self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
             }
         }
@@ -2316,6 +2323,11 @@ class PlaybackState: ObservableObject {
                 self.fullWaveform = wf
             }
             self.currentSong = updated
+            if let idx = self.setlist.firstIndex(where: { $0.song.id == song.id }) {
+                self.setlist[idx].song = updated
+                self.setlist[idx].cues = updated.cues
+                self.saveSetlistState(writeToDisk: true)
+            }
             NativeAudioEngine.shared.loadSong(updated, crossfade: false)
             self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
         }

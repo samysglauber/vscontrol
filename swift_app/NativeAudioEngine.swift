@@ -449,14 +449,18 @@ final class NativeAudioEngine {
         let filename = url.lastPathComponent
         let needsAuto = NativeSongLibrary.shared.needsAutoCueAnalysis(songId: filename)
         
-        NativeSongLibrary.shared.saveCues(
-            songId: filename,
-            cues: resolvedCues,
-            bpm: self.bpm,
-            timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
-            fullWaveform: peaks,
-            autoAnalysis: needsAuto ? "pending" : nil
-        )
+        // Se a música precisa de auto-análise, não sobrescreve o arquivo no disco com cues genéricas
+        let cuesPath = NativeSongLibrary.shared.getTracksDirectory().appendingPathComponent(filename).path + ".cues.json"
+        if !needsAuto || !FileManager.default.fileExists(atPath: cuesPath) {
+            NativeSongLibrary.shared.saveCues(
+                songId: filename,
+                cues: resolvedCues,
+                bpm: self.bpm,
+                timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
+                fullWaveform: peaks,
+                autoAnalysis: needsAuto ? "pending" : nil
+            )
+        }
         
         if needsAuto {
             let num = self.timeSignature.0
