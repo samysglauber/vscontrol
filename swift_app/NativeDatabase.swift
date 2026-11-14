@@ -47,6 +47,8 @@ final class NativeDatabase {
             execute(sql: "PRAGMA journal_mode = WAL;")
             execute(sql: "PRAGMA synchronous = NORMAL;")
             execute(sql: "PRAGMA foreign_keys = ON;")
+            execute(sql: "ALTER TABLE songs ADD COLUMN auto_analysis TEXT;")
+            execute(sql: "UPDATE songs SET auto_analysis = 'done' WHERE auto_analysis IS NULL AND id IN (SELECT DISTINCT song_id FROM cues);")
         } else {
             print("[NativeDatabase] Failed to open SQLite database at \(dbPath)")
         }
@@ -83,6 +85,7 @@ final class NativeDatabase {
             subdivision TEXT DEFAULT '1/4',
             no_cover INTEGER DEFAULT 0,
             user_edited INTEGER DEFAULT 0,
+            auto_analysis TEXT,
             updated_at REAL
         );
         """
@@ -123,7 +126,7 @@ final class NativeDatabase {
         guard let db = db else { return nil }
         let query = """
         SELECT id, name, filename, path, bpm, time_signature, default_key, total_duration,
-               has_cover, cover_url, search_query, is_metronome, subdivide, subdivision
+               has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, auto_analysis
         FROM songs WHERE id = ? LIMIT 1;
         """
         
@@ -148,6 +151,7 @@ final class NativeDatabase {
             let isMetronome = sqlite3_column_int(stmt, 11) != 0
             let subdivide = sqlite3_column_int(stmt, 12) != 0
             let subdivision = sqlite3_column_text(stmt, 13).map { String(cString: $0) } ?? "1/4"
+            let autoAnalysis = sqlite3_column_text(stmt, 14).map { String(cString: $0) }
             
             let cues = getCuesInternal(songId: sId)
             let waveform = getWaveformInternal(songId: sId)
@@ -168,7 +172,8 @@ final class NativeDatabase {
                 cues: cues,
                 is_metronome: isMetronome,
                 subdivide: subdivide,
-                subdivision: subdivision
+                subdivision: subdivision,
+                auto_analysis: autoAnalysis
             )
         }
         
@@ -202,8 +207,8 @@ final class NativeDatabase {
         
         let sql = """
         INSERT INTO songs (id, name, filename, path, bpm, time_signature, default_key, total_duration,
-                           has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, no_cover, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, no_cover, auto_analysis, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             filename = excluded.filename,
@@ -219,6 +224,7 @@ final class NativeDatabase {
             subdivide = excluded.subdivide,
             subdivision = excluded.subdivision,
             no_cover = excluded.no_cover,
+            auto_analysis = COALESCE(excluded.auto_analysis, songs.auto_analysis),
             updated_at = excluded.updated_at;
         """
         
@@ -254,7 +260,12 @@ final class NativeDatabase {
         sqlite3_bind_int(stmt, 13, (item.subdivide == true) ? 1 : 0)
         sqlite3_bind_text(stmt, 14, ((item.subdivision ?? "1/4") as NSString).utf8String, -1, nil)
         sqlite3_bind_int(stmt, 15, noCover ? 1 : 0)
-        sqlite3_bind_double(stmt, 16, Date().timeIntervalSince1970)
+        if let aa = item.auto_analysis {
+            sqlite3_bind_text(stmt, 16, (aa as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(stmt, 16)
+        }
+        sqlite3_bind_double(stmt, 17, Date().timeIntervalSince1970)
         
         sqlite3_step(stmt)
         
@@ -268,7 +279,14 @@ final class NativeDatabase {
     
     // MARK: - Salvar Cues e Waveforms
     
-    func saveCues(songId: String, cues: [CueSection], bpm: Double? = nil, timeSignature: String? = nil, fullWaveform: [Double]? = nil) {
+    func saveCues(
+        songId: String,
+        cues: [CueSection],
+        bpm: Double? = nil,
+        timeSignature: String? = nil,
+        fullWaveform: [Double]? = nil,
+        autoAnalysis: String? = nil
+    ) {
         lock.lock()
         defer { lock.unlock() }
         
@@ -278,12 +296,13 @@ final class NativeDatabase {
             saveWaveformInternal(songId: songId, peaks: wf)
         }
         
-        // Atualiza BPM e Time Signature na tabela songs se fornecidos
+        // Atualiza BPM, Time Signature e auto_analysis na tabela songs se fornecidos
         guard let db = db else { return }
-        if bpm != nil || timeSignature != nil {
+        if bpm != nil || timeSignature != nil || autoAnalysis != nil {
             var updates: [String] = []
             if bpm != nil { updates.append("bpm = ?") }
             if timeSignature != nil { updates.append("time_signature = ?") }
+            if autoAnalysis != nil { updates.append("auto_analysis = ?") }
             updates.append("updated_at = ?")
             
             let sql = "UPDATE songs SET \(updates.joined(separator: ", ")) WHERE id = ?;"
@@ -296,6 +315,10 @@ final class NativeDatabase {
                 }
                 if let ts = timeSignature {
                     sqlite3_bind_text(stmt, bindIdx, (ts as NSString).utf8String, -1, nil)
+                    bindIdx += 1
+                }
+                if let aa = autoAnalysis {
+                    sqlite3_bind_text(stmt, bindIdx, (aa as NSString).utf8String, -1, nil)
                     bindIdx += 1
                 }
                 sqlite3_bind_double(stmt, bindIdx, Date().timeIntervalSince1970)

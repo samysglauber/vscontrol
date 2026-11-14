@@ -447,13 +447,29 @@ final class NativeAudioEngine {
         
         // Salva na biblioteca e no arquivo .cues.json para que a música nova fique permanentemente salva
         let filename = url.lastPathComponent
+        let needsAuto = NativeSongLibrary.shared.needsAutoCueAnalysis(songId: filename)
+        
         NativeSongLibrary.shared.saveCues(
             songId: filename,
             cues: resolvedCues,
             bpm: self.bpm,
             timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
-            fullWaveform: peaks
+            fullWaveform: peaks,
+            autoAnalysis: needsAuto ? "pending" : nil
         )
+        
+        if needsAuto {
+            let num = self.timeSignature.0
+            let den = self.timeSignature.1
+            NativeSongLibrary.shared.autoAnalyzeCues(
+                songId: filename,
+                left: left,
+                sampleRate: sr,
+                bpm: self.bpm,
+                timeSignature: "\(num)/\(den)",
+                templateCues: resolvedCues
+            )
+        }
         
         self.currentCueIdx = 0
         self.queuedCueIdx = nil
@@ -548,6 +564,19 @@ final class NativeAudioEngine {
         guideLeadIn = nil
         midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
         updateCurrentCueIdx()
+    }
+    
+    func applyAutoCues(songId: String, cues: [CueSection]) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        
+        guard currentUrl?.lastPathComponent == songId else { return }
+        self.cues = cues
+        if cues.isEmpty {
+            self.currentCueIdx = 0
+        } else {
+            self.currentCueIdx = min(self.currentCueIdx, cues.count - 1)
+        }
     }
     
     // MARK: - Salto Quantizado de Cues (Seamless Jump no Tempo 1 com Voz Guia)

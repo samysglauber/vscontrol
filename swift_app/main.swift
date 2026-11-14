@@ -227,11 +227,12 @@ struct SongItem: Identifiable, Codable, Hashable {
     var is_metronome: Bool?
     var subdivide: Bool?
     var subdivision: String?
+    var auto_analysis: String?
     
     enum CodingKeys: String, CodingKey {
         case id, name, filename, path, bpm, time_signature, default_key
         case full_waveform, has_cover, cover_url, search_query
-        case total_duration, cues, is_metronome, subdivide, subdivision
+        case total_duration, cues, is_metronome, subdivide, subdivision, auto_analysis
     }
     
     init(
@@ -250,7 +251,8 @@ struct SongItem: Identifiable, Codable, Hashable {
         cues: [CueSection]? = nil,
         is_metronome: Bool? = nil,
         subdivide: Bool? = nil,
-        subdivision: String? = nil
+        subdivision: String? = nil,
+        auto_analysis: String? = nil
     ) {
         self.id = id
         self.name = resolveSongDisplayName(name: name, timeSignature: time_signature, isMetronome: is_metronome)
@@ -268,6 +270,7 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.is_metronome = is_metronome
         self.subdivide = subdivide
         self.subdivision = subdivision
+        self.auto_analysis = auto_analysis
     }
     
     init(from decoder: Decoder) throws {
@@ -290,6 +293,7 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.is_metronome = isMetro
         self.subdivide = try container.decodeIfPresent(Bool.self, forKey: .subdivide)
         self.subdivision = try container.decodeIfPresent(String.self, forKey: .subdivision)
+        self.auto_analysis = try container.decodeIfPresent(String.self, forKey: .auto_analysis)
         
         self.name = resolveSongDisplayName(name: rawName, timeSignature: ts, isMetronome: isMetro)
     }
@@ -850,6 +854,18 @@ class PlaybackState: ObservableObject {
                 guard let self = self else { return }
                 self.currentCueIdx = jumpedIdx
                 self.queuedCueIdx = nil
+            }
+        }
+        
+        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues in
+            DispatchQueue.main.async {
+                guard let self = self, self.currentSong?.id == songId else { return }
+                NativeAudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
+                self.currentCues = cues
+                if !self.isSongEditorPresented { self.editorCues = cues }
+                self.songCache[songId]?.cues = cues
+                self.currentSong?.cues = cues
+                self.showUndoFeedback("Seções detectadas automaticamente (\(cues.count))")
             }
         }
         

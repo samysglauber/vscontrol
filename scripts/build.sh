@@ -15,6 +15,7 @@ swiftc -O \
     swift_app/NativePadGenerator.swift \
     swift_app/NativeAudioEngine.swift \
     swift_app/NativeDatabase.swift \
+    swift_app/NativeCueDetector.swift \
     swift_app/NativeSongLibrary.swift \
     swift_app/NativeMetronome.swift \
     swift_app/NativeRemoteServer.swift \
@@ -28,6 +29,7 @@ swiftc -O \
     -framework CoreMIDI \
     -framework Accelerate \
     -framework Network \
+    -framework Speech \
     -lsqlite3
 
 chmod +x swift_app/VSControl

@@ -24,6 +24,8 @@
     <false/>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Reconhece a voz guia das VS para nomear as seções automaticamente.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

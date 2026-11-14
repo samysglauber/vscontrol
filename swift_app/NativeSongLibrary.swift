@@ -13,6 +13,9 @@ final class NativeSongLibrary {
     private var songsCache: [String: SongItem] = [:]
     private let lock = NSLock()
     
+    var onAutoCuesReady: ((String, [CueSection]) -> Void)?
+    private var analyzingSongIds: Set<String> = []
+    
     // MARK: - Diretório de Músicas
     
     func getTracksDirectory() -> URL {
@@ -218,15 +221,45 @@ final class NativeSongLibrary {
         cues: [CueSection],
         bpm: Double? = nil,
         timeSignature: String? = nil,
-        fullWaveform: [Double]? = nil
+        fullWaveform: [Double]? = nil,
+        autoAnalysis: String? = nil
     ) {
         NativeDatabase.shared.saveCues(
             songId: songId,
             cues: cues,
             bpm: bpm,
             timeSignature: timeSignature,
-            fullWaveform: fullWaveform
+            fullWaveform: fullWaveform,
+            autoAnalysis: autoAnalysis
         )
+        
+        // Atualiza ou cria o arquivo .cues.json para persistência e compatibilidade
+        let dir = getTracksDirectory()
+        let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"
+        var payload: [String: Any] = [:]
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            payload = existing
+        }
+        
+        payload["cues"] = cues.map { cue in
+            [
+                "id": cue.id,
+                "name": cue.name,
+                "time": cue.time,
+                "bar": cue.bar,
+                "color": cue.color,
+                "waveform": cue.waveform ?? []
+            ]
+        }
+        if let b = bpm { payload["bpm"] = b }
+        if let ts = timeSignature { payload["time_signature"] = ts }
+        if let wf = fullWaveform { payload["full_waveform"] = wf }
+        if let aa = autoAnalysis { payload["auto_analysis"] = aa }
+        
+        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
+            try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
+        }
         
         // Atualiza cache em memória
         lock.lock()
@@ -235,9 +268,120 @@ final class NativeSongLibrary {
             if let b = bpm { cached.bpm = b }
             if let ts = timeSignature { cached.time_signature = ts }
             if let wf = fullWaveform { cached.full_waveform = wf }
+            if let aa = autoAnalysis { cached.auto_analysis = aa }
             songsCache[songId] = cached
         }
         lock.unlock()
+    }
+    
+    // MARK: - Verificação e Análise Automática de Cues
+    
+    func needsAutoCueAnalysis(songId: String) -> Bool {
+        if let song = getSong(id: songId) {
+            if song.is_metronome == true { return false }
+        }
+        if songId.hasPrefix("metronome_") { return false }
+        
+        let dir = getTracksDirectory()
+        let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"
+        
+        if FileManager.default.fileExists(atPath: cuesPath) {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return true
+            }
+            if let auto = json["auto_analysis"] as? String {
+                if auto == "pending" { return true }
+                if auto == "done" || auto == "failed" { return false }
+            }
+            guard let cues = json["cues"] as? [[String: Any]], !cues.isEmpty else {
+                return true
+            }
+            return false
+        }
+        
+        if let dbSong = NativeDatabase.shared.getSong(id: songId) {
+            if dbSong.is_metronome == true { return false }
+            if dbSong.auto_analysis == "pending" { return true }
+            if dbSong.auto_analysis == "done" || dbSong.auto_analysis == "failed" { return false }
+            if let cues = dbSong.cues, !cues.isEmpty {
+                return false
+            }
+        }
+        
+        return true
+    }
+    
+    func autoAnalyzeCues(
+        songId: String,
+        left: [Float],
+        sampleRate: Double,
+        bpm: Double,
+        timeSignature: String,
+        templateCues: [CueSection]
+    ) {
+        lock.lock()
+        if analyzingSongIds.contains(songId) {
+            lock.unlock()
+            return
+        }
+        analyzingSongIds.insert(songId)
+        lock.unlock()
+        
+        NativeCueDetector.shared.analyze(
+            left: left,
+            sampleRate: sampleRate,
+            bpmHint: bpm,
+            timeSignature: timeSignature
+        ) { [weak self] result in
+            guard let self = self else { return }
+            
+            self.lock.lock()
+            self.analyzingSongIds.remove(songId)
+            self.lock.unlock()
+            
+            guard let res = result else {
+                self.saveCues(
+                    songId: songId,
+                    cues: templateCues,
+                    bpm: bpm,
+                    timeSignature: timeSignature,
+                    autoAnalysis: "failed"
+                )
+                return
+            }
+            
+            let currentSavedCues = self.getSong(id: songId)?.cues ?? []
+            if self.areCuesEqual(currentSavedCues, templateCues) {
+                self.saveCues(
+                    songId: songId,
+                    cues: res.cues,
+                    bpm: bpm,
+                    timeSignature: timeSignature,
+                    autoAnalysis: "done"
+                )
+                DispatchQueue.main.async {
+                    self.onAutoCuesReady?(songId, res.cues)
+                }
+            } else {
+                self.saveCues(
+                    songId: songId,
+                    cues: currentSavedCues,
+                    bpm: bpm,
+                    timeSignature: timeSignature,
+                    autoAnalysis: "done"
+                )
+            }
+        }
+    }
+    
+    private func areCuesEqual(_ a: [CueSection], _ b: [CueSection]) -> Bool {
+        guard a.count == b.count else { return false }
+        for i in 0..<a.count {
+            if a[i].name != b[i].name { return false }
+            if abs(a[i].time - b[i].time) > 0.001 { return false }
+        }
+        return true
     }
     
     // MARK: - Cálculo de Waveform Rápido com Accelerate (vDSP)
@@ -480,7 +624,7 @@ final class NativeSongLibrary {
         }
     }
     
-    // MARK: - Processamento com IA (Vosk Speech Recognition & Downbeat Detection)
+    // MARK: - Processamento com IA (Detecção Nativa de Seções 100% Swift)
     
     func reprocessWithAI(
         songId: String,
@@ -489,59 +633,41 @@ final class NativeSongLibrary {
         completion: @escaping (SongItem?) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let tracksDir = self.getTracksDirectory().path
-            
-            let possibleScriptPaths = [
-                "/Users/samysglauber/Documents/AbletonTracks/scripts/detect_cues.py",
-                URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("scripts/detect_cues.py").path,
-                Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("scripts/detect_cues.py").path
-            ]
-            let scriptPath = possibleScriptPaths.first { FileManager.default.fileExists(atPath: $0) } ?? possibleScriptPaths[0]
-            
-            let possiblePythons = [
-                "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3",
-                "/opt/homebrew/bin/python3",
-                "/usr/local/bin/python3",
-                "/usr/bin/python3"
-            ]
-            let pythonBin = possiblePythons.first { FileManager.default.fileExists(atPath: $0) } ?? "/usr/bin/python3"
-            
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: pythonBin)
-            
-            var args = [scriptPath, songId]
-            if let b = bpm {
-                args.append(String(b))
-            } else {
-                args.append("null")
+            guard let song = self.getSong(id: songId) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
             }
-            if let ts = timeSignature {
-                args.append(ts)
-            } else {
-                args.append("null")
+            
+            let audioUrl = URL(fileURLWithPath: song.path)
+            guard FileManager.default.fileExists(atPath: song.path) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
             }
-            args.append(tracksDir)
             
-            process.arguments = args
-            
-            var env = ProcessInfo.processInfo.environment
-            let customPath = "/Library/Frameworks/Python.framework/Versions/3.15/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-            env["PATH"] = customPath + ":" + (env["PATH"] ?? "")
-            env["PYTHONPATH"] = URL(fileURLWithPath: scriptPath).deletingLastPathComponent().deletingLastPathComponent().path
-            process.environment = env
-            
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = errPipe
+            let resolvedBpm = bpm ?? song.bpm ?? 120.0
+            let resolvedTs = timeSignature ?? song.time_signature ?? "4/4"
             
             do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                if let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
-                   let status = json["status"] as? String, status == "success" {
+                let (left, _, sr) = try loadAudioFileStereo(url: audioUrl)
+                NativeCueDetector.shared.analyze(
+                    left: left,
+                    sampleRate: sr,
+                    bpmHint: resolvedBpm,
+                    timeSignature: resolvedTs
+                ) { result in
+                    guard let result = result else {
+                        DispatchQueue.main.async { completion(nil) }
+                        return
+                    }
+                    
+                    self.saveCues(
+                        songId: songId,
+                        cues: result.cues,
+                        bpm: resolvedBpm,
+                        timeSignature: resolvedTs,
+                        autoAnalysis: "done"
+                    )
+                    
                     self.lock.lock()
                     self.songsCache.removeValue(forKey: songId)
                     self.lock.unlock()
@@ -550,19 +676,10 @@ final class NativeSongLibrary {
                     DispatchQueue.main.async {
                         completion(reindexed)
                     }
-                    return
-                } else {
-                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errStr = String(data: errData, encoding: .utf8) ?? ""
-                    let outStr = String(data: outData, encoding: .utf8) ?? ""
-                    print("[NativeSongLibrary] AI reprocess output: \(outStr), err: \(errStr)")
                 }
             } catch {
-                print("[NativeSongLibrary] Error executing AI reprocess: \(error)")
-            }
-            
-            DispatchQueue.main.async {
-                completion(nil)
+                print("[NativeSongLibrary] Error decoding audio for cue detection: \(error)")
+                DispatchQueue.main.async { completion(nil) }
             }
         }
     }
