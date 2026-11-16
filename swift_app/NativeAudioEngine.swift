@@ -192,6 +192,32 @@ final class NativeAudioEngine {
         // 3. Renderização precisa de áudio com suporte a Salto Quantizado, Loop e Fade
         var curPos = posFrame
         
+        // Parâmetros de Lead-In para Loop calculados uma vez por buffer (alta performance e zero alocação)
+        var loopInfo: (start: Int64, end: Int64, leadInAt: Int64, cueIdx: Int)? = nil
+        if loopActive && guideLeadIn == nil && queuedJump == nil {
+            let targetLoop = loopCueIdx ?? currentCueIdx
+            if targetLoop >= 0 && targetLoop < cues.count {
+                let currStart = Int64(round(cues[targetLoop].time * sampleRate))
+                let currEnd = (targetLoop + 1 < cues.count) ? Int64(round(cues[targetLoop + 1].time * sampleRate)) : totalFrames
+                
+                // O Lead-In e a repetição de loop só operam quando o cursor estiver estritamente dentro da seção alvo
+                if curPos >= currStart && curPos < currEnd {
+                    let targetTime = cues[targetLoop].time
+                    let endSec = Double(currEnd) / (sampleRate > 0 ? sampleRate : 44100.0)
+                    let activeDur = max(0.0, endSec - targetTime)
+                    let secPerBeat = bpm > 0 ? (60.0 / bpm) : 0.5
+                    let beatsPerBar = Double(max(1, timeSignature.0)) * (4.0 / Double(max(1, timeSignature.1)))
+                    let secPerBar = secPerBeat * beatsPerBar
+                    let leadInBars = max(0.0, guideLeadInBars)
+                    let desiredLeadInSec = min(leadInBars * secPerBar, targetTime)
+                    let leadInSec = (activeDur > 0 && leadInBars > 0.0) ? min(desiredLeadInSec, activeDur * 0.5) : 0.0
+                    let leadInFrames = Int64(leadInSec * sampleRate)
+                    let leadInAt = currEnd - leadInFrames
+                    loopInfo = (start: currStart, end: currEnd, leadInAt: leadInAt, cueIdx: targetLoop)
+                }
+            }
+        }
+        
         for i in 0..<frameCount {
             var sampleL: Float = 0.0
             var sampleR: Float = 0.0
@@ -263,25 +289,51 @@ final class NativeAudioEngine {
                     }
                 }
             }
-            // C. Repetição da seção (Loop 1x ou Infinito) se ativo
-            else if loopActive {
-                let targetLoop = loopCueIdx ?? currentCueIdx
-                if targetLoop >= 0 && targetLoop < cues.count {
-                    let currStart = Int64(cues[targetLoop].time * sampleRate)
-                    let currEnd = (targetLoop + 1 < cues.count) ? Int64(cues[targetLoop + 1].time * sampleRate) : totalFrames
-                    if curPos >= currEnd {
-                        curPos = currStart
-                        currentCueIdx = targetLoop
-                        if !loopInfinite {
-                            loopActive = false
-                            loopCueIdx = nil
-                        }
+            // C. Repetição da seção (Loop 1x ou Infinito) se ativo com Lead-In de Voz Guia antecipado
+            else if let loop = loopInfo {
+                let framesLeft = loop.end - curPos
+                let leadInPos = loop.start - framesLeft
+                let minLeadInFrames = Int64(0.25 * sampleRate)
+                
+                if guideLeadInBars > 0.0 && curPos >= loop.leadInAt && framesLeft > minLeadInFrames && leadInPos >= 0 && leadInPos < loop.start - 512 {
+                    // Ativa o Lead-In exclusivo no Canal L (Click + Guia da seção sendo repetida)
+                    // enquanto o Canal R continua tocando normalmente até o downbeat do próximo compasso
+                    guideLeadIn = GuideLeadInInfo(
+                        posFrame: leadInPos,
+                        endFrame: loop.start,
+                        targetDownbeatFrame: loop.start,
+                        cueIdx: loop.cueIdx,
+                        isLoop: true
+                    )
+                    loopInfo = nil
+                    
+                    let gFrame = Int(leadInPos)
+                    sampleL = (gFrame < audioLeft.count && gFrame >= 0) ? audioLeft[gFrame] : 0.0
+                    let rFrame = Int(curPos)
+                    sampleR = (rFrame < audioRight.count && rFrame >= 0) ? audioRight[rFrame] : 0.0
+                    curPos += 1
+                } else if curPos >= loop.end {
+                    // Salto direto no tempo 1 caso não haja lead-in anterior (ex: intro no 0:00 ou fim imediato)
+                    curPos = loop.start
+                    currentCueIdx = loop.cueIdx
+                    if !loopInfinite {
+                        loopActive = false
+                        loopCueIdx = nil
                     }
+                    let f = Int(curPos)
+                    sampleL = (f < audioLeft.count && f >= 0) ? audioLeft[f] : 0.0
+                    sampleR = (f < audioRight.count && f >= 0) ? audioRight[f] : 0.0
+                    curPos += 1
+                    let loopedIdx = loop.cueIdx
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onCueJumped?(loopedIdx)
+                    }
+                } else {
+                    let f = Int(curPos)
+                    sampleL = (f < audioLeft.count && f >= 0) ? audioLeft[f] : 0.0
+                    sampleR = (f < audioRight.count && f >= 0) ? audioRight[f] : 0.0
+                    curPos += 1
                 }
-                let f = Int(curPos)
-                sampleL = (f < audioLeft.count && f >= 0) ? audioLeft[f] : 0.0
-                sampleR = (f < audioRight.count && f >= 0) ? audioRight[f] : 0.0
-                curPos += 1
             }
             // D. Reprodução normal
             else {
@@ -363,14 +415,20 @@ final class NativeAudioEngine {
     
     private func updateCurrentCueIdx() {
         guard !cues.isEmpty else { return }
-        let currentSec = Double(posFrame) / sampleRate
+        let currentSec = Double(posFrame) / (sampleRate > 0 ? sampleRate : 44100.0)
+        let tolerance = max(0.025, 2.0 / (sampleRate > 0 ? sampleRate : 44100.0))
+        var found = false
         for (i, cue) in cues.enumerated().reversed() {
-            if currentSec >= cue.time {
+            if currentSec >= (cue.time - tolerance) {
                 if currentCueIdx != i {
                     currentCueIdx = i
                 }
+                found = true
                 break
             }
+        }
+        if !found {
+            currentCueIdx = 0
         }
     }
     
@@ -445,13 +503,13 @@ final class NativeAudioEngine {
         let peaks = NativeSongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 1200)
         self.fullWaveform = peaks
         
-        // Salva na biblioteca e no arquivo .cues.json para que a música nova fique permanentemente salva
+        // Salva na biblioteca e no arquivo .cues.json para que a música nova fique permanentemente salva apenas se o arquivo ainda não existir
         let filename = url.lastPathComponent
         let needsAuto = NativeSongLibrary.shared.needsAutoCueAnalysis(songId: filename)
         
-        // Se a música precisa de auto-análise, não sobrescreve o arquivo no disco com cues genéricas
+        // Se a música já possui arquivo .cues.json no disco, nunca sobrescreve durante o carregamento de reprodução
         let cuesPath = NativeSongLibrary.shared.getTracksDirectory().appendingPathComponent(filename).path + ".cues.json"
-        if !needsAuto || !FileManager.default.fileExists(atPath: cuesPath) {
+        if !FileManager.default.fileExists(atPath: cuesPath) && !resolvedCues.isEmpty {
             NativeSongLibrary.shared.saveCues(
                 songId: filename,
                 cues: resolvedCues,
@@ -563,13 +621,31 @@ final class NativeAudioEngine {
         defer { os_unfair_lock_unlock(lock) }
         guard totalFrames > 0 else { return }
         
-        let target = Int64(seconds * sampleRate)
+        let target = Int64(round(seconds * sampleRate))
         posFrame = max(0, min(target, totalFrames - 1))
         queuedCueIdx = nil
         queuedJump = nil
         guideLeadIn = nil
         midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
         updateCurrentCueIdx()
+    }
+    
+    func updateCues(_ newCues: [CueSection]) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        self.cues = newCues
+        if newCues.isEmpty {
+            self.currentCueIdx = 0
+        } else {
+            self.currentCueIdx = min(self.currentCueIdx, newCues.count - 1)
+        }
+        updateCurrentCueIdx()
+    }
+    
+    func setBpm(_ newBpm: Double) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        self.bpm = newBpm
     }
     
     func applyAutoCues(songId: String, cues: [CueSection]) {
@@ -583,6 +659,7 @@ final class NativeAudioEngine {
         } else {
             self.currentCueIdx = min(self.currentCueIdx, cues.count - 1)
         }
+        updateCurrentCueIdx()
     }
     
     func setTimeSignature(_ tsString: String) {
@@ -606,7 +683,7 @@ final class NativeAudioEngine {
         
         let targetCue = cues[idx]
         let targetTime = targetCue.time
-        let targetFrame = Int64(targetTime * sampleRate)
+        let targetFrame = Int64(round(targetTime * sampleRate))
         
         if !quantize || !isPlaying {
             posFrame = targetFrame
@@ -614,7 +691,7 @@ final class NativeAudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
-            updateCurrentCueIdx()
+            midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
             return
         }
         
@@ -651,10 +728,10 @@ final class NativeAudioEngine {
         let secPerBeat = bpm > 0 ? (60.0 / bpm) : 0.5
         let beatsPerBar = Double(max(1, timeSignature.0)) * (4.0 / Double(max(1, timeSignature.1)))
         let secPerBar = secPerBeat * beatsPerBar
-        let leadInBars = max(0.5, guideLeadInBars)
+        let leadInBars = max(0.0, guideLeadInBars)
         
         let leadInSec: Double
-        if idx == activeIdx + 1 {
+        if idx == activeIdx + 1 || leadInBars <= 0.0 {
             leadInSec = 0.0
         } else {
             let maxAvail = max(0.0, targetTime)
@@ -675,7 +752,7 @@ final class NativeAudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
-            updateCurrentCueIdx()
+            midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
             return
         } else if curSec >= transitionSec && leadInSec > 0.0 {
             let leadInStart = targetFrame - Int64(timeLeft * sampleRate)
@@ -710,20 +787,26 @@ final class NativeAudioEngine {
         let targetCue = cueIdx ?? currentCueIdx
         
         if infinite {
-            if loopActive && loopInfinite && (cueIdx == nil || loopCueIdx == cueIdx) {
+            if loopActive && loopInfinite && (cueIdx == nil ? (loopCueIdx == nil || loopCueIdx == targetCue) : loopCueIdx == cueIdx) {
                 loopActive = false
                 loopInfinite = false
                 loopCueIdx = nil
+                if guideLeadIn?.isLoop == true {
+                    guideLeadIn = nil
+                }
             } else {
                 loopActive = true
                 loopInfinite = true
                 loopCueIdx = targetCue
             }
         } else {
-            if loopActive && !loopInfinite && (cueIdx == nil || loopCueIdx == cueIdx) {
+            if loopActive && !loopInfinite && (cueIdx == nil ? (loopCueIdx == nil || loopCueIdx == targetCue) : loopCueIdx == cueIdx) {
                 loopActive = false
                 loopInfinite = false
                 loopCueIdx = nil
+                if guideLeadIn?.isLoop == true {
+                    guideLeadIn = nil
+                }
             } else {
                 loopActive = true
                 loopInfinite = false

@@ -99,10 +99,17 @@ final class NativeSongLibrary {
         
         // 1. Tenta carregar diretamente do banco de dados SQLite nativo
         if let fromDb = NativeDatabase.shared.getSong(id: entry) {
+            var song = fromDb
+            // Autoridade estrita do BPM explícito no nome do arquivo: se o arquivo contiver BPM explícito
+            // e o banco estiver com valor discrepante (ex: 125 devido a clique em colcheia em faixa de 62,5bpm), reconcilia imediatamente.
+            if let fileBpm = extractBpmFromFilename(entry), song.bpm != fileBpm {
+                song.bpm = fileBpm
+                NativeDatabase.shared.saveSong(item: song)
+            }
             lock.lock()
-            songsCache[entry] = fromDb
+            songsCache[entry] = song
             lock.unlock()
-            return fromDb
+            return song
         }
         
         let filePath = directory.appendingPathComponent(entry).path
@@ -147,6 +154,14 @@ final class NativeSongLibrary {
         fullWaveform = [Double](repeating: 0.15, count: 400)
         cleanName = resolveSongDisplayName(name: cleanName, timeSignature: timeSignature, isMetronome: isMetronome)
         
+        var guideLeadIn: Double? = nil
+        let cuesPath = directory.appendingPathComponent(entry).path + ".cues.json"
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let gli = json["guide_lead_in"] as? Double {
+            guideLeadIn = gli
+        }
+        
         let item = SongItem(
             id: entry,
             name: cleanName,
@@ -164,7 +179,8 @@ final class NativeSongLibrary {
             is_metronome: isMetronome,
             subdivide: subdivide,
             subdivision: subdivision,
-            auto_analysis: "pending"
+            auto_analysis: "pending",
+            guide_lead_in: guideLeadIn
         )
         
         // Salva no SQLite
@@ -226,7 +242,8 @@ final class NativeSongLibrary {
         bpm: Double? = nil,
         timeSignature: String? = nil,
         fullWaveform: [Double]? = nil,
-        autoAnalysis: String? = nil
+        autoAnalysis: String? = nil,
+        guideLeadIn: Double? = nil
     ) {
         NativeDatabase.shared.saveCues(
             songId: songId,
@@ -234,7 +251,8 @@ final class NativeSongLibrary {
             bpm: bpm,
             timeSignature: timeSignature,
             fullWaveform: fullWaveform,
-            autoAnalysis: autoAnalysis
+            autoAnalysis: autoAnalysis,
+            guideLeadIn: guideLeadIn
         )
         
         // Atualiza ou cria o arquivo .cues.json para persistência e compatibilidade
@@ -260,9 +278,18 @@ final class NativeSongLibrary {
         if let ts = timeSignature { payload["time_signature"] = ts }
         if let wf = fullWaveform { payload["full_waveform"] = wf }
         if let aa = autoAnalysis { payload["auto_analysis"] = aa }
+        if let gli = guideLeadIn { payload["guide_lead_in"] = gli }
         
         if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
             try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
+            
+            // Se a música possuir caminho próprio em outro diretório, salva também seu .cues.json adjacente
+            if let songItem = getSong(id: songId), !songItem.path.isEmpty {
+                let altCuesPath = songItem.path + ".cues.json"
+                if altCuesPath != cuesPath {
+                    try? jsonData.write(to: URL(fileURLWithPath: altCuesPath))
+                }
+            }
         }
         
         // Atualiza cache em memória
@@ -273,7 +300,16 @@ final class NativeSongLibrary {
             if let ts = timeSignature { cached.time_signature = ts }
             if let wf = fullWaveform { cached.full_waveform = wf }
             if let aa = autoAnalysis { cached.auto_analysis = aa }
+            if let gli = guideLeadIn { cached.guide_lead_in = gli }
             songsCache[songId] = cached
+        } else if var item = NativeDatabase.shared.getSong(id: songId) {
+            item.cues = cues
+            if let b = bpm { item.bpm = b }
+            if let ts = timeSignature { item.time_signature = ts }
+            if let wf = fullWaveform { item.full_waveform = wf }
+            if let aa = autoAnalysis { item.auto_analysis = aa }
+            if let gli = guideLeadIn { item.guide_lead_in = gli }
+            songsCache[songId] = item
         }
         lock.unlock()
     }
@@ -364,12 +400,15 @@ final class NativeSongLibrary {
             self.analyzingSongIds.remove(songId)
             self.lock.unlock()
             
+            let peaks = !right.isEmpty ? self.computeWaveformPeaks(from: right, targetPeaks: 1200) : nil
+            
             guard let res = result else {
                 self.saveCues(
                     songId: songId,
                     cues: templateCues,
                     bpm: bpm >= 30.0 ? bpm : 120.0,
                     timeSignature: timeSignature,
+                    fullWaveform: peaks,
                     autoAnalysis: "failed"
                 )
                 DispatchQueue.main.async {
@@ -405,6 +444,7 @@ final class NativeSongLibrary {
                     cues: res.cues,
                     bpm: finalBpm,
                     timeSignature: detectedTs,
+                    fullWaveform: peaks,
                     autoAnalysis: "done"
                 )
                 DispatchQueue.main.async {
@@ -416,6 +456,7 @@ final class NativeSongLibrary {
                     cues: currentSavedCues,
                     bpm: finalBpm,
                     timeSignature: detectedTs,
+                    fullWaveform: peaks,
                     autoAnalysis: "done"
                 )
             }
@@ -732,19 +773,25 @@ final class NativeSongLibrary {
                         finalBpm = 120.0
                     }
                     
+                    let peaks = self.computeWaveformPeaks(from: right, targetPeaks: 1200)
                     self.saveCues(
                         songId: songId,
                         cues: result.cues,
                         bpm: finalBpm,
                         timeSignature: finalTs,
-                        autoAnalysis: "done"
+                        fullWaveform: peaks,
+                        autoAnalysis: "done",
+                        guideLeadIn: song.guide_lead_in
                     )
                     
                     self.lock.lock()
                     self.songsCache.removeValue(forKey: songId)
                     self.lock.unlock()
                     
-                    let reindexed = self.getSong(id: songId)
+                    var reindexed = self.getSong(id: songId)
+                    if reindexed != nil && (reindexed!.full_waveform == nil || reindexed!.full_waveform!.isEmpty) {
+                        reindexed?.full_waveform = peaks
+                    }
                     DispatchQueue.main.async {
                         completion(reindexed)
                     }

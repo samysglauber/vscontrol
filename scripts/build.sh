@@ -44,6 +44,10 @@ if [ -f "swift_app/whisper/whisper-cli" ]; then
     chmod +x "VS Control.app/Contents/Resources/whisper-cli"
 fi
 
+if [ -f "swift_app/whisper/models/ggml-base.bin" ]; then
+    cp "swift_app/whisper/models/ggml-base.bin" "VS Control.app/Contents/Resources/models/ggml-base.bin"
+fi
+
 if [ -f "swift_app/whisper/models/ggml-tiny.bin" ]; then
     cp "swift_app/whisper/models/ggml-tiny.bin" "VS Control.app/Contents/Resources/models/ggml-tiny.bin"
 fi

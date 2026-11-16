@@ -42,45 +42,47 @@ struct CueSection: Identifiable, Codable, Hashable {
             }
             return "Pt"
         }
+        // Extrai dinamicamente qualquer número presente no nome da seção
+        let extractedNumber: String? = {
+            if let match = raw.range(of: #"\d+"#, options: .regularExpression) {
+                return String(raw[match])
+            }
+            return nil
+        }()
+        
         if upper.contains("INTRO") {
+            if let n = extractedNumber { return "I\(n)" }
             return "I"
         }
         if upper.contains("PRE") || upper.contains("PRÉ") {
-            if upper.contains("2") { return "P2" }
+            if let n = extractedNumber { return "P\(n)" }
             return "Pc"
         }
         if upper.contains("POST") || upper.contains("PÓS") || upper.contains("POS") {
-            for n in ["2", "3"] {
-                if upper.contains(n) { return "Po\(n)" }
-            }
+            if let n = extractedNumber { return "Po\(n)" }
             return "Po"
         }
         if upper.contains("CHORUS") || upper.contains("REFRÃO") || upper.contains("REFRAO") {
-            for n in ["2", "3", "4"] {
-                if upper.contains(n) { return "C\(n)" }
-            }
+            if let n = extractedNumber { return "C\(n)" }
             return "C"
         }
         if upper.contains("VERSE") || upper.contains("VERSO") {
-            for n in ["1", "2", "3", "4", "5", "6"] {
-                if upper.contains(n) { return "V\(n)" }
-            }
+            if let n = extractedNumber { return "V\(n)" }
             return "V"
         }
         if upper.contains("BRIDGE") || upper.contains("PONTE") {
-            for n in ["2", "3"] {
-                if upper.contains(n) { return "B\(n)" }
-            }
+            if let n = extractedNumber { return "B\(n)" }
             return "B"
         }
         if upper.contains("SOLO") {
+            if let n = extractedNumber { return "S\(n)" }
             return "S"
         }
         if upper.contains("VAMP") {
             return "Vp"
         }
         if upper.contains("TAG") {
-            if upper.contains("2") { return "Tg2" }
+            if let n = extractedNumber { return "Tg\(n)" }
             return "Tg"
         }
         if upper.contains("INTERLUDE") || upper.contains("INTERLÚDIO") || upper.contains("INTER") {
@@ -232,11 +234,12 @@ struct SongItem: Identifiable, Codable, Hashable {
     var subdivide: Bool?
     var subdivision: String?
     var auto_analysis: String?
+    var guide_lead_in: Double?
     
     enum CodingKeys: String, CodingKey {
         case id, name, filename, path, bpm, time_signature, default_key
         case full_waveform, has_cover, cover_url, search_query
-        case total_duration, cues, is_metronome, subdivide, subdivision, auto_analysis
+        case total_duration, cues, is_metronome, subdivide, subdivision, auto_analysis, guide_lead_in
     }
     
     init(
@@ -256,7 +259,8 @@ struct SongItem: Identifiable, Codable, Hashable {
         is_metronome: Bool? = nil,
         subdivide: Bool? = nil,
         subdivision: String? = nil,
-        auto_analysis: String? = nil
+        auto_analysis: String? = nil,
+        guide_lead_in: Double? = nil
     ) {
         self.id = id
         self.name = resolveSongDisplayName(name: name, timeSignature: time_signature, isMetronome: is_metronome)
@@ -275,6 +279,7 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.subdivide = subdivide
         self.subdivision = subdivision
         self.auto_analysis = auto_analysis
+        self.guide_lead_in = guide_lead_in
     }
     
     init(from decoder: Decoder) throws {
@@ -298,6 +303,7 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.subdivide = try container.decodeIfPresent(Bool.self, forKey: .subdivide)
         self.subdivision = try container.decodeIfPresent(String.self, forKey: .subdivision)
         self.auto_analysis = try container.decodeIfPresent(String.self, forKey: .auto_analysis)
+        self.guide_lead_in = try container.decodeIfPresent(Double.self, forKey: .guide_lead_in)
         
         self.name = resolveSongDisplayName(name: rawName, timeSignature: ts, isMetronome: isMetro)
     }
@@ -527,6 +533,16 @@ struct CachedSongData: Codable {
     var totalSeconds: Double
     var cues: [CueSection]
     var waveform: [Double]
+    var guideLeadIn: Double? = 1.0
+    
+    init(bpm: Double, timeSignature: String, totalSeconds: Double, cues: [CueSection], waveform: [Double], guideLeadIn: Double? = 1.0) {
+        self.bpm = bpm
+        self.timeSignature = timeSignature
+        self.totalSeconds = totalSeconds
+        self.cues = cues
+        self.waveform = waveform
+        self.guideLeadIn = guideLeadIn
+    }
 }
 
 struct AudioDeviceItem: Identifiable, Codable {
@@ -602,8 +618,16 @@ class PlaybackState: ObservableObject {
     var songCache: [String: CachedSongData] = [:]
     
     func getOrLoadSongData(for song: SongItem, fallbackCues: [CueSection]? = nil) -> CachedSongData? {
+        let fileBpm = extractBpmFromFilename(song.filename) ?? extractBpmFromFilename(song.id)
+
         // 1. Memória RAM (0.00 ms)
         if let c = songCache[song.id], !c.cues.isEmpty, !c.waveform.isEmpty, c.totalSeconds > 0 {
+            if let fb = fileBpm, c.bpm != fb {
+                var updated = c
+                updated.bpm = fb
+                songCache[song.id] = updated
+                return updated
+            }
             return c
         }
         
@@ -614,12 +638,14 @@ class PlaybackState: ObservableObject {
             let matchedWf = match.waveform ?? match.song.full_waveform
             let matchedDur = match.totalDuration ?? match.song.total_duration
             if !isGeneric, let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
+                let leadIn = match.song.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
                 let data = CachedSongData(
-                    bpm: match.song.bpm ?? 120.0,
+                    bpm: fileBpm ?? match.song.bpm ?? 120.0,
                     timeSignature: match.song.time_signature ?? "4/4",
                     totalSeconds: d,
                     cues: cs,
-                    waveform: wf
+                    waveform: wf,
+                    guideLeadIn: leadIn
                 )
                 songCache[song.id] = data
                 return data
@@ -637,7 +663,7 @@ class PlaybackState: ObservableObject {
                let fileData = try? Data(contentsOf: URL(fileURLWithPath: path)),
                let json = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] {
                 
-                let bpmVal = parseBpm(json["bpm"]) ?? (song.bpm ?? 120.0)
+                let bpmVal = fileBpm ?? parseBpm(json["bpm"]) ?? (song.bpm ?? 120.0)
                 let tsVal = (json["time_signature"] as? String) ?? (song.time_signature ?? "4/4")
                 let wf = (json["full_waveform"] as? [Double]) ?? (song.full_waveform ?? [])
                 
@@ -658,35 +684,63 @@ class PlaybackState: ObservableObject {
                     dur = max(lastCue.time + 10.0, lastCue.time + (secPerBeat * beatsPerBar * 4.0))
                 }
                 
+                let leadInVal = (json["guide_lead_in"] as? Double) ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? song.guide_lead_in ?? 1.0
                 let data = CachedSongData(
                     bpm: bpmVal,
                     timeSignature: tsVal,
                     totalSeconds: dur > 0 ? dur : 180.0,
                     cues: cues.isEmpty ? (fallbackCues ?? []) : cues,
-                    waveform: wf
+                    waveform: wf,
+                    guideLeadIn: leadInVal
                 )
                 songCache[song.id] = data
                 return data
             }
         }
         
-        // 4. Cache UserDefaults
-        var localCues: [CueSection] = fallbackCues ?? (song.cues ?? [])
-        if localCues.isEmpty,
-           let cData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
-           let parsed = try? JSONDecoder().decode([CueSection].self, from: cData) {
+        // 4. Banco de Dados SQLite local (~1 ms)
+        if let dbSong = NativeSongLibrary.shared.findSong(byId: song.id) ?? NativeSongLibrary.shared.findSong(byId: song.filename),
+           let dbCues = dbSong.cues, !dbCues.isEmpty {
+            let leadInVal = dbSong.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
+            let data = CachedSongData(
+                bpm: fileBpm ?? dbSong.bpm ?? song.bpm ?? 120.0,
+                timeSignature: dbSong.time_signature ?? song.time_signature ?? "4/4",
+                totalSeconds: (dbSong.total_duration ?? 0) > 0 ? dbSong.total_duration! : 180.0,
+                cues: dbCues,
+                waveform: dbSong.full_waveform ?? [],
+                guideLeadIn: leadInVal
+            )
+            songCache[song.id] = data
+            return data
+        }
+        
+        // 5. Cache UserDefaults local
+        var localCues: [CueSection] = []
+        if let cData = UserDefaults.standard.data(forKey: "saved_cues_\(song.id)"),
+           let parsed = try? JSONDecoder().decode([CueSection].self, from: cData),
+           !parsed.isEmpty {
             localCues = parsed
+        } else if let cData = UserDefaults.standard.data(forKey: "saved_cues_\(song.filename)"),
+                  let parsed = try? JSONDecoder().decode([CueSection].self, from: cData),
+                  !parsed.isEmpty {
+            localCues = parsed
+        } else if let fb = fallbackCues, !fb.isEmpty {
+            localCues = fb
+        } else if let sc = song.cues, !sc.isEmpty {
+            localCues = sc
         }
         let localWf = (UserDefaults.standard.array(forKey: "saved_waveform_\(song.id)") as? [Double]) ?? (song.full_waveform ?? [])
         let localDur = UserDefaults.standard.double(forKey: "saved_duration_\(song.id)")
         let dur = localDur > 0 ? localDur : (song.total_duration ?? (localCues.last.map { $0.time + 15.0 } ?? 180.0))
+        let localLeadIn = (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.filename)") as? Double) ?? song.guide_lead_in ?? 1.0
         
         let data = CachedSongData(
-            bpm: song.bpm ?? 120.0,
+            bpm: fileBpm ?? song.bpm ?? 120.0,
             timeSignature: song.time_signature ?? "4/4",
             totalSeconds: dur,
             cues: localCues,
-            waveform: localWf
+            waveform: localWf,
+            guideLeadIn: localLeadIn
         )
         songCache[song.id] = data
         return data
@@ -751,8 +805,20 @@ class PlaybackState: ObservableObject {
     @Published var loopInfinite: Bool = false
     @Published var loopCueIdx: Int? = nil
     
-    var isLoopOnceActive: Bool { loopActive && !loopInfinite }
-    var isInfiniteActive: Bool { loopActive && loopInfinite }
+    var isLoopOnceActive: Bool {
+        guard loopActive && !loopInfinite else { return false }
+        if let loopCue = loopCueIdx {
+            return loopCue == currentCueIdx
+        }
+        return true
+    }
+    var isInfiniteActive: Bool {
+        guard loopActive && loopInfinite else { return false }
+        if let loopCue = loopCueIdx {
+            return loopCue == currentCueIdx
+        }
+        return true
+    }
     @Published var padActive: Bool = false
     @Published var padKey: String = "D"
     
@@ -826,7 +892,7 @@ class PlaybackState: ObservableObject {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
         }
         if let savedLeadIn = UserDefaults.standard.object(forKey: "saved_guide_lead_in") as? Double {
-            self.guideLeadInBars = savedLeadIn
+            self.guideLeadInBars = (savedLeadIn == 0.5) ? 1.0 : savedLeadIn
         }
         if let savedFolder = UserDefaults.standard.string(forKey: "saved_tracks_folder_path") {
             self.tracksFolderPath = savedFolder
@@ -908,7 +974,7 @@ class PlaybackState: ObservableObject {
                     if let b = detectedBpm {
                         self.bpm = b
                         self.editorBpm = b
-                        NativeAudioEngine.shared.bpm = b
+                        NativeAudioEngine.shared.setBpm(b)
                     }
                     if !self.isSongEditorPresented { self.editorCues = cues }
                     let bpmStr = detectedBpm != nil ? "\(formatBpm(detectedBpm!)) BPM, " : ""
@@ -2033,11 +2099,15 @@ class PlaybackState: ObservableObject {
             self.currentCues = d.cues
             self.fullWaveform = d.waveform
             
+            let leadInVal = d.guideLeadIn ?? songToLoad.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(songToLoad.id)") as? Double) ?? 1.0
+            self.guideLeadInBars = leadInVal
+            
             songToLoad.bpm = d.bpm
             songToLoad.time_signature = d.timeSignature
             songToLoad.cues = d.cues
             songToLoad.total_duration = d.totalSeconds
             songToLoad.full_waveform = d.waveform
+            songToLoad.guide_lead_in = leadInVal
         } else {
             if let libSong = NativeSongLibrary.shared.findSong(byId: song.id) {
                 if songToLoad.bpm == nil { songToLoad.bpm = libSong.bpm }
@@ -2049,6 +2119,7 @@ class PlaybackState: ObservableObject {
                     songToLoad.has_cover = libSong.has_cover
                     songToLoad.cover_url = libSong.cover_url
                 }
+                if songToLoad.guide_lead_in == nil { songToLoad.guide_lead_in = libSong.guide_lead_in }
             }
             if let b = songToLoad.bpm { self.bpm = b }
             if let ts = songToLoad.time_signature { self.timeSignature = ts }
@@ -2056,8 +2127,12 @@ class PlaybackState: ObservableObject {
             if let dur = songToLoad.total_duration, dur > 0 { self.totalSeconds = dur }
             if let wf = songToLoad.full_waveform { self.fullWaveform = wf }
             if let cs = cues ?? songToLoad.cues { self.currentCues = cs; songToLoad.cues = cs }
+            let leadInVal = songToLoad.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(songToLoad.id)") as? Double) ?? 1.0
+            self.guideLeadInBars = leadInVal
+            songToLoad.guide_lead_in = leadInVal
         }
         self.currentSong = songToLoad
+        NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
         
         // Atualiza cache em memória permanente
         self.songCache[song.id] = CachedSongData(
@@ -2065,7 +2140,8 @@ class PlaybackState: ObservableObject {
             timeSignature: self.timeSignature,
             totalSeconds: self.totalSeconds,
             cues: self.currentCues,
-            waveform: self.fullWaveform
+            waveform: self.fullWaveform,
+            guideLeadIn: self.guideLeadInBars
         )
         
         self.triggerScrollToStart()
@@ -2089,19 +2165,23 @@ class PlaybackState: ObservableObject {
                 if self.currentSong?.id == song.id {
                     if !engineCues.isEmpty {
                         self.currentCues = engineCues
+                        self.currentSong?.cues = engineCues
                     }
                     if !engineWaveform.isEmpty {
                         self.fullWaveform = engineWaveform
+                        self.currentSong?.full_waveform = engineWaveform
                     }
                     if engineTot > 0 {
                         self.totalSeconds = engineTot
+                        self.currentSong?.total_duration = engineTot
                     }
                     self.songCache[song.id] = CachedSongData(
                         bpm: self.bpm,
                         timeSignature: self.timeSignature,
                         totalSeconds: self.totalSeconds,
                         cues: self.currentCues,
-                        waveform: self.fullWaveform
+                        waveform: self.fullWaveform,
+                        guideLeadIn: self.guideLeadInBars
                     )
                 }
                 if autoPlay {
@@ -2266,53 +2346,19 @@ class PlaybackState: ObservableObject {
         isSongEditorPresented = true
     }
     
-    func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection]) {
+    func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection], guideLeadIn: Double? = nil) {
         guard let song = currentSong else { return }
         pushUndoSnapshot(description: "Song Editor Edit")
         self.bpm = bpm
         self.timeSignature = timeSignature
         self.currentCues = cues
+        self.editorCues = cues
+        if let gli = guideLeadIn {
+            self.guideLeadInBars = gli
+        }
         self.syncAbleton(bpm: bpm, timeSignature: timeSignature)
-        
-        // 1. Salva imediatamente em UserDefaults local para garantir persistência contínua
-        let encoder = JSONEncoder()
-        if let cuesData = try? encoder.encode(cues) {
-            UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
-            UserDefaults.standard.synchronize()
-        }
-        
-        // Atualiza a música no setlist se estiver presente
-        if let idx = self.setlist.firstIndex(where: { $0.song.id == song.id }) {
-            var updatedSong = self.setlist[idx].song
-            updatedSong.bpm = bpm
-            updatedSong.time_signature = timeSignature
-            self.setlist[idx] = SetlistSong(
-                id: self.setlist[idx].id,
-                song: updatedSong,
-                transitionType: self.setlist[idx].transitionType,
-                cues: cues,
-                totalDuration: self.setlist[idx].totalDuration,
-                waveform: self.setlist[idx].waveform
-            )
-            self.songCache[song.id] = CachedSongData(
-                bpm: bpm,
-                timeSignature: timeSignature,
-                totalSeconds: self.totalSeconds,
-                cues: cues,
-                waveform: self.fullWaveform
-            )
-            self.saveSetlistState()
-        }
-        
-        // Fecha o editor imediatamente com resposta visual ágil
         self.isSongEditorPresented = false
-        
-        NativeSongLibrary.shared.saveCues(
-            songId: song.id,
-            cues: cues,
-            bpm: bpm,
-            timeSignature: timeSignature
-        )
+        self.saveCurrentCues(guideLeadIn: guideLeadIn)
         if let updated = NativeSongLibrary.shared.findSong(byId: song.id) {
             self.currentSong = updated
             if let newCues = updated.cues {
@@ -2320,6 +2366,38 @@ class PlaybackState: ObservableObject {
                 self.editorCues = newCues
             }
         }
+    }
+    
+    func resetSongSections(bpm: Double? = nil, timeSignature: String? = nil) {
+        guard let song = currentSong else { return }
+        pushUndoSnapshot(description: "Clear Section Divisions")
+        
+        let effectiveBpm = bpm ?? self.bpm
+        let effectiveTs = timeSignature ?? self.timeSignature
+        self.bpm = effectiveBpm
+        self.timeSignature = effectiveTs
+        
+        let singleSection = CueSection(
+            id: "cue_0",
+            name: "Intro",
+            time: 0.0,
+            bar: 1.0,
+            color: "#38bdf8",
+            waveform: nil
+        )
+        let newCues = [singleSection]
+        self.currentCues = newCues
+        self.editorCues = newCues
+        self.currentCueIdx = 0
+        self.focusedCueIdx = 0
+        self.queuedCueIdx = nil
+        
+        self.saveCurrentCues()
+        if let updated = NativeSongLibrary.shared.findSong(byId: song.id) {
+            self.currentSong = updated
+        }
+        self.syncAbleton(bpm: effectiveBpm, timeSignature: effectiveTs)
+        self.showUndoFeedback("All section divisions cleared (1 unified section)")
     }
     
     func reprocessWithAI() {
@@ -2352,16 +2430,47 @@ class PlaybackState: ObservableObject {
                 self.currentCues = newCues
                 self.editorCues = newCues
             }
-            if let wf = updated.full_waveform {
+            if let wf = updated.full_waveform, !wf.isEmpty {
                 self.fullWaveform = wf
+            } else if !NativeAudioEngine.shared.fullWaveform.isEmpty {
+                self.fullWaveform = NativeAudioEngine.shared.fullWaveform
             }
-            self.currentSong = updated
-            if let idx = self.setlist.firstIndex(where: { $0.song.id == song.id }) {
-                self.setlist[idx].song = updated
-                self.setlist[idx].cues = updated.cues
-                self.saveSetlistState(writeToDisk: true)
+            var updatedWithLeadIn = updated
+            let leadInVal = updated.guide_lead_in ?? song.guide_lead_in ?? self.guideLeadInBars
+            updatedWithLeadIn.guide_lead_in = leadInVal
+            self.currentSong = updatedWithLeadIn
+            self.guideLeadInBars = leadInVal
+            NativeAudioEngine.shared.guideLeadInBars = leadInVal
+            let cachedData = CachedSongData(
+                bpm: self.bpm,
+                timeSignature: self.timeSignature,
+                totalSeconds: self.totalSeconds,
+                cues: self.currentCues,
+                waveform: self.fullWaveform,
+                guideLeadIn: leadInVal
+            )
+            self.songCache[song.id] = cachedData
+            if !song.filename.isEmpty {
+                self.songCache[song.filename] = cachedData
             }
+            if let cuesData = try? JSONEncoder().encode(self.currentCues) {
+                UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
+                if !song.filename.isEmpty {
+                    UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.filename)")
+                }
+                UserDefaults.standard.synchronize()
+            }
+            for i in 0..<self.setlist.count {
+                if self.setlist[i].song.id == song.id || self.setlist[i].song.filename == song.filename {
+                    self.setlist[i].song = updated
+                    self.setlist[i].cues = updated.cues
+                    self.setlist[i].totalDuration = self.totalSeconds
+                    self.setlist[i].waveform = self.fullWaveform
+                }
+            }
+            self.saveSetlistState(writeToDisk: true)
             NativeAudioEngine.shared.loadSong(updated, crossfade: false)
+            self.syncAudioEngineState()
             self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
         }
     }
@@ -2595,6 +2704,12 @@ class PlaybackState: ObservableObject {
         }
     }
     
+    func syncAudioEngineState() {
+        NativeAudioEngine.shared.updateCues(self.currentCues)
+        NativeAudioEngine.shared.setBpm(self.bpm)
+        NativeAudioEngine.shared.setTimeSignature(self.timeSignature)
+    }
+    
     func adjustSectionDuration(at index: Int, deltaBars: Double) {
         guard index >= 0 && index < currentCues.count else { return }
         guard index + 1 < currentCues.count else {
@@ -2602,33 +2717,54 @@ class PlaybackState: ObservableObject {
             return
         }
         
-        let curDuration = calculateDurationBars(for: index)
-        let nextDuration = calculateDurationBars(for: index + 1)
+        let secPerBar = calculateSecPerBar()
+        let deltaSec = deltaBars * secPerBar
         
-        // Regra: Se for aumentar (+deltaBars), os compassos são tomados APENAS do bloco à direita (index + 1).
-        // Limite máximo: o bloco da direita deve ficar com no mínimo 1 compasso de tempo (>= 1.0).
-        if deltaBars > 0 {
-            if nextDuration - deltaBars < 0.999 { return }
+        let curCue = currentCues[index]
+        let nextCue = currentCues[index + 1]
+        
+        let minBars = 1.0
+        let minSec = max(0.5, secPerBar * 0.90)
+        
+        // Limites estritos para que nem o bloco atual nem o vizinho colapsem
+        let curMinBar = curCue.bar + minBars
+        let curMinTime = curCue.time + minSec
+        
+        let nextMaxBar: Double
+        let nextMaxTime: Double
+        if index + 2 < currentCues.count {
+            nextMaxBar = currentCues[index + 2].bar - minBars
+            nextMaxTime = currentCues[index + 2].time - minSec
+        } else {
+            nextMaxTime = max(curMinTime + minSec, totalSeconds - minSec)
+            nextMaxBar = max(curMinBar + minBars, (nextMaxTime / secPerBar) + 1.0)
         }
         
-        // Se for diminuir (-deltaBars), o bloco atual diminui e o bloco à direita expande para a esquerda.
-        // Limite mínimo: o bloco atual deve ficar com no mínimo 1 compasso de tempo (>= 1.0).
-        if deltaBars < 0 {
-            if curDuration + deltaBars < 0.999 { return }
+        let proposedBar = nextCue.bar + deltaBars
+        let proposedTime = nextCue.time + deltaSec
+        
+        if deltaBars > 0 {
+            // Expandindo o bloco atual: o bloco vizinho à direita (index + 1) encolhe
+            if proposedBar > nextMaxBar || proposedTime > nextMaxTime {
+                showUndoFeedback("Limite atingido: a próxima seção precisa de pelo menos 1 compasso")
+                return
+            }
+        } else if deltaBars < 0 {
+            // Encolhendo o bloco atual: o bloco atual não pode ficar menor que 1 compasso
+            if proposedBar < curMinBar || proposedTime < curMinTime {
+                showUndoFeedback("Limite atingido: a seção precisa de pelo menos 1 compasso")
+                return
+            }
         }
         
         let deltaStr = deltaBars > 0 ? "+\(formatBars(deltaBars))" : "\(formatBars(deltaBars))"
         pushUndoSnapshot(description: "Bar Adjustment (\(deltaStr) bars)")
         
-        let secPerBar = calculateSecPerBar()
-        
-        // Desloca APENAS a fronteira do bloco à direita (index + 1).
-        // Nenhuma outra seção subsequente (index + 2 em diante) é alterada!
-        let newBar = currentCues[index + 1].bar + deltaBars
-        currentCues[index + 1].bar = newBar
-        currentCues[index + 1].time = round(Double(newBar - 1.0) * secPerBar * 100) / 100
+        currentCues[index + 1].bar = proposedBar
+        currentCues[index + 1].time = round(proposedTime * 100.0) / 100.0
         
         saveCurrentCues()
+        showUndoFeedback("Compasso ajustado (\(deltaStr))")
     }
     
     func changeSectionType(at index: Int, newType: String) {
@@ -2652,7 +2788,8 @@ class PlaybackState: ObservableObject {
         // Divide os compassos ao meio com precisão de meio compasso
         let firstHalfBars = max(0.5, round((totalBars / 2.0) * 2.0) / 2.0)
         let splitBar = cur.bar + firstHalfBars
-        let splitTime = round(Double(splitBar - 1.0) * secPerBar * 100) / 100
+        let splitDurationSec = firstHalfBars * secPerBar
+        let splitTime = round((cur.time + splitDurationSec) * 100.0) / 100.0
         
         // Divide os picos de forma de onda do Canal R
         var firstWaveform: [Double]? = nil
@@ -2693,23 +2830,104 @@ class PlaybackState: ObservableObject {
         saveCurrentCues()
     }
     
-    func saveCurrentCues() {
-        guard let song = currentSong else { return }
-        let encoder = JSONEncoder()
+    func saveCurrentCues(guideLeadIn: Double? = nil) {
+        guard var song = currentSong else { return }
         
-        // 1. Salva imediatamente em UserDefaults local para garantir que nunca se perca
-        if let cuesData = try? encoder.encode(currentCues) {
-            UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
-            UserDefaults.standard.synchronize()
+        let effectiveLeadIn = guideLeadIn ?? song.guide_lead_in ?? self.guideLeadInBars
+        self.guideLeadInBars = effectiveLeadIn
+        
+        // 1. Atualiza o objeto currentSong em memória
+        song.bpm = self.bpm
+        song.time_signature = self.timeSignature
+        song.cues = self.currentCues
+        song.full_waveform = self.fullWaveform
+        song.total_duration = self.totalSeconds
+        song.guide_lead_in = effectiveLeadIn
+        self.currentSong = song
+        
+        // 2. Atualiza o cache de ultra-alta velocidade em memória RAM
+        let cachedData = CachedSongData(
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            totalSeconds: self.totalSeconds,
+            cues: self.currentCues,
+            waveform: self.fullWaveform,
+            guideLeadIn: effectiveLeadIn
+        )
+        self.songCache[song.id] = cachedData
+        if !song.filename.isEmpty {
+            self.songCache[song.filename] = cachedData
         }
         
-        // 2. Persiste diretamente no arquivo .cues.json via NativeSongLibrary
+        // 3. Atualiza todas as ocorrências da música no setlist em memória
+        var setlistModified = false
+        for i in 0..<self.setlist.count {
+            if self.setlist[i].song.id == song.id || self.setlist[i].song.filename == song.filename {
+                var updatedSong = self.setlist[i].song
+                updatedSong.bpm = self.bpm
+                updatedSong.time_signature = self.timeSignature
+                updatedSong.cues = self.currentCues
+                updatedSong.guide_lead_in = effectiveLeadIn
+                if !self.fullWaveform.isEmpty {
+                    updatedSong.full_waveform = self.fullWaveform
+                }
+                if self.totalSeconds > 0 {
+                    updatedSong.total_duration = self.totalSeconds
+                }
+                self.setlist[i] = SetlistSong(
+                    id: self.setlist[i].id,
+                    song: updatedSong,
+                    transitionType: self.setlist[i].transitionType,
+                    cues: self.currentCues,
+                    totalDuration: self.totalSeconds > 0 ? self.totalSeconds : self.setlist[i].totalDuration,
+                    waveform: !self.fullWaveform.isEmpty ? self.fullWaveform : self.setlist[i].waveform
+                )
+                setlistModified = true
+            }
+        }
+        
+        // 4. Salva o estado do setlist no UserDefaults e no arquivo ativo em disco (.vset)
+        if setlistModified {
+            self.saveSetlistState(writeToDisk: true)
+        }
+        
+        // 5. Salva imediatamente em UserDefaults para essa música
+        let encoder = JSONEncoder()
+        if let cuesData = try? encoder.encode(self.currentCues) {
+            UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
+            if !song.filename.isEmpty {
+                UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.filename)")
+            }
+        }
+        UserDefaults.standard.set(effectiveLeadIn, forKey: "saved_guide_lead_in_\(song.id)")
+        if !song.filename.isEmpty {
+            UserDefaults.standard.set(effectiveLeadIn, forKey: "saved_guide_lead_in_\(song.filename)")
+        }
+        UserDefaults.standard.synchronize()
+        
+        // 6. Persiste diretamente no SQLite e no arquivo .cues.json via NativeSongLibrary
         NativeSongLibrary.shared.saveCues(
             songId: song.id,
-            cues: currentCues,
-            bpm: bpm,
-            timeSignature: timeSignature
+            cues: self.currentCues,
+            bpm: self.bpm,
+            timeSignature: self.timeSignature,
+            fullWaveform: self.fullWaveform.isEmpty ? nil : self.fullWaveform,
+            guideLeadIn: effectiveLeadIn
         )
+        if !song.filename.isEmpty && song.filename != song.id {
+            NativeSongLibrary.shared.saveCues(
+                songId: song.filename,
+                cues: self.currentCues,
+                bpm: self.bpm,
+                timeSignature: self.timeSignature,
+                fullWaveform: self.fullWaveform.isEmpty ? nil : self.fullWaveform,
+                guideLeadIn: effectiveLeadIn
+            )
+        }
+        
+        // 7. Sincroniza em tempo real com o motor de áudio
+        NativeAudioEngine.shared.guideLeadInBars = effectiveLeadIn
+        syncAudioEngineState()
     }
     
     var canUndo: Bool { !undoStack.isEmpty }
@@ -2811,12 +3029,20 @@ class PlaybackState: ObservableObject {
         case "seek":
             if let sec = (body?["seconds"] as? Double) ?? (body?["time"] as? Double) {
                 engine.seek(seconds: sec)
+                let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : sec
+                self.currentSeconds = curSec
+                self.currentCueIdx = engine.currentCueIdx
             }
         case "trigger_cue":
             let idx = (body?["cue_idx"] as? Int) ?? (body?["cue_index"] as? Int) ?? 0
             let q = (body?["quantize"] as? Bool) ?? true
             engine.triggerCue(idx: idx, quantize: q)
             self.queuedCueIdx = engine.queuedCueIdx
+            if !q || !engine.isPlaying {
+                self.currentCueIdx = engine.currentCueIdx
+                let curSec = engine.sampleRate > 0 ? Double(engine.posFrame) / engine.sampleRate : 0.0
+                self.currentSeconds = curSec
+            }
         case "toggle_loop":
             let isInf = (body?["mode"] as? String == "infinite") || (body?["infinite"] as? Bool ?? false)
             let cIdx = body?["cue_idx"] as? Int
@@ -3046,6 +3272,8 @@ struct PlaybackAppView: View {
                             }
                         } else {
                             // Quando parado: busca para o início exato da seção
+                            state.currentCueIdx = targetIdx
+                            state.currentSeconds = state.currentCues[targetIdx].time
                             state.seekToSeconds(state.currentCues[targetIdx].time)
                             state.triggerCue(idx: targetIdx, quantize: false)
                             state.focusedCueIdx = targetIdx
@@ -3327,22 +3555,6 @@ struct TopBarView: View {
                         Text("/ \(formatTime(state.totalSeconds))")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundColor(.gray)
-                    }
-                    
-                    if state.isAutoAnalyzing {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                                .progressViewStyle(CircularProgressViewStyle(tint: Color.cyan))
-                            Text("IA ANALISANDO...")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.cyan)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.cyan.opacity(0.12))
-                        .cornerRadius(6)
-                        .transition(.opacity)
                     }
                     
                     Spacer()
@@ -4098,8 +4310,62 @@ struct CoverResultCard: View {
 }
 
 // ==========================================
-// 7. CONTROLADOR E HOOK DE SCROLL HORIZONTAL (ARRASTE COM MOUSE, RODA, TRACKPAD)
+// 7. CONTROLADOR E ANIMADOR DE ZOOM DA TIMELINE (CENTRALIZADO NO PLAYHEAD)
 // ==========================================
+
+final class TimelineZoomAnimator {
+    static let shared = TimelineZoomAnimator()
+    private var timer: Timer?
+    private var startTime: Date = Date()
+    private var duration: TimeInterval = 0.22
+    private var startZoom: Double = 0.0
+    private var targetZoom: Double = 0.0
+    private weak var state: PlaybackState?
+    
+    func animate(to target: Double, state: PlaybackState, duration: TimeInterval = 0.22) {
+        timer?.invalidate()
+        timer = nil
+        
+        self.state = state
+        self.startZoom = state.zoomLevel
+        self.targetZoom = max(0.0, min(1.0, target))
+        self.duration = duration
+        self.startTime = Date()
+        
+        if abs(self.targetZoom - self.startZoom) < 0.005 {
+            state.zoomLevel = self.targetZoom
+            return
+        }
+        
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] tm in
+            guard let self = self, let state = self.state else {
+                tm.invalidate()
+                return
+            }
+            let elapsed = Date().timeIntervalSince(self.startTime)
+            let progress = min(1.0, elapsed / self.duration)
+            
+            // Curva ease-out cubic para transição suave e contínua sem trancos
+            let eased = 1.0 - pow(1.0 - progress, 3.0)
+            let current = self.startZoom + (self.targetZoom - self.startZoom) * eased
+            
+            state.zoomLevel = current
+            
+            if progress >= 1.0 {
+                tm.invalidate()
+                self.timer = nil
+                state.zoomLevel = self.targetZoom
+            }
+        }
+        self.timer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+    
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
 
 class WaveformScrollController {
     static let shared = WaveformScrollController()
@@ -4108,17 +4374,47 @@ class WaveformScrollController {
     var isDragging: Bool = false
     
     func getScrollView() -> NSScrollView? {
+        if let sv = scrollView, sv.window != nil { return sv }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            if let sv = findScrollView(in: window.contentView) {
+                self.scrollView = sv
+                return sv
+            }
+        }
         return scrollView
     }
     
-    /// Centraliza a visualização da timeline no ponteiro vermelho de reprodução durante o zoom
+    private func findScrollView(in view: NSView?) -> NSScrollView? {
+        guard let v = view else { return nil }
+        if let sv = v as? NSScrollView, sv.documentView != nil {
+            if sv.hasHorizontalScroller == false || (sv.documentView?.frame.height ?? 0) >= 150 {
+                return sv
+            }
+        }
+        for sub in v.subviews {
+            if let sv = findScrollView(in: sub) { return sv }
+        }
+        return nil
+    }
+    
+    /// Centraliza a visualização da timeline rigorosamente no ponteiro vermelho (playhead) durante o zoom, em perfeita sincronia frame-a-frame
     func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat) {
         guard let sv = getScrollView() else { return }
+        
         let clip = sv.contentView
         let viewportWidth = clip.bounds.width
         guard viewportWidth > 0 else { return }
         
         let docWidth = max(viewportWidth, totalTrackWidth + 40.0)
+        // Sincroniza a largura física do documentView instantaneamente a cada frame
+        if let docView = sv.documentView {
+            if abs(docView.frame.width - docWidth) > 0.5 {
+                var f = docView.frame
+                f.size.width = docWidth
+                docView.frame = f
+            }
+        }
+        
         let maxOffsetX = max(0, docWidth - viewportWidth)
         guard maxOffsetX > 0 else {
             if clip.bounds.origin.x != 0 {
@@ -4135,7 +4431,7 @@ class WaveformScrollController {
         // Centraliza o ponteiro vermelho exatamente na metade da janela visível
         let targetX = max(0, min(maxOffsetX, playheadDocX - (viewportWidth / 2.0)))
         
-        if abs(clip.bounds.origin.x - targetX) > 0.5 {
+        if abs(clip.bounds.origin.x - targetX) > 0.1 {
             var origin = clip.bounds.origin
             origin.x = targetX
             clip.scroll(to: origin)
@@ -4144,6 +4440,7 @@ class WaveformScrollController {
     }
     
     func onDragChanged(translationX: CGFloat) {
+        TimelineZoomAnimator.shared.cancel()
         guard let sv = getScrollView() else { return }
         if !isDragging {
             isDragging = true
@@ -4198,6 +4495,7 @@ struct HorizontalScrollWheelHook: NSViewRepresentable {
     func updateNSView(_ nsView: HorizontalScrollNSView, context: Context) {
         nsView.onUserScrolled = onUserScrolled
         nsView.onZoomChange = onZoomChange
+        nsView.findScrollView()
         if context.coordinator.lastResetTrigger != resetTrigger {
             context.coordinator.lastResetTrigger = resetTrigger
             nsView.scrollToStart()
@@ -4243,6 +4541,13 @@ class HorizontalScrollNSView: NSView {
     }
     
     func findScrollView() {
+        if let sv = self.enclosingScrollView {
+            self.targetScrollView = sv
+            sv.hasHorizontalScroller = false
+            sv.horizontalScroller = nil
+            WaveformScrollController.shared.scrollView = sv
+            return
+        }
         var current: NSView? = self
         while let parent = current?.superview {
             if let sv = parent as? NSScrollView {
@@ -4366,9 +4671,11 @@ struct SpectrogramWaveformView: View {
                         // Hook de Rolagem com Rodinha do Mouse e Trackpad (e Zoom com Option/Pinça)
                         HorizontalScrollWheelHook(
                             onUserScrolled: {
+                                TimelineZoomAnimator.shared.cancel()
                                 lastUserScrollTime = Date()
                             },
                             onZoomChange: { delta in
+                                TimelineZoomAnimator.shared.cancel()
                                 state.zoomLevel = max(0.0, min(1.0, state.zoomLevel + delta))
                             },
                             resetTrigger: state.scrollToStartTrigger
@@ -4421,10 +4728,11 @@ struct SpectrogramWaveformView: View {
                                     .frame(width: 2.5, height: 175)
                                     .shadow(color: Color.red.opacity(0.85), radius: 6)
                                     .offset(x: playheadX)
-                                    .animation(.linear(duration: 0.06), value: playheadX)
+                                    .animation(nil, value: playheadX)
                             }
                         }
                     }
+                    .blur(radius: (state.isAutoAnalyzing || state.isReprocessing) ? 7 : 0)
                     .id(state.currentSong?.id ?? "none")
                     .animation(nil, value: state.currentSong?.id)
                     .frame(height: 195)
@@ -4491,6 +4799,26 @@ struct SpectrogramWaveformView: View {
                         totalTrackWidth: newTotalTrackWidth
                     )
                 }
+                .onChange(of: state.currentSeconds) { _, curSec in
+                    guard state.isPlaying && state.zoomLevel > 0.05 else { return }
+                    guard Date().timeIntervalSince(lastUserScrollTime) > 3.0 else { return }
+                    
+                    if let sv = WaveformScrollController.shared.getScrollView() {
+                        let clip = sv.contentView
+                        let viewportW = clip.bounds.width
+                        let curDocX = 20.0 + CGFloat(curSec) * scale
+                        let relativeX = curDocX - clip.bounds.origin.x
+                        
+                        // Mantém o ponteiro vermelho acompanhado na visão quando tocando em modo com zoom
+                        if relativeX > (viewportW * 0.60) || relativeX < (viewportW * 0.10) {
+                            WaveformScrollController.shared.scrollToPlayhead(
+                                currentSeconds: curSec,
+                                scale: scale,
+                                totalTrackWidth: totalTrackWidth
+                            )
+                        }
+                    }
+                }
             }
         }
         .frame(minHeight: 180, maxHeight: .infinity)
@@ -4503,6 +4831,35 @@ struct SpectrogramWaveformView: View {
         )
         .overlay(
             Group {
+                if state.isAutoAnalyzing || state.isReprocessing {
+                    ZStack {
+                        Color.black.opacity(0.52)
+                        
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(1.2)
+                            Text("Analyzing...")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 6, y: 2)
+                        }
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Color(red: 0.12, green: 0.12, blue: 0.15).opacity(0.92))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                        )
+                        .shadow(color: .black.opacity(0.7), radius: 24, y: 8)
+                    }
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: (state.isAutoAnalyzing || state.isReprocessing))
+                }
+                
                 if let msg = state.undoNotificationMessage {
                     VStack {
                         HStack(spacing: 8) {
@@ -4544,10 +4901,6 @@ struct SpectrogramWaveformView: View {
         let comfortablePxPerSec = CGFloat(65.0 / max(0.5, secPerBar))
         let maxPxPerSec = max(comfortablePxPerSec * 2.2, fitPxPerSec * 3.8)
         
-        if state.zoomLevel <= 0.02 {
-            return fitPxPerSec
-        }
-        
         let t = CGFloat(max(0.0, min(1.0, state.zoomLevel)))
         return fitPxPerSec + (maxPxPerSec - fitPxPerSec) * (t * 0.30)
     }
@@ -4560,7 +4913,7 @@ struct SpectrogramWaveformView: View {
         for i in 0..<count {
             let curTime = state.currentCues[i].time
             let nextTime = (i + 1 < count) ? state.currentCues[i + 1].time : state.totalSeconds
-            let duration = max(0.01, nextTime - curTime)
+            let duration = max(0.5, nextTime - curTime)
             widths.append(CGFloat(duration) * scale)
         }
         
@@ -4616,6 +4969,8 @@ struct SpectrogramWaveformView: View {
             }
             state.triggerCue(idx: idx, quantize: true)
         } else {
+            state.currentCueIdx = idx
+            state.currentSeconds = section.time
             state.seekToSeconds(section.time)
             state.triggerCue(idx: idx, quantize: false)
         }
@@ -5425,9 +5780,7 @@ struct BottomMixerDock: View {
                         return state.zoomLevel >= 0.525
                     }()
                     Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            state.zoomLevel = opt.1
-                        }
+                        TimelineZoomAnimator.shared.animate(to: opt.1, state: state)
                     }) {
                         Text(opt.0)
                             .font(.system(size: 11, weight: isSelected ? .bold : .medium))
@@ -6693,6 +7046,8 @@ struct SongEditorSheetView: View {
     @State private var localBpmText: String = ""
     @State private var localTimeSignature: String = "4/4"
     @State private var localCues: [CueSection] = []
+    @State private var localGuideLeadIn: Double = 1.0
+    @State private var showResetConfirmation: Bool = false
     
     let timeSignatureOptions = ["4/4", "2/4", "3/4", "6/8"]
     
@@ -6887,9 +7242,9 @@ struct SongEditorSheetView: View {
                         Text("GUIDE LEAD-IN")
                             .font(.system(size: 10, weight: .bold, design: .monospaced))
                             .foregroundColor(.gray)
-                        Picker("", selection: $state.guideLeadInBars) {
+                        Picker("", selection: $localGuideLeadIn) {
                             Text("1 Bar").tag(1.0)
-                            Text("½ Bar").tag(0.5)
+                            Text("2 Bars").tag(2.0)
                             Text("Off").tag(0.0)
                         }
                         .pickerStyle(SegmentedPickerStyle())
@@ -6958,6 +7313,74 @@ struct SongEditorSheetView: View {
                 .background(Color.white.opacity(0.04))
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.purple.opacity(0.3), lineWidth: 1))
+                
+                // 4. Card de Zerar Divisões / Limpar Seções (Clear Divisions)
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                colors: [Color.orange.opacity(0.30), Color.red.opacity(0.25)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(Color(red: 1.0, green: 0.6, blue: 0.4))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text("Song Divisions")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text(localCues.count > 1 ? "\(localCues.count) sections" : "1 section")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(localCues.count > 1 ? .cyan : .gray)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(4)
+                        }
+                        
+                        Text(localCues.count > 1
+                             ? "Remove all section cuts and reset the track to a single continuous section."
+                             : "Track has 1 single continuous section (no divisions to clear).")
+                            .font(.system(size: 11))
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        showResetConfirmation = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Clear Divisions")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(localCues.count > 1 ? Color(red: 1.0, green: 0.45, blue: 0.45) : Color.gray)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(localCues.count > 1 ? Color.red.opacity(0.14) : Color.white.opacity(0.04))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(localCues.count > 1 ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(localCues.count <= 1 || state.isReprocessing)
+                    .help("Clear all section markers and keep the song as a single continuous track (Zerar divisões)")
+                }
+                .padding(14)
+                .background(Color.white.opacity(0.04))
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
             .padding(.horizontal, 24)
             .padding(.top, 20)
@@ -6979,7 +7402,7 @@ struct SongEditorSheetView: View {
                 
                 Button(action: {
                     if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
-                        state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues)
+                        state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues, guideLeadIn: localGuideLeadIn)
                         presentationMode.wrappedValue.dismiss()
                     }
                 }) {
@@ -7001,8 +7424,18 @@ struct SongEditorSheetView: View {
             .padding(.bottom, 22)
             .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
-        .frame(width: 660, height: 490)
+        .frame(width: 660, height: 560)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
+        .alert(isPresented: $showResetConfirmation) {
+            Alert(
+                title: Text("Clear All Section Divisions?"),
+                message: Text("Are you sure you want to remove all \(localCues.count) section markers and keep the song as a single continuous track (0:00 to end)?\n\nYou can undo this action at any time with Cmd+Z."),
+                primaryButton: .destructive(Text("Clear Divisions")) {
+                    resetDivisions()
+                },
+                secondaryButton: .cancel(Text("Cancel"))
+            )
+        }
         .sheet(isPresented: $state.isCoverPickerPresented) {
             CoverPickerSheetView(state: state)
         }
@@ -7010,6 +7443,7 @@ struct SongEditorSheetView: View {
             localBpmText = formatBpm(state.bpm)
             localTimeSignature = state.timeSignature
             localCues = state.currentCues
+            localGuideLeadIn = state.currentSong?.guide_lead_in ?? state.guideLeadInBars
         }
         .onChange(of: state.bpm) { _, newBpm in
             localBpmText = formatBpm(newBpm)
@@ -7020,6 +7454,17 @@ struct SongEditorSheetView: View {
         .onChange(of: state.currentCues.count) { _, _ in
             localCues = state.currentCues
         }
+        .onChange(of: state.currentSong?.guide_lead_in) { _, newLeadIn in
+            if let newLeadIn = newLeadIn {
+                localGuideLeadIn = newLeadIn
+            }
+        }
+    }
+    
+    private func resetDivisions() {
+        let currentBpm = Double(localBpmText.replacingOccurrences(of: ",", with: "."))
+        state.resetSongSections(bpm: currentBpm, timeSignature: localTimeSignature)
+        localCues = state.currentCues
     }
     
     private func calculateSecPerBar() -> Double {

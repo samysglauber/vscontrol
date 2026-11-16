@@ -369,20 +369,13 @@ final class NativeCueDetector {
             return nil
         }
 
-        // 7. Grade de compassos: click medido ou BPM do arquivo? A voz guia decide.
+        // 7. Grade de compassos: se temos hint explícito de BPM (nome do arquivo ou usuário), ele é a autoridade máxima
         var bar = barClick
-        let starts = phrases.map { $0.start }.filter { $0 > anchor + 1.2 * barClick }
         if hasHint {
             let beats = Double(num) * (4.0 / Double(den))
             let barHint = (60.0 / bpmHint) * beats
-            if starts.count >= 6 {
-                let rHint = resultant(starts, bar: barHint, anchor: anchor, num: num)
-                let rClick = resultant(starts, bar: barClick, anchor: anchor, num: num)
-                if rHint > rClick + 0.02 { bar = barHint }
-                print(String(format: "[NativeCueDetector] alinhamento da voz: click %.3f, BPM do arquivo %.3f", rClick, rHint))
-            } else if abs(barHint - barClick) < 0.25 * barClick {
-                bar = barHint
-            }
+            bar = barHint
+            print(String(format: "[NativeCueDetector] Usando BPM explícito de %.2f (compasso: %.3fs)", bpmHint, bar))
         }
 
         // 8. Contagem protegida (máximo 2 compassos)
@@ -412,8 +405,8 @@ final class NativeCueDetector {
         let countInEnd = anchor + Double(countInBars) * bar
         let hasCountIn = countInBars >= 1
 
-        // 9. Transcrição e Filtragem com Whisper e Dinâmica
-        var rawCandidates: [(cand: Candidate, label: Label?, isDynamic: Bool)] = []
+        // 9. Transcrição e Filtragem Estrita com Whisper e Dinâmica
+        var rawCandidates: [(cand: Candidate, label: Label)] = []
         for p in phrases {
             if p.start < countInEnd - 0.2 { continue }
             // A guia de voz vem antes do início do trecho: a divisão dos blocos fica 1 compasso após a guia
@@ -422,9 +415,9 @@ final class NativeCueDetector {
             let tc = anchor + Double(sectionBar) * bar
             if tc >= totalDuration - 1.0 { continue }
             
-            // Recorta áudio limpo da frase falada (-0.25s a +0.35s) direto do canal L íntegro (sem entalhes de clique)
-            let a = max(0, Int((p.start - 0.25) * sr))
-            let b = min(left.count, Int((p.end + 0.35) * sr))
+            // Recorta áudio limpo da frase falada (-0.38s a +0.40s) para garantir que sílabas átonas iniciais (como "Pré-") não sejam cortadas
+            let a = max(0, Int((p.start - 0.38) * sr))
+            let b = min(left.count, Int((p.end + 0.40) * sr))
             let slice = left[a..<b]
             
             var label: Label? = nil
@@ -435,41 +428,47 @@ final class NativeCueDetector {
                 label = whisperRes.label
             }
             
-            // Se for aviso de dinâmica ("cresce", "pausa", "segura"), IGNORA como corte de seção!
+            // Se for aviso de dinâmica ("cresce", "pausa", "segura", "com palmas"), IGNORA como corte de seção!
             if isDynamic {
                 print(String(format: "[NativeCueDetector] Aviso de dinâmica ignorado como corte de bloco em %.2fs", tc))
                 continue
             }
             
+            // Fallback com Apple Speech caso o Whisper não tenha mapeado
+            if label == nil {
+                label = recognizeSingleLabel(slice: slice, sr: sr)
+            }
+            
+            // REGRA ABSOLUTA: Apenas Song Sections faladas e verificadas criam cortes de blocos!
+            // Ruídos do clique ([MÚSICA]), contagens internas, respirações e conversas são 100% descartados.
+            guard let validLabel = label else {
+                continue
+            }
+            
             let cand = Candidate(time: tc, start: p.start, end: p.end)
-            rawCandidates.append((cand: cand, label: label, isDynamic: false))
+            rawCandidates.append((cand: cand, label: validLabel))
         }
         
-        // Unificação de seções adjacentes e garantia de duração mínima (mínimo 1.45 compassos)
+        // Unificação de seções adjacentes imediatas (menos de 1.5 compassos de diferença no mesmo anúncio)
         var candidates: [Candidate] = []
-        var labels: [Label?] = []
+        var labels: [Label] = []
         for item in rawCandidates {
-            if let last = candidates.last, abs(item.cand.time - last.time) < 1.45 * bar {
-                candidates[candidates.count - 1].end = max(last.end, item.cand.end)
-                if labels.last == nil && item.label != nil {
-                    labels[labels.count - 1] = item.label
-                }
+            if let last = candidates.last, abs(item.cand.time - last.time) < 1.5 * bar {
                 continue
             }
             candidates.append(item.cand)
             labels.append(item.label)
         }
-        guard !candidates.isEmpty else { return nil }
-
-        // Se alguma seção ficou sem label pelo Whisper, tenta o fallback com Apple Speech
-        for i in 0..<candidates.count {
-            if labels[i] == nil {
-                let a = max(0, Int((candidates[i].start - 0.25) * sr))
-                let b = min(left.count, Int((candidates[i].end + 0.35) * sr))
-                if a < b {
-                    labels[i] = recognizeSingleLabel(slice: left[a..<b], sr: sr)
-                }
-            }
+        
+        // Se a faixa não tiver nenhuma guia falada reconhecida (ex: faixa instrumental só com clique), gera a grade padrão estrutural
+        if candidates.isEmpty {
+            let defaultCues = NativeSongLibrary.shared.generateDefaultCues(
+                totalDuration: totalDuration,
+                bpm: hasHint ? bpmHint : (60.0 * Double(num) * (4.0 / Double(den)) / bar),
+                timeSignature: "\(num)/\(den)"
+            )
+            let gBpm = (60.0 * Double(num) * (4.0 / Double(den)) / bar)
+            return Result(cues: defaultCues, gridBpm: gBpm, clickBpm: gBpm, namedCount: 0, timeSignature: "\(num)/\(den)")
         }
 
         var cues: [CueSection] = []
@@ -483,95 +482,23 @@ final class NativeCueDetector {
         let hasIntro = candidates[0].time > introStart + 0.5 * bar
         if hasIntro { add("Intro", introStart, "#38bdf8") }
 
-        // Mede energia RMS das faixas para classificar musicalmente trechos não nomeados por voz
-        let refTrack = !right.isEmpty ? right : cleaned
-        var cueBoundaries = [0.0]
-        if hasCountIn && candidates[0].time != countInEnd { cueBoundaries.append(countInEnd) }
-        for c in candidates { cueBoundaries.append(c.time) }
-        cueBoundaries.append(totalDuration)
-        cueBoundaries = Array(Set(cueBoundaries)).sorted()
-
-        var sectionEnergies: [Double] = []
-        for idx in 0..<(cueBoundaries.count - 1) {
-            let sF = Int(cueBoundaries[idx] * sr)
-            let eF = min(refTrack.count, Int(cueBoundaries[idx + 1] * sr))
-            var sum = 0.0
-            for k in sF..<eF { sum += Double(refTrack[k] * refTrack[k]) }
-            sectionEnergies.append((sum / Double(max(1, eF - sF))).squareRoot())
-        }
-        let sortedRMS = sectionEnergies.sorted()
-        let medRMS = sortedRMS.isEmpty ? 0.05 : sortedRMS[sortedRMS.count / 2]
-
-        var verseNum = 1
-        var chorusNum = 0
-        var bridgeFound = false
-        var named = 0
-        let totalCands = candidates.count
-
         for (idx, cand) in candidates.enumerated() {
-            if let lab = labels[idx] {
-                // Se a seção for Intro e já adicionamos a Intro inicial, não duplica
-                if lab.base == "Intro" && cues.last?.name == "Intro" {
-                    continue
-                }
-                named += 1
-                var name = lab.base
-                if lab.base == "Verse" {
-                    name = "Verse \(lab.number ?? verseNum)"
-                    verseNum += 1
-                } else if lab.base == "Chorus" {
-                    chorusNum += 1
-                    name = "Chorus" + (lab.number.map { " \($0)" } ?? (chorusNum > 1 ? " \(chorusNum)" : ""))
-                } else if let n = lab.number {
-                    name = "\(lab.base) \(n)"
-                }
-                add(name, cand.time, lab.color)
-            } else {
-                // Classificação Estrutural Musical Inteligente
-                let secIdx = min(sectionEnergies.count - 1, idx + (hasCountIn ? 1 : 0) + (hasIntro ? 1 : 0))
-                let rms = sectionEnergies[secIdx]
-                let isLast = (idx == totalCands - 1)
-
-                let name: String
-                let color: String
-                if isLast && cand.time > totalDuration - (bar * 8) {
-                    name = "Ending"
-                    color = "#64748b"
-                } else if rms > medRMS * 1.20 {
-                    if chorusNum >= 2 && !bridgeFound && Double(idx) > Double(totalCands) * 0.45 {
-                        name = "Bridge"
-                        color = "#f97316"
-                        bridgeFound = true
-                    } else {
-                        chorusNum += 1
-                        name = "Chorus" + (chorusNum > 1 ? " \(chorusNum)" : "")
-                        color = "#ef4444"
-                    }
-                } else if rms > medRMS * 1.05 && idx + 1 < totalCands && sectionEnergies[min(sectionEnergies.count - 1, secIdx + 1)] > medRMS * 1.20 {
-                    name = "Pre-Chorus"
-                    color = "#ec4899"
-                } else if chorusNum >= 1 && !bridgeFound && Double(idx) > Double(totalCands) * 0.50 {
-                    name = "Bridge"
-                    color = "#f97316"
-                    bridgeFound = true
-                } else if rms < medRMS * 0.70 && Double(idx) > Double(totalCands) * 0.25 {
-                    name = "Instrumental"
-                    color = "#10b981"
-                } else {
-                    name = "Verse \(verseNum)"
-                    color = "#a855f7"
-                    verseNum += 1
-                }
-                add(name, cand.time, color)
+            let lab = labels[idx]
+            if lab.base == "Intro" && cues.last?.name == "Intro" {
+                continue
             }
+            var name = lab.base
+            if let n = lab.number {
+                name = "\(lab.base) \(n)"
+            }
+            add(name, cand.time, lab.color)
         }
         if let f = cues.first, f.time > 0.01 { cues[0].time = 0.0 }
 
-        let gridBpm = 60.0 * Double(num) * (4.0 / Double(den)) / bar
+        let gridBpm = hasHint ? bpmHint : (60.0 * Double(num) * (4.0 / Double(den)) / bar)
         let clickBpm = 60.0 * Double(num) * (4.0 / Double(den)) / barClick
-        print(String(format: "[NativeCueDetector] %ld seções (%ld via fala, %ld estrutural) | compasso %@ | grade %.3f BPM | click %.3f BPM",
-                     cues.count, named, cues.count - named, finalTs, gridBpm, clickBpm))
-        return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: named, timeSignature: finalTs)
+        print(String(format: "[NativeCueDetector] %ld seções (100%% via fala da guia) | compasso %@ | grade %.3f BPM | click %.3f BPM", cues.count, finalTs, gridBpm, clickBpm))
+        return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: cues.count, timeSignature: finalTs)
     }
 
     // MARK: - Sinal
@@ -675,12 +602,18 @@ final class NativeCueDetector {
 
     private static func findWhisperModel() -> String? {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appSupportModel = appSupport.appendingPathComponent("VSControl/models/ggml-tiny.bin").path
+        let appSupportBase = appSupport.appendingPathComponent("VSControl/models/ggml-base.bin").path
+        let appSupportTiny = appSupport.appendingPathComponent("VSControl/models/ggml-tiny.bin").path
         let candidates: [String?] = [
+            Bundle.main.resourcePath.map { "\($0)/models/ggml-base.bin" },
+            Bundle.main.bundlePath + "/Contents/Resources/models/ggml-base.bin",
+            appSupportBase,
+            "/Users/samysglauber/Documents/AbletonTracks/swift_app/whisper/models/ggml-base.bin",
             Bundle.main.resourcePath.map { "\($0)/models/ggml-tiny.bin" },
             Bundle.main.bundlePath + "/Contents/Resources/models/ggml-tiny.bin",
-            appSupportModel,
+            appSupportTiny,
             "/Users/samysglauber/Documents/AbletonTracks/swift_app/whisper/models/ggml-tiny.bin",
+            "/tmp/whisper.cpp/models/ggml-base.bin",
             "/tmp/whisper.cpp/models/ggml-tiny.bin"
         ]
         if let found = candidates.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0) }) {
@@ -778,7 +711,7 @@ final class NativeCueDetector {
             "-nt",
             "-ng",
             "-t", "4",
-            "--prompt", "intro verso refrão ponte pré-refrão instrumental solo final cresce pausa segura"
+            "--prompt", "Guia de voz: 1, 2, 3, 4, Intro, Verso, Verso 1, Verso 2, Verso 3, Refrão, Pré-Refrão, Ponte, Instrumental, Solo, Final, Tag, Suave, Cresce, Segura, Toda banda."
         ]
         
         let pipe = Pipe()
@@ -795,16 +728,16 @@ final class NativeCueDetector {
             
             let normalized = rawText.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
             
-            // 1. Verifica se é aviso de dinâmica (NÃO GERA CORTE)
+            // 1. Prioridade absoluta para Seções Estruturais (Song Sections)
+            if let label = mapLabel(rawText) {
+                return (text: rawText, isDynamic: false, label: label)
+            }
+            
+            // 2. Se NÃO for Song Section, verifica se é aviso exclusivo de dinâmica (NÃO GERA CORTE)
             for dyn in dynamicKeywords {
                 if normalized.contains(dyn) {
                     return (text: rawText, isDynamic: true, label: nil)
                 }
-            }
-            
-            // 2. Verifica se é seção estrutural
-            if let label = mapLabel(rawText) {
-                return (text: rawText, isDynamic: false, label: label)
             }
             
             return (text: rawText, isDynamic: false, label: nil)
@@ -902,39 +835,103 @@ final class NativeCueDetector {
         let joined = tokens.joined()
 
         let numberWords: [String: Int] = [
-            "1": 1, "um": 1, "uma": 1, "one": 1, "primeiro": 1,
-            "2": 2, "dois": 2, "duas": 2, "two": 2, "segundo": 2,
-            "3": 3, "tres": 3, "three": 3, "terceiro": 3,
-            "4": 4, "quatro": 4, "four": 4, "quarto": 4
+            "1": 1, "um": 1, "uma": 1, "one": 1,
+            "2": 2, "dois": 2, "duas": 2, "two": 2,
+            "3": 3, "tres": 3, "três": 3, "three": 3,
+            "4": 4, "quatro": 4, "four": 4,
+            "5": 5, "cinco": 5, "five": 5,
+            "6": 6, "seis": 6, "six": 6,
+            "7": 7, "sete": 7, "seven": 7,
+            "8": 8, "oito": 8, "eight": 8
         ]
-        var number: Int? = nil
-        for t in tokens { if let n = numberWords[t] { number = n; break } }
+        let ordinalWords: [String: Int] = [
+            "primeiro": 1, "primeira": 1, "first": 1,
+            "segundo": 2, "segunda": 2, "second": 2,
+            "terceiro": 3, "terceira": 3, "third": 3,
+            "quarto": 4, "quarta": 4, "fourth": 4,
+            "quinto": 5, "quinta": 5, "fifth": 5,
+            "sexto": 6, "sexta": 6, "sixth": 6
+        ]
+
+        // Extrai apenas números EXPLICITAMENTE vinculados à seção falada (ex: "verso 2", "refrão dois", "segundo verso").
+        // Contagens rítmicas antecedentes (ex: "1 2 3 4 verso") NUNCA são tratadas como número da seção.
+        func extractNumber(forKeywords keywords: [String]) -> Int? {
+            guard let secIdx = tokens.firstIndex(where: { token in
+                keywords.contains(token) || keywords.contains(where: { token.contains($0) })
+            }) else {
+                return nil
+            }
+            
+            // 1. Número imediatamente após a seção (ex: "verso 2", "verso dois", "refrão 2", "ponte 3", "verso 1")
+            if secIdx + 1 < tokens.count {
+                let next = tokens[secIdx + 1]
+                if let n = numberWords[next] { return n }
+                if let n = ordinalWords[next] { return n }
+                if (next == "numero" || next == "number") && secIdx + 2 < tokens.count {
+                    let next2 = tokens[secIdx + 2]
+                    if let n = numberWords[next2] { return n }
+                }
+            }
+            
+            // 2. Ordinal imediatamente antes da seção (ex: "segundo verso", "terceiro refrão")
+            if secIdx > 0 {
+                let prev = tokens[secIdx - 1]
+                if let ord = ordinalWords[prev] {
+                    // Ignora se for parte de uma sequência de contagem rítmica anterior
+                    if secIdx > 1 && (numberWords[tokens[secIdx - 2]] != nil || ordinalWords[tokens[secIdx - 2]] != nil) {
+                        return nil
+                    }
+                    return ord
+                }
+            }
+            return nil
+        }
 
         func has(_ words: [String]) -> Bool { tokens.contains { words.contains($0) } }
 
-        if joined.contains("prechorus") || joined.contains("prerefrao") || joined.contains("precoro") || joined.contains("posse") || joined.contains("posrefrao") || joined.contains("derrefram") || joined.contains("pre") || joined.contains("pré") {
+        // Pré-Refrão / Pre-Chorus: exige o prefixo "pré"/"pre" como palavra ou prefixo direto de refrão/coro
+        // Previne falso positivo com palavras que apenas começam com pre, como "prepara", "pressão", "presença"
+        let isPre = joined.contains("prerefrao") || joined.contains("prechorus") || joined.contains("precoro") ||
+                    joined.contains("preefram") || joined.contains("grerefrao") || joined.contains("derrefram") ||
+                    ((tokens.contains("pre") || tokens.contains("pré") || tokens.contains("gre")) && !tokens.contains("prepara") && !tokens.contains("pressao") && !joined.contains("prepara"))
+        if isPre {
             return Label(base: "Pre-Chorus", color: "#ec4899", number: nil)
         }
-        if has(["chorus", "refrao", "refrão", "refra", "coro", "corus", "frao", "frão", "refram", "efrao", "efrão"]) || joined.contains("refrao") || joined.contains("refrão") || joined.contains("refram") {
-            return Label(base: "Chorus", color: "#ef4444", number: number)
+        let chorusKeywords = ["chorus", "refrao", "refrão", "refra", "coro", "corus", "frao", "frão", "refram", "efrao", "efrão", "efram", "efrem", "ifrao", "ifrão", "ifram", "hitfram", "hitfrem", "grafram", "fram", "frem", "hipfilm", "hip-film"]
+        if has(chorusKeywords) || joined.contains("refrao") || joined.contains("refram") || joined.contains("efram") || joined.contains("ifrao") || joined.contains("ifram") || joined.contains("hipfilm") {
+            let num = extractNumber(forKeywords: chorusKeywords)
+            return Label(base: "Chorus", color: "#ef4444", number: num)
         }
-        if has(["verse", "verso", "versos", "berco", "berço", "verco", "derso", "estrofe", "strofe", "primeiro", "segundo", "terceiro"]) || joined.contains("verso") {
-            return Label(base: "Verse", color: "#a855f7", number: number)
+        let verseKeywords = ["verse", "verso", "versos", "berco", "berço", "verco", "derso", "perco", "perço", "estrofe", "strofe"]
+        if has(verseKeywords) || has(["primeiro", "segundo", "terceiro"]) || joined.contains("verso") || joined.contains("perco") {
+            let num = extractNumber(forKeywords: verseKeywords)
+            let finalNum: Int? = {
+                if let n = num { return n }
+                if tokens.count == 1, let ord = ordinalWords[tokens[0]] { return ord }
+                return nil
+            }()
+            return Label(base: "Verse", color: "#a855f7", number: finalNum)
         }
-        if has(["bridge", "ponte", "fonte"]) || joined.contains("ponte") {
-            return Label(base: "Bridge", color: "#f97316", number: number)
+        let bridgeKeywords = ["bridge", "ponte", "fonte"]
+        if has(bridgeKeywords) || joined.contains("ponte") {
+            let num = extractNumber(forKeywords: bridgeKeywords)
+            return Label(base: "Bridge", color: "#f97316", number: num)
         }
         if has(["intro", "entrou", "introducao", "introdução", "quinto", "tentro", "tintro"]) || joined.contains("intro") || joined.contains("tentro") || joined.contains("tintro") {
             return Label(base: "Intro", color: "#38bdf8", number: nil)
         }
-        if has(["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio", "interloujo"]) || joined.contains("interlude") || joined.contains("instrumental") {
-            return Label(base: "Instrumental", color: "#10b981", number: nil)
+        let instKeywords = ["instrumental", "instru", "solo", "interlude", "interludio", "interlúdio", "interloujo"]
+        if has(instKeywords) || joined.contains("interlude") || joined.contains("instrumental") {
+            let num = extractNumber(forKeywords: instKeywords)
+            return Label(base: "Instrumental", color: "#10b981", number: num)
         }
-        if has(["ending", "end", "final", "fim", "outro", "termina", "coda"]) || joined.contains("final") {
+        if has(["ending", "end", "final", "fim", "outro", "termina", "coda", "quinau", "finau"]) || joined.contains("final") {
             return Label(base: "Ending", color: "#64748b", number: nil)
         }
-        if has(["tag", "ministracao", "ministração", "espontaneo", "espontâneo"]) || joined.contains("tag") {
-            return Label(base: "Tag", color: "#eab308", number: nil)
+        let tagKeywords = ["tag", "ministracao", "ministração", "espontaneo", "espontâneo"]
+        if has(tagKeywords) || joined.contains("tag") {
+            let num = extractNumber(forKeywords: tagKeywords)
+            return Label(base: "Tag", color: "#eab308", number: num)
         }
         return nil
     }
