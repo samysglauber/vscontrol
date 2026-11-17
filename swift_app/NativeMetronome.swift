@@ -239,7 +239,7 @@ final class NativeMetronomeGenerator {
         }
         
         // 8. Waveform contínuo
-        let wf = [Double](repeating: 0.35, count: 1200)
+        let wf = [Double](repeating: 0.35, count: 7200)
         
         // 9. Persiste .cues.json
         NativeSongLibrary.shared.saveCues(

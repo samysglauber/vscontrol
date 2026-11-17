@@ -768,7 +768,7 @@ class PlaybackState: ObservableObject {
         if !fullWaveform.isEmpty { return fullWaveform }
         guard !currentCues.isEmpty, totalSeconds > 0 else { return [] }
         
-        let targetTotalPeaks = 1000
+        let targetTotalPeaks = 7200
         var result: [Double] = []
         for (idx, cue) in currentCues.enumerated() {
             let nextT = (idx + 1 < currentCues.count) ? currentCues[idx + 1].time : totalSeconds

@@ -400,7 +400,7 @@ final class NativeSongLibrary {
             self.analyzingSongIds.remove(songId)
             self.lock.unlock()
             
-            let peaks = !right.isEmpty ? self.computeWaveformPeaks(from: right, targetPeaks: 1200) : nil
+            let peaks = !right.isEmpty ? self.computeWaveformPeaks(from: right, targetPeaks: 7200) : nil
             
             guard let res = result else {
                 self.saveCues(
@@ -474,7 +474,7 @@ final class NativeSongLibrary {
     
     // MARK: - Cálculo de Waveform Rápido com Accelerate (vDSP)
     
-    func computeWaveformPeaks(from audioRight: [Float], targetPeaks: Int = 1200) -> [Double] {
+    func computeWaveformPeaks(from audioRight: [Float], targetPeaks: Int = 7200) -> [Double] {
         guard !audioRight.isEmpty else {
             return [Double](repeating: 0.04, count: targetPeaks)
         }
@@ -773,7 +773,7 @@ final class NativeSongLibrary {
                         finalBpm = 120.0
                     }
                     
-                    let peaks = self.computeWaveformPeaks(from: right, targetPeaks: 1200)
+                    let peaks = self.computeWaveformPeaks(from: right, targetPeaks: 7200)
                     self.saveCues(
                         songId: songId,
                         cues: result.cues,
