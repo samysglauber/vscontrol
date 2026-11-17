@@ -64,6 +64,10 @@ final class NativeAudioEngine {
     var guideLeadIn: GuideLeadInInfo? = nil
     var guideLeadInBars: Double = 1.0
     
+    // Sincronização de Disparo de Play/Stop no Ableton Live via OSC
+    // Desativada por padrão a pedido do usuário
+    var enableAbletonPlaySync: Bool = false
+    
     // Loop
     var loopActive: Bool = false
     var loopInfinite: Bool = false
@@ -181,7 +185,9 @@ final class NativeAudioEngine {
             queuedJump = nil
             queuedCueIdx = nil
             midiClock.sendStop()
-            osc.sendStopPlaying()
+            if enableAbletonPlaySync {
+                osc.sendStopPlaying()
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.onPlayStateChanged?(false)
                 self?.onSongEnded?()
@@ -564,7 +570,9 @@ final class NativeAudioEngine {
         if crossfade {
             self.isPlaying = true
             midiClock.sendContinue()
-            osc.sendContinuePlaying()
+            if enableAbletonPlaySync {
+                osc.sendContinuePlaying()
+            }
         }
     }
     
@@ -579,7 +587,9 @@ final class NativeAudioEngine {
         isPlaying = true
         
         midiClock.sendContinue()
-        osc.sendContinuePlaying()
+        if enableAbletonPlaySync {
+            osc.sendContinuePlaying()
+        }
         
         DispatchQueue.main.async { [weak self] in
             self?.onPlayStateChanged?(true)
@@ -596,7 +606,9 @@ final class NativeAudioEngine {
         guideLeadIn = nil
         
         midiClock.sendStop()
-        osc.sendStopPlaying()
+        if enableAbletonPlaySync {
+            osc.sendStopPlaying()
+        }
         
         DispatchQueue.main.async { [weak self] in
             self?.onPlayStateChanged?(false)
@@ -619,7 +631,9 @@ final class NativeAudioEngine {
         
         midiClock.sendStop()
         midiClock.resetTick(currentFrame: 0, sampleRate: sampleRate, bpm: bpm)
-        osc.sendStopPlaying()
+        if enableAbletonPlaySync {
+            osc.sendStopPlaying()
+        }
         
         DispatchQueue.main.async { [weak self] in
             self?.onPlayStateChanged?(false)

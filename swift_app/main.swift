@@ -830,6 +830,12 @@ class PlaybackState: ObservableObject {
     @Published var isFadedOut: Bool = false
     @Published var isFadingIn: Bool = false
     @Published var abletonSynced: Bool = false
+    @Published var enableAbletonPlaySync: Bool = false {
+        didSet {
+            NativeAudioEngine.shared.enableAbletonPlaySync = enableAbletonPlaySync
+            UserDefaults.standard.set(enableAbletonPlaySync, forKey: "saved_enable_ableton_play_sync")
+        }
+    }
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
     @Published var zoomLevel: Double = 0.3 {
@@ -888,6 +894,13 @@ class PlaybackState: ObservableObject {
     
     init() {
         URLCache.shared.removeAllCachedResponses()
+        if let savedSync = UserDefaults.standard.object(forKey: "saved_enable_ableton_play_sync") as? Bool {
+            self.enableAbletonPlaySync = savedSync
+            NativeAudioEngine.shared.enableAbletonPlaySync = savedSync
+        } else {
+            self.enableAbletonPlaySync = false
+            NativeAudioEngine.shared.enableAbletonPlaySync = false
+        }
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
         }
