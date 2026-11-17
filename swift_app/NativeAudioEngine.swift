@@ -111,6 +111,7 @@ final class NativeAudioEngine {
     var onPlayStateChanged: ((Bool) -> Void)?
     var onCueJumped: ((Int) -> Void)?
     var onSongEnded: (() -> Void)?
+    var onAbletonSynced: (() -> Void)?
     
     init() {
         lock.initialize(to: os_unfair_lock())
@@ -408,10 +409,15 @@ final class NativeAudioEngine {
         if !abletonPlayTriggered && isPlaying {
             if curPos >= firstDownbeatFrame {
                 abletonPlayTriggered = true
+                osc.sendTempo(self.bpm)
+                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
                 midiClock.sendContinue()
                 midiClock.resetTick(currentFrame: firstDownbeatFrame, sampleRate: sampleRate, bpm: bpm)
                 if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
+                }
+                DispatchQueue.main.async { [weak self] in
+                    self?.onAbletonSynced?()
                 }
             }
         }
@@ -616,18 +622,21 @@ final class NativeAudioEngine {
         self.firstDownbeatFrame = detectFirstClickFrame()
         self.abletonPlayTriggered = false
         
-        // Sincroniza BPM e fórmula de compasso com o Ableton Live via OSC
-        osc.sendTempo(self.bpm)
-        osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+        // Alinha os ticks internamente sem emitir pacotes até a música de fato tocar o Tempo 1
         midiClock.resetTick(currentFrame: self.firstDownbeatFrame, sampleRate: self.sampleRate, bpm: self.bpm)
         
         if crossfade {
             self.isPlaying = true
             if posFrame >= firstDownbeatFrame {
                 abletonPlayTriggered = true
+                osc.sendTempo(self.bpm)
+                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
                 midiClock.sendContinue()
                 if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
+                }
+                DispatchQueue.main.async { [weak self] in
+                    self?.onAbletonSynced?()
                 }
             } else {
                 abletonPlayTriggered = false
@@ -647,9 +656,14 @@ final class NativeAudioEngine {
         
         if posFrame >= firstDownbeatFrame {
             abletonPlayTriggered = true
+            osc.sendTempo(self.bpm)
+            osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
             midiClock.sendContinue()
             if enableAbletonPlaySync {
                 osc.sendContinuePlaying()
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onAbletonSynced?()
             }
         } else {
             // Aguarda atingir o Tempo 1 (firstDownbeatFrame / início da contagem) no callback do CoreAudio
@@ -746,6 +760,9 @@ final class NativeAudioEngine {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         self.bpm = newBpm
+        if isPlaying && abletonPlayTriggered {
+            osc.sendTempo(newBpm)
+        }
     }
     
     func applyAutoCues(songId: String, cues: [CueSection]) {
@@ -771,7 +788,9 @@ final class NativeAudioEngine {
         } else if let n = Int(parts[0]) {
             self.timeSignature = (n, 4)
         }
-        osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+        if isPlaying && abletonPlayTriggered {
+            osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+        }
     }
     
     // MARK: - Salto Quantizado de Cues (Seamless Jump no Tempo 1 com Voz Guia)

@@ -945,6 +945,16 @@ class PlaybackState: ObservableObject {
             }
         }
         
+        NativeAudioEngine.shared.onAbletonSynced = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.abletonSynced = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    self.abletonSynced = false
+                }
+            }
+        }
+        
         NativeSongLibrary.shared.onAutoAnalysisStarted = { [weak self] songId in
             DispatchQueue.main.async {
                 guard let self = self, self.currentSong?.id == songId else { return }
@@ -2013,6 +2023,7 @@ class PlaybackState: ObservableObject {
     }
     
     func syncAbleton(bpm: Double? = nil, timeSignature: String? = nil) {
+        guard isPlaying && NativeAudioEngine.shared.abletonPlayTriggered else { return }
         if let b = bpm {
             NativeAudioEngine.shared.osc.sendTempo(b)
         }
@@ -2105,7 +2116,6 @@ class PlaybackState: ObservableObject {
         if let d = cached {
             self.bpm = d.bpm
             self.timeSignature = d.timeSignature
-            self.syncAbleton(bpm: d.bpm, timeSignature: d.timeSignature)
             if d.totalSeconds > 0 {
                 self.totalSeconds = d.totalSeconds
             }
@@ -2136,7 +2146,6 @@ class PlaybackState: ObservableObject {
             }
             if let b = songToLoad.bpm { self.bpm = b }
             if let ts = songToLoad.time_signature { self.timeSignature = ts }
-            self.syncAbleton(bpm: songToLoad.bpm, timeSignature: songToLoad.time_signature)
             if let dur = songToLoad.total_duration, dur > 0 { self.totalSeconds = dur }
             if let wf = songToLoad.full_waveform { self.fullWaveform = wf }
             if let cs = cues ?? songToLoad.cues { self.currentCues = cs; songToLoad.cues = cs }
@@ -2160,11 +2169,7 @@ class PlaybackState: ObservableObject {
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
         
-        self.abletonSynced = true
         NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            self.abletonSynced = false
-        }
         
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
