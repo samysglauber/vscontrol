@@ -1,0 +1,3 @@
+# Oculta arquivos legados e utilitários das estatísticas de linguagens do GitHub
+app/** linguist-vendored
+scripts/** linguist-vendored
