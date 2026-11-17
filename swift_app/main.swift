@@ -830,7 +830,7 @@ class PlaybackState: ObservableObject {
     @Published var isFadedOut: Bool = false
     @Published var isFadingIn: Bool = false
     @Published var abletonSynced: Bool = false
-    @Published var enableAbletonPlaySync: Bool = false {
+    @Published var enableAbletonPlaySync: Bool = true {
         didSet {
             NativeAudioEngine.shared.enableAbletonPlaySync = enableAbletonPlaySync
             UserDefaults.standard.set(enableAbletonPlaySync, forKey: "saved_enable_ableton_play_sync")
@@ -898,8 +898,8 @@ class PlaybackState: ObservableObject {
             self.enableAbletonPlaySync = savedSync
             NativeAudioEngine.shared.enableAbletonPlaySync = savedSync
         } else {
-            self.enableAbletonPlaySync = false
-            NativeAudioEngine.shared.enableAbletonPlaySync = false
+            self.enableAbletonPlaySync = true
+            NativeAudioEngine.shared.enableAbletonPlaySync = true
         }
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")

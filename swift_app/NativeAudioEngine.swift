@@ -65,8 +65,11 @@ final class NativeAudioEngine {
     var guideLeadInBars: Double = 1.0
     
     // Sincronização de Disparo de Play/Stop no Ableton Live via OSC
-    // Desativada por padrão a pedido do usuário
-    var enableAbletonPlaySync: Bool = false
+    var enableAbletonPlaySync: Bool = true
+    
+    // Alinhamento de Disparo no Tempo 1 (Primeiro clique da contagem / downbeat)
+    var firstDownbeatFrame: Int64 = 0
+    var abletonPlayTriggered: Bool = false
     
     // Loop
     var loopActive: Bool = false
@@ -184,6 +187,7 @@ final class NativeAudioEngine {
             guideLeadIn = nil
             queuedJump = nil
             queuedCueIdx = nil
+            abletonPlayTriggered = false
             midiClock.sendStop()
             if enableAbletonPlaySync {
                 osc.sendStopPlaying()
@@ -399,7 +403,22 @@ final class NativeAudioEngine {
         }
         
         posFrame = curPos
-        midiClock.processFrames(startFrame: startFrame, nFrames: frameCount, sampleRate: sampleRate, bpm: bpm)
+        
+        // Disparo com Alinhamento no Tempo 1 (Primeiro clique da contagem / downbeat)
+        if !abletonPlayTriggered && isPlaying {
+            if curPos >= firstDownbeatFrame {
+                abletonPlayTriggered = true
+                midiClock.sendContinue()
+                midiClock.resetTick(currentFrame: firstDownbeatFrame, sampleRate: sampleRate, bpm: bpm)
+                if enableAbletonPlaySync {
+                    osc.sendContinuePlaying()
+                }
+            }
+        }
+        
+        if abletonPlayTriggered {
+            midiClock.processFrames(startFrame: max(firstDownbeatFrame, startFrame), nFrames: frameCount, sampleRate: sampleRate, bpm: bpm)
+        }
         updateCurrentCueIdx()
         
         return noErr
@@ -436,6 +455,38 @@ final class NativeAudioEngine {
         if !found {
             currentCueIdx = 0
         }
+    }
+    
+    /// Detecta o frame do primeiro clique audível (Tempo 1 / início da contagem) no Canal L
+    private func detectFirstClickFrame() -> Int64 {
+        guard !audioLeft.isEmpty, sampleRate > 0 else { return 0 }
+        let scanLimit = min(audioLeft.count, Int(3.0 * sampleRate))
+        guard scanLimit > 0 else { return 0 }
+        
+        var maxAmp: Float = 0.0
+        for i in 0..<scanLimit {
+            let val = abs(audioLeft[i])
+            if val > maxAmp { maxAmp = val }
+        }
+        guard maxAmp >= 0.02 else { return 0 }
+        
+        let threshold = max(0.04, maxAmp * 0.25)
+        for i in 0..<scanLimit {
+            if abs(audioLeft[i]) > threshold {
+                let windowEnd = min(scanLimit, i + 200)
+                var peakIdx = i
+                var peakVal = abs(audioLeft[i])
+                for j in i..<windowEnd {
+                    let v = abs(audioLeft[j])
+                    if v > peakVal {
+                        peakVal = v
+                        peakIdx = j
+                    }
+                }
+                return Int64(peakIdx)
+            }
+        }
+        return 0
     }
     
     // MARK: - Controle de Reprodução
@@ -562,16 +613,24 @@ final class NativeAudioEngine {
         self.tracksFadeState = "normal"
         self.tracksFadeFramesLeft = 0
         
+        self.firstDownbeatFrame = detectFirstClickFrame()
+        self.abletonPlayTriggered = false
+        
         // Sincroniza BPM e fórmula de compasso com o Ableton Live via OSC
         osc.sendTempo(self.bpm)
         osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
-        midiClock.resetTick(currentFrame: 0, sampleRate: self.sampleRate, bpm: self.bpm)
+        midiClock.resetTick(currentFrame: self.firstDownbeatFrame, sampleRate: self.sampleRate, bpm: self.bpm)
         
         if crossfade {
             self.isPlaying = true
-            midiClock.sendContinue()
-            if enableAbletonPlaySync {
-                osc.sendContinuePlaying()
+            if posFrame >= firstDownbeatFrame {
+                abletonPlayTriggered = true
+                midiClock.sendContinue()
+                if enableAbletonPlaySync {
+                    osc.sendContinuePlaying()
+                }
+            } else {
+                abletonPlayTriggered = false
             }
         }
     }
@@ -586,9 +645,15 @@ final class NativeAudioEngine {
         tracksFadeFramesLeft = 0
         isPlaying = true
         
-        midiClock.sendContinue()
-        if enableAbletonPlaySync {
-            osc.sendContinuePlaying()
+        if posFrame >= firstDownbeatFrame {
+            abletonPlayTriggered = true
+            midiClock.sendContinue()
+            if enableAbletonPlaySync {
+                osc.sendContinuePlaying()
+            }
+        } else {
+            // Aguarda atingir o Tempo 1 (firstDownbeatFrame / início da contagem) no callback do CoreAudio
+            abletonPlayTriggered = false
         }
         
         DispatchQueue.main.async { [weak self] in
@@ -605,9 +670,14 @@ final class NativeAudioEngine {
         queuedJump = nil
         guideLeadIn = nil
         
-        midiClock.sendStop()
-        if enableAbletonPlaySync {
-            osc.sendStopPlaying()
+        if abletonPlayTriggered {
+            midiClock.sendStop()
+            if enableAbletonPlaySync {
+                osc.sendStopPlaying()
+            }
+        }
+        if posFrame < firstDownbeatFrame {
+            abletonPlayTriggered = false
         }
         
         DispatchQueue.main.async { [weak self] in
@@ -628,6 +698,7 @@ final class NativeAudioEngine {
         loopActive = false
         loopInfinite = false
         loopCueIdx = nil
+        abletonPlayTriggered = false
         
         midiClock.sendStop()
         midiClock.resetTick(currentFrame: 0, sampleRate: sampleRate, bpm: bpm)
@@ -650,6 +721,11 @@ final class NativeAudioEngine {
         queuedCueIdx = nil
         queuedJump = nil
         guideLeadIn = nil
+        if posFrame >= firstDownbeatFrame {
+            abletonPlayTriggered = true
+        } else {
+            abletonPlayTriggered = false
+        }
         midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
         updateCurrentCueIdx()
     }
@@ -715,6 +791,9 @@ final class NativeAudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
+            if posFrame >= firstDownbeatFrame {
+                abletonPlayTriggered = true
+            }
             midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
             return
         }
@@ -776,6 +855,9 @@ final class NativeAudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
+            if posFrame >= firstDownbeatFrame {
+                abletonPlayTriggered = true
+            }
             midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
             return
         } else if curSec >= transitionSec && leadInSec > 0.0 {
