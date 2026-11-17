@@ -1,3 +1,7 @@
 # Oculta arquivos legados e utilitários das estatísticas de linguagens do GitHub
-app/** linguist-vendored
-scripts/** linguist-vendored
+app/** linguist-vendored linguist-detectable=false
+scripts/** linguist-vendored linguist-detectable=false
+*.py linguist-detectable=false
+*.js linguist-detectable=false
+*.css linguist-detectable=false
+*.html linguist-detectable=false
