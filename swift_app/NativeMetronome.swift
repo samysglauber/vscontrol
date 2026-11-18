@@ -101,58 +101,19 @@ final class NativeMetronomeGenerator {
         return result
     }
     
-    // MARK: - Geração de Cues Procedurais
+    // MARK: - Geração de Cues Procedurais (Bloco Único Contínuo / Loop)
     
     func generateMetronomeCues(durationSec: Double = 600.0, bpm: Double = 120.0, timeSignature: String = "4/4") -> [CueSection] {
-        let cleanBpm = max(30.0, min(300.0, bpm))
-        let parts = timeSignature.split(separator: "/")
-        let num = parts.count > 0 ? (Int(parts[0]) ?? 4) : 4
-        let den = parts.count > 1 ? (Int(parts[1]) ?? 4) : 4
-        let beatsPerBar = Double(num) * (4.0 / Double(den))
-        let barSec = (60.0 / cleanBpm) * beatsPerBar
-        let nBars = max(4, Int(durationSec / barSec))
-        
-        var cuesList: [CueSection] = []
-        let countInBars = 2
-        let countInDuration = Double(countInBars) * barSec
-        
-        cuesList.append(CueSection(
-            id: "cue_0",
-            name: "Count-In",
-            time: 0.0,
-            bar: 1,
-            color: "#64748b",
-            waveform: [Double](repeating: 0.1, count: 64)
-        ))
-        
-        cuesList.append(CueSection(
-            id: "cue_1",
-            name: "Intro",
-            time: countInDuration,
-            bar: Double(countInBars + 1),
-            color: sectionColors[0],
-            waveform: [Double](repeating: 0.2, count: 64)
-        ))
-        
-        var currentBar = countInBars + 1 + 8
-        var sectionNum = 1
-        var colorIdx = 1
-        
-        while currentBar <= nBars {
-            let sTime = Double(currentBar - 1) * barSec
-            cuesList.append(CueSection(
-                id: "cue_\(sectionNum + 1)",
-                name: "Section \(sectionNum)",
-                time: sTime,
-                bar: Double(currentBar),
-                color: sectionColors[colorIdx % sectionColors.count],
-                waveform: [Double](repeating: 0.2, count: 64)
-            ))
-            currentBar += 8
-            sectionNum += 1
-            colorIdx += 1
-        }
-        return cuesList
+        return [
+            CueSection(
+                id: "cue_0",
+                name: "Click",
+                time: 0.0,
+                bar: 1.0,
+                color: "#38bdf8",
+                waveform: nil
+            )
+        ]
     }
     
     // MARK: - Geração de Forma de Onda Rítmica Procedural (7200 picos)

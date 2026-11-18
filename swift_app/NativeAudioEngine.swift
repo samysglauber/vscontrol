@@ -644,7 +644,8 @@ final class NativeAudioEngine {
         self.proceduralSubPerBeat = subPerBeat
         
         var resolvedCues = song.cues ?? []
-        if resolvedCues.isEmpty {
+        let hasGenericSlices = resolvedCues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Count-In" })
+        if resolvedCues.isEmpty || hasGenericSlices {
             resolvedCues = NativeMetronomeGenerator.shared.generateMetronomeCues(
                 durationSec: duration,
                 bpm: self.bpm,

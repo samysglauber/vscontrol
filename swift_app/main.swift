@@ -27,6 +27,9 @@ struct CueSection: Identifiable, Codable, Hashable {
         let raw = cleanFullName.trimmingCharacters(in: .whitespacesAndNewlines)
         let upper = raw.uppercased()
         
+        if upper.contains("CLICK") || upper.contains("METRONOME") || upper.contains("METRÔNOMO") || upper.contains("LOOP") {
+            return "Ck"
+        }
         if upper.contains("COUNT") || upper.contains("CONTAGEM") || upper.contains("1234") {
             return "Co"
         }
@@ -623,7 +626,11 @@ class PlaybackState: ObservableObject {
             let bpmVal = song.bpm ?? 120.0
             let tsVal = song.time_signature ?? "4/4"
             let dur = (song.total_duration ?? 0) > 0 ? song.total_duration! : 600.0
-            let cues = (song.cues?.isEmpty == false) ? song.cues! : (fallbackCues ?? NativeMetronomeGenerator.shared.generateMetronomeCues(durationSec: dur, bpm: bpmVal, timeSignature: tsVal))
+            var cues = song.cues ?? fallbackCues ?? []
+            let hasGenericSlices = cues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Count-In" })
+            if cues.isEmpty || hasGenericSlices {
+                cues = NativeMetronomeGenerator.shared.generateMetronomeCues(durationSec: dur, bpm: bpmVal, timeSignature: tsVal)
+            }
             let wf = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : NativeMetronomeGenerator.shared.generateMetronomeWaveform(
                 durationSec: dur,
                 bpm: bpmVal,
