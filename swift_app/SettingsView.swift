@@ -87,22 +87,28 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header Bar (Breadcrumb + Segmented Tabs)
+            // Header Bar (Close Button + Settings Title + Segmented Tabs)
             HStack(spacing: 12) {
-                // Breadcrumb
-                HStack(spacing: 6) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundColor(.white.opacity(0.40))
+                HStack(spacing: 8) {
+                    Button(action: {
+                        SettingsWindowController.shared.window?.close()
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.white.opacity(0.50))
+                            .frame(width: 20, height: 20)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
                     Text("Settings")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.55))
-                    Text("→")
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(.white.opacity(0.30))
-                    Text(selectedTab.rawValue)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.95))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.90))
                 }
                 
                 Spacer()
