@@ -10,6 +10,8 @@ final class NativeMIDIClock {
     private var outPort: MIDIPortRef = 0
     private var lastTick: Int64 = -1
     var isPlaying: Bool = false
+    var isEnabled: Bool = true
+    var offsetMs: Double = 0.0
     
     init(portName: String = "VS Control Sync") {
         MIDIClientCreate(portName as CFString, nil, nil, &client)
@@ -24,6 +26,7 @@ final class NativeMIDIClock {
     }
     
     private func sendBytes(_ bytes: [UInt8]) {
+        guard isEnabled else { return }
         var packetList = MIDIPacketList()
         let cur = MIDIPacketListInit(&packetList)
         _ = MIDIPacketListAdd(&packetList, MemoryLayout<MIDIPacketList>.size, cur, 0, bytes.count, bytes)
@@ -62,15 +65,17 @@ final class NativeMIDIClock {
     }
     
     func processFrames(startFrame: Int64, nFrames: Int, sampleRate: Double, bpm: Double) {
-        guard isPlaying, bpm > 0, sampleRate > 0 else { return }
+        guard isEnabled, isPlaying, bpm > 0, sampleRate > 0 else { return }
+        let offsetFrames = Int64((offsetMs / 1000.0) * sampleRate)
+        let effectiveStart = max(0, startFrame + offsetFrames)
         let framesPerTick = (2.5 * sampleRate) / bpm
         guard framesPerTick > 0 else { return }
         
-        let endFrame = startFrame + Int64(nFrames)
+        let endFrame = effectiveStart + Int64(nFrames)
         let targetTick = Int64(Double(endFrame) / framesPerTick)
         
         if lastTick < 0 {
-            lastTick = Int64(Double(startFrame) / framesPerTick)
+            lastTick = Int64(Double(effectiveStart) / framesPerTick)
         }
         
         if targetTick > lastTick {

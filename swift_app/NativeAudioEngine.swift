@@ -66,6 +66,20 @@ final class NativeAudioEngine {
     
     // Sincronização de Disparo de Play/Stop no Ableton Live via OSC
     var enableAbletonPlaySync: Bool = true
+    var syncTempoToDaw: Bool = true
+    var triggerAtBeat1: Bool = true
+    var enableMidiClock: Bool {
+        get { midiClock.isEnabled }
+        set { midiClock.isEnabled = newValue }
+    }
+    var midiClockOffsetMs: Double {
+        get { midiClock.offsetMs }
+        set { midiClock.offsetMs = newValue }
+    }
+    
+    func updateOscConfig(host: String, port: UInt16) {
+        osc.updateEndpoint(host: host, port: port)
+    }
     
     // Alinhamento de Disparo no Tempo 1 (Primeiro clique da contagem / downbeat)
     var firstDownbeatFrame: Int64 = 0
@@ -407,12 +421,14 @@ final class NativeAudioEngine {
         
         // Disparo com Alinhamento no Tempo 1 (Primeiro clique da contagem / downbeat)
         if !abletonPlayTriggered && isPlaying {
-            if curPos >= firstDownbeatFrame {
+            if !triggerAtBeat1 || curPos >= firstDownbeatFrame {
                 abletonPlayTriggered = true
-                osc.sendTempo(self.bpm)
-                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+                if syncTempoToDaw {
+                    osc.sendTempo(self.bpm)
+                    osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+                }
                 midiClock.sendContinue()
-                midiClock.resetTick(currentFrame: firstDownbeatFrame, sampleRate: sampleRate, bpm: bpm)
+                midiClock.resetTick(currentFrame: triggerAtBeat1 ? firstDownbeatFrame : 0, sampleRate: sampleRate, bpm: bpm)
                 if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
                 }
@@ -423,7 +439,8 @@ final class NativeAudioEngine {
         }
         
         if abletonPlayTriggered {
-            midiClock.processFrames(startFrame: max(firstDownbeatFrame, startFrame), nFrames: frameCount, sampleRate: sampleRate, bpm: bpm)
+            let clkStart = triggerAtBeat1 ? max(firstDownbeatFrame, startFrame) : startFrame
+            midiClock.processFrames(startFrame: clkStart, nFrames: frameCount, sampleRate: sampleRate, bpm: bpm)
         }
         updateCurrentCueIdx()
         
@@ -627,10 +644,12 @@ final class NativeAudioEngine {
         
         if crossfade {
             self.isPlaying = true
-            if posFrame >= firstDownbeatFrame {
+            if !triggerAtBeat1 || posFrame >= firstDownbeatFrame {
                 abletonPlayTriggered = true
-                osc.sendTempo(self.bpm)
-                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+                if syncTempoToDaw {
+                    osc.sendTempo(self.bpm)
+                    osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+                }
                 midiClock.sendContinue()
                 if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
@@ -654,10 +673,12 @@ final class NativeAudioEngine {
         tracksFadeFramesLeft = 0
         isPlaying = true
         
-        if posFrame >= firstDownbeatFrame {
+        if !triggerAtBeat1 || posFrame >= firstDownbeatFrame {
             abletonPlayTriggered = true
-            osc.sendTempo(self.bpm)
-            osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+            if syncTempoToDaw {
+                osc.sendTempo(self.bpm)
+                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+            }
             midiClock.sendContinue()
             if enableAbletonPlaySync {
                 osc.sendContinuePlaying()
@@ -760,7 +781,7 @@ final class NativeAudioEngine {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
         self.bpm = newBpm
-        if isPlaying && abletonPlayTriggered {
+        if syncTempoToDaw && isPlaying && abletonPlayTriggered {
             osc.sendTempo(newBpm)
         }
     }
@@ -788,7 +809,7 @@ final class NativeAudioEngine {
         } else if let n = Int(parts[0]) {
             self.timeSignature = (n, 4)
         }
-        if isPlaying && abletonPlayTriggered {
+        if syncTempoToDaw && isPlaying && abletonPlayTriggered {
             osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
         }
     }

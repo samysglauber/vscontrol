@@ -890,6 +890,122 @@ class PlaybackState: ObservableObject {
         }
     }
     
+    // ==========================================
+    // PREFERÊNCIAS & CONFIGURAÇÕES GLOBAIS (SETTINGS)
+    // ==========================================
+    
+    // Áudio & Palco
+    var availableDevices: [AudioDeviceItem] { devices }
+    func selectOutputDevice(id: Int) {
+        setAudioDevice(id: id)
+    }
+    
+    @Published var autoPanStereo: Bool = true {
+        didSet {
+            UserDefaults.standard.set(autoPanStereo, forKey: "saved_auto_pan_stereo")
+        }
+    }
+    @Published var faderDefaultLevel: Double = 1.0 {
+        didSet {
+            UserDefaults.standard.set(faderDefaultLevel, forKey: "saved_fader_default_level")
+        }
+    }
+    
+    private var sleepActivityToken: NSObjectProtocol? = nil
+    @Published var keepScreenAwake: Bool = true {
+        didSet {
+            UserDefaults.standard.set(keepScreenAwake, forKey: "saved_keep_screen_awake")
+            updateSleepAssertion()
+        }
+    }
+    func updateSleepAssertion() {
+        if keepScreenAwake {
+            if sleepActivityToken == nil {
+                sleepActivityToken = ProcessInfo.processInfo.beginActivity(
+                    options: [.idleDisplaySleepDisabled, .userInitiated],
+                    reason: "VS Control Live Performance"
+                )
+            }
+        } else {
+            if let token = sleepActivityToken {
+                ProcessInfo.processInfo.endActivity(token)
+                sleepActivityToken = nil
+            }
+        }
+    }
+    
+    @Published var defaultFadeDuration: Double = 2.0 {
+        didSet {
+            UserDefaults.standard.set(defaultFadeDuration, forKey: "saved_default_fade_duration")
+        }
+    }
+    @Published var defaultCrossfadeDuration: Double = 4.0 {
+        didSet {
+            UserDefaults.standard.set(defaultCrossfadeDuration, forKey: "saved_default_crossfade_duration")
+        }
+    }
+    @Published var showWaveformGrid: Bool = true {
+        didSet {
+            UserDefaults.standard.set(showWaveformGrid, forKey: "saved_show_waveform_grid")
+        }
+    }
+    @Published var defaultTimelineZoom: String = "fit" {
+        didSet {
+            UserDefaults.standard.set(defaultTimelineZoom, forKey: "saved_default_timeline_zoom")
+        }
+    }
+    
+    // MIDI & DAW Sync
+    @Published var triggerAtBeat1: Bool = true {
+        didSet {
+            NativeAudioEngine.shared.triggerAtBeat1 = triggerAtBeat1
+            UserDefaults.standard.set(triggerAtBeat1, forKey: "saved_trigger_at_beat_1")
+        }
+    }
+    @Published var syncTempoToDaw: Bool = true {
+        didSet {
+            NativeAudioEngine.shared.syncTempoToDaw = syncTempoToDaw
+            UserDefaults.standard.set(syncTempoToDaw, forKey: "saved_sync_tempo_to_daw")
+        }
+    }
+    @Published var oscHost: String = "127.0.0.1" {
+        didSet {
+            UserDefaults.standard.set(oscHost, forKey: "saved_osc_host")
+            NativeAudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
+        }
+    }
+    @Published var oscPort: Int = 11000 {
+        didSet {
+            UserDefaults.standard.set(oscPort, forKey: "saved_osc_port")
+            NativeAudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
+        }
+    }
+    @Published var enableMidiClock: Bool = true {
+        didSet {
+            NativeAudioEngine.shared.enableMidiClock = enableMidiClock
+            UserDefaults.standard.set(enableMidiClock, forKey: "saved_enable_midi_clock")
+        }
+    }
+    @Published var midiClockOffsetMs: Double = 0.0 {
+        didSet {
+            NativeAudioEngine.shared.midiClockOffsetMs = midiClockOffsetMs
+            UserDefaults.standard.set(midiClockOffsetMs, forKey: "saved_midi_clock_offset_ms")
+        }
+    }
+    
+    // Remote
+    @Published var remoteServerPort: Int = 8080 {
+        didSet {
+            UserDefaults.standard.set(remoteServerPort, forKey: "saved_remote_server_port")
+        }
+    }
+    @Published var remoteReadOnlyMode: Bool = false {
+        didSet {
+            NativeRemoteServer.shared.isReadOnlyMode = remoteReadOnlyMode
+            UserDefaults.standard.set(remoteReadOnlyMode, forKey: "saved_remote_read_only_mode")
+        }
+    }
+    
     private var webSocketTask: URLSessionWebSocketTask?
     
     init() {
@@ -916,14 +1032,71 @@ class PlaybackState: ObservableObject {
         if let savedName = UserDefaults.standard.string(forKey: "saved_audio_device_name"), !savedName.isEmpty {
             self.selectedDeviceName = savedName
         }
+        
+        // Carrega Preferências Globais (Settings)
+        if let savedKeepAwake = UserDefaults.standard.object(forKey: "saved_keep_screen_awake") as? Bool {
+            self.keepScreenAwake = savedKeepAwake
+        }
+        self.updateSleepAssertion()
+        
+        if let savedPan = UserDefaults.standard.object(forKey: "saved_auto_pan_stereo") as? Bool {
+            self.autoPanStereo = savedPan
+        }
+        if let savedFader = UserDefaults.standard.object(forKey: "saved_fader_default_level") as? Double {
+            self.faderDefaultLevel = savedFader
+        }
+        if let savedFadeDur = UserDefaults.standard.object(forKey: "saved_default_fade_duration") as? Double {
+            self.defaultFadeDuration = savedFadeDur
+        }
+        if let savedXfadeDur = UserDefaults.standard.object(forKey: "saved_default_crossfade_duration") as? Double {
+            self.defaultCrossfadeDuration = savedXfadeDur
+        }
+        if let savedGrid = UserDefaults.standard.object(forKey: "saved_show_waveform_grid") as? Bool {
+            self.showWaveformGrid = savedGrid
+        }
+        if let savedZoom = UserDefaults.standard.string(forKey: "saved_default_timeline_zoom") {
+            self.defaultTimelineZoom = savedZoom
+        }
+        if let savedBeat1 = UserDefaults.standard.object(forKey: "saved_trigger_at_beat_1") as? Bool {
+            self.triggerAtBeat1 = savedBeat1
+            NativeAudioEngine.shared.triggerAtBeat1 = savedBeat1
+        }
+        if let savedSyncTempo = UserDefaults.standard.object(forKey: "saved_sync_tempo_to_daw") as? Bool {
+            self.syncTempoToDaw = savedSyncTempo
+            NativeAudioEngine.shared.syncTempoToDaw = savedSyncTempo
+        }
+        if let savedHost = UserDefaults.standard.string(forKey: "saved_osc_host") {
+            self.oscHost = savedHost
+        }
+        if let savedPort = UserDefaults.standard.object(forKey: "saved_osc_port") as? Int {
+            self.oscPort = savedPort
+        }
+        NativeAudioEngine.shared.updateOscConfig(host: self.oscHost, port: UInt16(self.oscPort))
+        
+        if let savedMidiClk = UserDefaults.standard.object(forKey: "saved_enable_midi_clock") as? Bool {
+            self.enableMidiClock = savedMidiClk
+            NativeAudioEngine.shared.enableMidiClock = savedMidiClk
+        }
+        if let savedOffset = UserDefaults.standard.object(forKey: "saved_midi_clock_offset_ms") as? Double {
+            self.midiClockOffsetMs = savedOffset
+            NativeAudioEngine.shared.midiClockOffsetMs = savedOffset
+        }
+        if let savedRPort = UserDefaults.standard.object(forKey: "saved_remote_server_port") as? Int {
+            self.remoteServerPort = savedRPort
+        }
+        if let savedRO = UserDefaults.standard.object(forKey: "saved_remote_read_only_mode") as? Bool {
+            self.remoteReadOnlyMode = savedRO
+            NativeRemoteServer.shared.isReadOnlyMode = savedRO
+        }
+        
         // NOTE: Do NOT restore numeric device ID from UserDefaults here.
         // PortAudio device indices change between sessions (USB devices plugged/unplugged).
         // The correct ID will be resolved by name in fetchDevices().
         // Use -1 as sentinel to indicate "not yet resolved".
         self.selectedDeviceId = -1
         
-        // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta 8080
-        NativeRemoteServer.shared.start(port: 8080)
+        // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta configurada
+        NativeRemoteServer.shared.start(port: UInt16(self.remoteServerPort))
         
         // Callbacks de eventos do motor de áudio nativo (Fim de música e Salto quantizado)
         NativeAudioEngine.shared.onSongEnded = { [weak self] in
@@ -7623,6 +7796,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         appMenu.addItem(aboutItem)
         appMenu.addItem(NSMenuItem.separator())
         
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettingsAction), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(NSMenuItem.separator())
+        
         let hideItem = NSMenuItem(title: "Hide VS Control", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(hideItem)
         
@@ -7719,6 +7897,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             clearItem.target = self
             menu.addItem(clearItem)
         }
+    }
+    
+    @objc func openSettingsAction() {
+        SettingsWindowController.shared.show()
     }
     
     @objc func newSetlistAction() {

@@ -14,6 +14,7 @@ public final class NativeRemoteServer {
     
     public var port: UInt16 = 8080
     public private(set) var isRunning = false
+    public var isReadOnlyMode = false
     
     private init() {}
     
@@ -373,6 +374,10 @@ fileprivate final class RemoteConnection {
     }
     
     private func executeAction(action: String, payload: [String: Any]) {
+        if NativeRemoteServer.shared.isReadOnlyMode && action != "status" && action != "ping" {
+            print("⚠️ [NativeRemoteServer] Ação '\(action)' bloqueada: modo Apenas Visualização ativo.")
+            return
+        }
         DispatchQueue.main.async {
             let engine = NativeAudioEngine.shared
             

@@ -6,9 +6,21 @@ import Darwin
 final class NativeOSCClient {
     private var sockfd: Int32 = -1
     private var addr = sockaddr_in()
+    private(set) var host: String = "127.0.0.1"
+    private(set) var port: UInt16 = 11000
     
     init(host: String = "127.0.0.1", port: UInt16 = 11000) {
+        self.host = host
+        self.port = port
         sockfd = socket(AF_INET, SOCK_DGRAM, 0)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        inet_pton(AF_INET, host, &addr.sin_addr)
+    }
+    
+    func updateEndpoint(host: String, port: UInt16) {
+        self.host = host
+        self.port = port
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = port.bigEndian
         inet_pton(AF_INET, host, &addr.sin_addr)

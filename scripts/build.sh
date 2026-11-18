@@ -19,6 +19,7 @@ swiftc -O \
     swift_app/NativeSongLibrary.swift \
     swift_app/NativeMetronome.swift \
     swift_app/NativeRemoteServer.swift \
+    swift_app/SettingsView.swift \
     swift_app/main.swift \
     -o swift_app/VSControl \
     -framework SwiftUI \
