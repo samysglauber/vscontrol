@@ -6,7 +6,7 @@ import Combine
 // ==========================================
 // SOBER / RAYCAST-STYLE FLOATING HUD SETTINGS (680 × 350)
 // Centered over Main App Window • True Borderless HUD • No Traffic Lights
-// Flat List (No Line Dividers) • Toggles on Left • Minimal Esc Footer
+// Flat List (Generous Row Spacing) • Toggles on Left • No Footer • Esc to Close
 // ==========================================
 
 enum SettingsTab: String, CaseIterable, Identifiable {
@@ -87,7 +87,7 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header Bar (Breadcrumb + Segmented Tabs, sem espaço fantasma no topo)
+            // Header Bar (Breadcrumb + Segmented Tabs)
             HStack(spacing: 12) {
                 // Breadcrumb
                 HStack(spacing: 6) {
@@ -140,16 +140,16 @@ struct SettingsView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 20)
+            .padding(.top, 13)
+            .padding(.bottom, 11)
             
             Divider()
                 .background(Color.white.opacity(0.06))
             
-            // Tab Content (Flat List - Sem divisórias fatiando, com respiro confortável)
+            // Tab Content (Flat List com espaçamento confortável entre linhas)
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 20) {
                     switch selectedTab {
                     case .general:
                         GeneralSettingsTabView(state: state)
@@ -161,26 +161,10 @@ struct SettingsView: View {
                         RemoteSettingsTabView(state: state)
                     }
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 13)
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
+                .padding(.bottom, 16)
             }
-            
-            Divider()
-                .background(Color.white.opacity(0.06))
-            
-            // Minimal Footer Bar (Clean Close with Esc)
-            HStack {
-                Spacer()
-                HStack(spacing: 5) {
-                    Text("Close")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.35))
-                    KeyCapBadge(text: "Esc")
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 8)
-            .background(Color.white.opacity(0.015))
         }
         .frame(width: 680, height: 350)
         .background(
@@ -204,26 +188,26 @@ struct SettingsView: View {
 }
 
 // ==========================================
-// 1. GENERAL TAB (Flat List, Toggles on Left)
+// 1. GENERAL TAB (Spacious Rows, Toggles on Left)
 // ==========================================
 
 struct GeneralSettingsTabView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             // Audio & Routing
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "AUDIO & ROUTING")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // Audio Device
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.emeraldOrGreen)
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Audio Device")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -269,13 +253,13 @@ struct GeneralSettingsTabView: View {
                         .menuStyle(BorderlessButtonMenuStyle())
                         .frame(width: 200)
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Auto Pan (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.autoPanStereo)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Auto Pan (L/R)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -289,15 +273,15 @@ struct GeneralSettingsTabView: View {
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.white.opacity(0.35))
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Default Fader Level
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Default Fader Level")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -312,20 +296,20 @@ struct GeneralSettingsTabView: View {
                             selection: $state.faderDefaultLevel
                         )
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // Stage & Playback
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "STAGE & PLAYBACK")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // Keep Screen Awake (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.keepScreenAwake)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Keep Screen Awake")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -336,15 +320,15 @@ struct GeneralSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Auto-Advance
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Auto-Advance")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -359,15 +343,15 @@ struct GeneralSettingsTabView: View {
                             selection: $state.autoAdvance
                         )
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Fade Out Duration
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Fade Out Duration")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -386,15 +370,15 @@ struct GeneralSettingsTabView: View {
                                 .frame(width: 38, alignment: .trailing)
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Crossfade Duration
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Crossfade Duration")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -413,20 +397,20 @@ struct GeneralSettingsTabView: View {
                                 .frame(width: 38, alignment: .trailing)
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // Timeline Display
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "TIMELINE DISPLAY")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // Waveform Grid (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.showWaveformGrid)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Waveform Grid")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -437,15 +421,15 @@ struct GeneralSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Default Timeline Zoom
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Default Timeline Zoom")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -460,7 +444,7 @@ struct GeneralSettingsTabView: View {
                             selection: $state.defaultTimelineZoom
                         )
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
         }
@@ -468,24 +452,24 @@ struct GeneralSettingsTabView: View {
 }
 
 // ==========================================
-// 2. MIDI & SYNC TAB (Flat List, Toggles on Left)
+// 2. MIDI & SYNC TAB (Spacious Rows, Toggles on Left)
 // ==========================================
 
 struct MidiSyncSettingsTabView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             // DAW Playback Sync
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "DAW PLAYBACK SYNC (OSC)")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // DAW Playback Sync (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.enableAbletonPlaySync)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("DAW Playback Sync")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -496,13 +480,13 @@ struct MidiSyncSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Trigger at Beat 1 (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.triggerAtBeat1)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Trigger at Beat 1 (Downbeat)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -513,13 +497,13 @@ struct MidiSyncSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Sync Tempo (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.syncTempoToDaw)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Sync Tempo & Time Signature")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -530,15 +514,15 @@ struct MidiSyncSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // OSC Host & Port
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("OSC Target Host / Port")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -577,20 +561,20 @@ struct MidiSyncSettingsTabView: View {
                                 .frame(width: 60)
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // MIDI Beat Clock
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "MIDI BEAT CLOCK")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // Enable Clock (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: $state.enableMidiClock)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Enable MIDI Beat Clock")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -601,15 +585,15 @@ struct MidiSyncSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Virtual MIDI Port
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Virtual MIDI Port")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -636,15 +620,15 @@ struct MidiSyncSettingsTabView: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Clock Offset Compensation
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Clock Offset Compensation")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -670,15 +654,15 @@ struct MidiSyncSettingsTabView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // Keyboard Shortcuts
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "KEYBOARD SHORTCUTS")
                 
-                VStack(spacing: 4) {
+                VStack(spacing: 5) {
                     SoberShortcutRow(key: "Space", action: "Play / Pause playback")
                     SoberShortcutRow(key: "R", action: "Restart current song from start (0:00)")
                     SoberShortcutRow(key: "I", action: "Toggle Infinite Loop on active section")
@@ -695,7 +679,7 @@ struct MidiSyncSettingsTabView: View {
 }
 
 // ==========================================
-// 3. FILES & LIBRARY TAB (Flat List)
+// 3. FILES & LIBRARY TAB (Spacious Rows)
 // ==========================================
 
 struct FilesLibrarySettingsTabView: View {
@@ -704,18 +688,18 @@ struct FilesLibrarySettingsTabView: View {
     @State private var reindexMessage: String? = nil
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             // Storage Locations
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "STORAGE LOCATIONS")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Tracks Directory (VS)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -732,14 +716,14 @@ struct FilesLibrarySettingsTabView: View {
                         }
                         .buttonStyle(SoberPillButtonStyle())
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Setlists Directory (.vset)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -756,21 +740,21 @@ struct FilesLibrarySettingsTabView: View {
                         }
                         .buttonStyle(SoberPillButtonStyle())
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // Library Maintenance
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "LIBRARY MAINTENANCE")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Reindex Library & Clear Cache")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -797,7 +781,7 @@ struct FilesLibrarySettingsTabView: View {
                         .buttonStyle(SoberPillButtonStyle())
                         .disabled(isReindexing)
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     if let msg = reindexMessage {
                         Text(msg)
@@ -850,7 +834,7 @@ struct FilesLibrarySettingsTabView: View {
 }
 
 // ==========================================
-// 4. REMOTE TAB (Flat List)
+// 4. REMOTE TAB (Spacious Rows)
 // ==========================================
 
 struct RemoteSettingsTabView: View {
@@ -858,15 +842,15 @@ struct RemoteSettingsTabView: View {
     @State private var copied: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             // Remote Server
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "REMOTE CONTROL SERVER")
                 
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     // Server Toggle (Toggle on LEFT)
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             SoberToggle(isOn: Binding(
                                 get: { NativeRemoteServer.shared.isRunning },
                                 set: { enable in
@@ -877,7 +861,7 @@ struct RemoteSettingsTabView: View {
                                     }
                                 }
                             ))
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Remote Control Server")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -888,15 +872,15 @@ struct RemoteSettingsTabView: View {
                         }
                         Spacer()
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                     
                     // Server Port
                     HStack {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Circle()
                                 .fill(Color.white.opacity(0.20))
                                 .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 2.5) {
                                 Text("Server Port")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
@@ -919,12 +903,12 @@ struct RemoteSettingsTabView: View {
                             )
                             .frame(width: 75)
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
             }
             
             // Device Connection & QR Code
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "DEVICE CONNECTION")
                 
                 HStack(spacing: 16) {
@@ -974,19 +958,19 @@ struct RemoteSettingsTabView: View {
                     }
                     Spacer()
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
             }
             
             // Access Permissions
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 SoberSectionHeader(title: "ACCESS PERMISSIONS")
                 
                 HStack {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         Circle()
                             .fill(Color.white.opacity(0.20))
                             .frame(width: 6, height: 6)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Access Permission")
                                 .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
@@ -1001,7 +985,7 @@ struct RemoteSettingsTabView: View {
                         selection: $state.remoteReadOnlyMode
                     )
                 }
-                .padding(.vertical, 3)
+                .padding(.vertical, 5)
             }
         }
     }
@@ -1126,7 +1110,7 @@ struct SoberShortcutRow: View {
             Spacer()
             KeyCapBadge(text: key)
         }
-        .padding(.vertical, 2.5)
+        .padding(.vertical, 3.5)
     }
 }
 
