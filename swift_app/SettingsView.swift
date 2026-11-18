@@ -4,7 +4,7 @@ import Foundation
 import Combine
 
 // ==========================================
-// SETTINGS WINDOW CONTROLLER & VIEW (Cmd + ,)
+// SOBER / RAYCAST-STYLE SETTINGS WINDOW
 // 4 Minimalist Tabs: General, MIDI & Sync, Files & Library, Remote
 // ==========================================
 
@@ -31,7 +31,7 @@ final class SettingsWindowController: NSWindowController {
     
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 660, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -42,7 +42,8 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("VSControlSettingsWindow")
-        window.backgroundColor = NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)
+        // Sober dark graphite matte surface (Raycast / Linear style)
+        window.backgroundColor = NSColor(calibratedRed: 0.13, green: 0.13, blue: 0.14, alpha: 1.0)
         
         let settingsView = SettingsView()
         window.contentView = NSHostingView(rootView: settingsView)
@@ -63,63 +64,73 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Minimalist Integrated Header (aligned with traffic lights)
-            HStack {
-                // Left clearance for native macOS traffic lights
+            // Header Bar (Breadcrumb + Segmented Tab Selector)
+            HStack(spacing: 12) {
+                // Left clearance for macOS traffic lights
                 Spacer()
-                    .frame(width: 68)
+                    .frame(width: 64)
+                
+                // Breadcrumb (Raycast / Linear style)
+                HStack(spacing: 6) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.40))
+                    Text("Settings")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
+                    Text("→")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.white.opacity(0.30))
+                    Text(selectedTab.rawValue)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.90))
+                }
                 
                 Spacer()
                 
-                // Minimalist Segmented Tabs
+                // Sober Segmented Tabs Switcher
                 HStack(spacing: 2) {
                     ForEach(SettingsTab.allCases) { tab in
                         Button(action: {
-                            withAnimation(.easeInOut(duration: 0.15)) {
+                            withAnimation(.easeInOut(duration: 0.12)) {
                                 selectedTab = tab
                             }
                         }) {
                             HStack(spacing: 5) {
                                 Image(systemName: tab.iconName)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.system(size: 10.5, weight: .medium))
                                 Text(tab.rawValue)
-                                    .font(.system(size: 11.5, weight: selectedTab == tab ? .semibold : .regular))
+                                    .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .regular))
                             }
-                            .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.42))
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 5)
+                            .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.45))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4.5)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(selectedTab == tab ? Color.white.opacity(0.12) : Color.clear)
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(selectedTab == tab ? Color.white.opacity(0.13) : Color.clear)
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
                 }
-                .padding(3)
+                .padding(2.5)
                 .background(Color.white.opacity(0.04))
-                .cornerRadius(8)
+                .cornerRadius(7)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
                 )
-                
-                Spacer()
-                
-                // Right balance spacer
-                Spacer()
-                    .frame(width: 68)
             }
             .padding(.horizontal, 16)
             .padding(.top, 13)
             .padding(.bottom, 11)
             
             Divider()
-                .background(Color.white.opacity(0.07))
+                .background(Color.white.opacity(0.06))
             
-            // Active Tab Content
+            // Tab Content Body
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     switch selectedTab {
                     case .general:
                         GeneralSettingsTabView(state: state)
@@ -132,11 +143,51 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.horizontal, 22)
-                .padding(.vertical, 18)
+                .padding(.vertical, 16)
             }
+            
+            Divider()
+                .background(Color.white.opacity(0.06))
+            
+            // Sober Footer Bar (Raycast-style keyboard action hints)
+            HStack(spacing: 16) {
+                HStack(spacing: 5) {
+                    Text("Tabs")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.35))
+                    KeyCapBadge(text: "⌘ 1")
+                    KeyCapBadge(text: "⌘ 2")
+                    KeyCapBadge(text: "⌘ 3")
+                    KeyCapBadge(text: "⌘ 4")
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 5) {
+                    Text("Close")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.35))
+                    KeyCapBadge(text: "Esc")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8.5)
+            .background(Color.white.opacity(0.015))
         }
-        .frame(width: 660, height: 560)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.10))
+        .frame(width: 700, height: 580)
+        .background(Color(red: 0.13, green: 0.13, blue: 0.14))
+        // Keyboard Shortcuts (Tabs 1..4 & Close on Esc)
+        .background(
+            Group {
+                Button("") { selectedTab = .general }.keyboardShortcut("1", modifiers: .command)
+                Button("") { selectedTab = .midiSync }.keyboardShortcut("2", modifiers: .command)
+                Button("") { selectedTab = .files }.keyboardShortcut("3", modifiers: .command)
+                Button("") { selectedTab = .remote }.keyboardShortcut("4", modifiers: .command)
+                Button("") { SettingsWindowController.shared.window?.close() }.keyboardShortcut(.cancelAction)
+            }
+            .opacity(0)
+            .frame(width: 0, height: 0)
+        )
     }
 }
 
@@ -148,188 +199,204 @@ struct GeneralSettingsTabView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             // Audio & Routing
-            SettingsCardView(title: "AUDIO & ROUTING") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "AUDIO & ROUTING") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Audio Device")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Active CoreAudio output device for playback")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Picker("", selection: Binding(
-                            get: { state.selectedDeviceId },
-                            set: { state.selectOutputDevice(id: $0) }
-                        )) {
+                        
+                        Menu {
                             ForEach(state.availableDevices) { dev in
-                                Text(dev.name).tag(dev.id)
+                                Button(action: {
+                                    state.selectOutputDevice(id: dev.id)
+                                }) {
+                                    if dev.id == state.selectedDeviceId {
+                                        Label(dev.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(dev.name)
+                                    }
+                                }
                             }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(state.devices.first(where: { $0.id == state.selectedDeviceId })?.name ?? "Select Device...")
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.35))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4.5)
+                            .background(Color.white.opacity(0.05))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
                         }
-                        .frame(width: 210)
+                        .menuStyle(BorderlessButtonMenuStyle())
+                        .frame(width: 200)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Auto Pan (L/R)")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("L Channel: Click & Guide | R Channel: Multitrack & VS")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.autoPanStereo)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.autoPanStereo)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Default Fader Level")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Initial level for volume faders when loading songs")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Picker("", selection: $state.faderDefaultLevel) {
-                            Text("100% (0 dB)").tag(1.0)
-                            Text("80% (-2 dB)").tag(0.8)
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .frame(width: 170)
+                        SoberSegmentedPicker(
+                            items: [("100% (0 dB)", 1.0), ("80% (-2 dB)", 0.8)],
+                            selection: $state.faderDefaultLevel
+                        )
                     }
                 }
             }
             
             // Stage & Playback
-            SettingsCardView(title: "STAGE & PLAYBACK") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "STAGE & PLAYBACK") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Keep Screen Awake")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Prevents display and system sleep during live performance")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.keepScreenAwake)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.keepScreenAwake)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Auto-Advance")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Action when reaching the end of each setlist song")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Picker("", selection: $state.autoAdvance) {
-                            Text("Stop at End").tag(false)
-                            Text("Next Song").tag(true)
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .frame(width: 200)
+                        SoberSegmentedPicker(
+                            items: [("Stop at End", false), ("Next Song", true)],
+                            selection: $state.autoAdvance
+                        )
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Fade Out Duration")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Smooth attenuation time when fading out tracks")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         HStack(spacing: 8) {
                             Slider(value: $state.defaultFadeDuration, in: 1.0...8.0, step: 0.5)
-                                .frame(width: 120)
+                                .frame(width: 110)
                             Text(String(format: "%.1fs", state.defaultFadeDuration))
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white)
-                                .frame(width: 42, alignment: .trailing)
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.9))
+                                .frame(width: 40, alignment: .trailing)
                         }
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Crossfade Duration")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Overlap transition duration between setlist songs")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         HStack(spacing: 8) {
                             Slider(value: $state.defaultCrossfadeDuration, in: 1.0...10.0, step: 0.5)
-                                .frame(width: 120)
+                                .frame(width: 110)
                             Text(String(format: "%.1fs", state.defaultCrossfadeDuration))
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white)
-                                .frame(width: 42, alignment: .trailing)
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.9))
+                                .frame(width: 40, alignment: .trailing)
                         }
                     }
                 }
             }
             
             // Timeline Display
-            SettingsCardView(title: "TIMELINE DISPLAY") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "TIMELINE DISPLAY") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Waveform Grid")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Display measure and beat grid lines on the waveform")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.showWaveformGrid)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.showWaveformGrid)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Default Timeline Zoom")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Initial zoom level applied when loading any song")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Picker("", selection: $state.defaultTimelineZoom) {
-                            Text("Fit").tag("fit")
-                            Text("1x").tag("1x")
-                            Text("2x").tag("2x")
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .frame(width: 170)
+                        SoberSegmentedPicker(
+                            items: [("Fit", "fit"), ("1x", "1x"), ("2x", "2x")],
+                            selection: $state.defaultTimelineZoom
+                        )
                     }
                 }
             }
@@ -345,152 +412,162 @@ struct MidiSyncSettingsTabView: View {
     @ObservedObject var state: PlaybackState
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             // DAW Playback Sync
-            SettingsCardView(title: "DAW PLAYBACK SYNC (OSC)") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "DAW PLAYBACK SYNC (OSC)") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("DAW Playback Sync")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Send transport commands to start and stop DAW simultaneously")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.enableAbletonPlaySync)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.enableAbletonPlaySync)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Trigger at Beat 1 (Downbeat)")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Wait for the first audible click/downbeat before triggering DAW")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.triggerAtBeat1)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.triggerAtBeat1)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Sync Tempo & Time Signature")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Send song tempo and time signature to DAW upon playback start")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.syncTempoToDaw)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.syncTempoToDaw)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("OSC Target Host / Port")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Destination IP address and UDP port for DAW communication")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             TextField("Host", text: $state.oscHost)
                                 .textFieldStyle(PlainTextFieldStyle())
+                                .font(.system(size: 11.5, design: .monospaced))
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.07))
+                                .padding(.vertical, 4.5)
+                                .background(Color.white.opacity(0.05))
                                 .cornerRadius(6)
-                                .frame(width: 110)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                                )
+                                .frame(width: 105)
                             Text(":")
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.white.opacity(0.35))
                             TextField("Port", value: $state.oscPort, formatter: NumberFormatter())
                                 .textFieldStyle(PlainTextFieldStyle())
+                                .font(.system(size: 11.5, design: .monospaced))
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.07))
+                                .padding(.vertical, 4.5)
+                                .background(Color.white.opacity(0.05))
                                 .cornerRadius(6)
-                                .frame(width: 65)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                                )
+                                .frame(width: 60)
                         }
                     }
                 }
             }
             
             // MIDI Beat Clock
-            SettingsCardView(title: "MIDI BEAT CLOCK") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "MIDI BEAT CLOCK") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Enable MIDI Beat Clock")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Transmit 0xF8 clock pulses at 24 PPQN to sync pedals and hardware")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: $state.enableMidiClock)
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        SoberToggle(isOn: $state.enableMidiClock)
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Virtual MIDI Port")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Virtual CoreMIDI port created automatically in the system")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(Color.green)
-                                .frame(width: 7, height: 7)
+                                .frame(width: 6.5, height: 6.5)
                             Text("VS Control Sync")
-                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.9))
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.85))
                         }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.07))
-                        .cornerRadius(6)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.05))
+                        .cornerRadius(5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                        )
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Clock Offset Compensation")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Fine offset compensation in milliseconds for hardware latency")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         HStack(spacing: 8) {
                             Slider(value: $state.midiClockOffsetMs, in: -100.0...100.0, step: 1.0)
-                                .frame(width: 110)
+                                .frame(width: 105)
                             Text(String(format: "%+.0f ms", state.midiClockOffsetMs))
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundColor(state.midiClockOffsetMs == 0 ? .white.opacity(0.45) : .white)
-                                .frame(width: 58, alignment: .trailing)
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(state.midiClockOffsetMs == 0 ? .white.opacity(0.40) : .white)
+                                .frame(width: 54, alignment: .trailing)
                             if state.midiClockOffsetMs != 0 {
                                 Button("Reset") {
                                     state.midiClockOffsetMs = 0
@@ -504,17 +581,17 @@ struct MidiSyncSettingsTabView: View {
             }
             
             // Keyboard Shortcuts
-            SettingsCardView(title: "KEYBOARD SHORTCUTS") {
-                VStack(spacing: 8) {
-                    ShortcutRowView(key: "Space", action: "Play / Pause playback")
-                    ShortcutRowView(key: "R", action: "Restart current song from start (0:00)")
-                    ShortcutRowView(key: "I", action: "Toggle Infinite Loop on active section")
-                    ShortcutRowView(key: "F", action: "Smooth Fade Out / Fade In tracks")
-                    ShortcutRowView(key: "→", action: "Advance to next song in setlist")
-                    ShortcutRowView(key: "←", action: "Return to previous song in setlist")
-                    ShortcutRowView(key: "1 .. 9", action: "Jump directly to corresponding section")
-                    ShortcutRowView(key: "Cmd + ,", action: "Open Settings window")
-                    ShortcutRowView(key: "Cmd + S", action: "Save current setlist to disk")
+            SoberSectionCard(title: "KEYBOARD SHORTCUTS") {
+                VStack(spacing: 6.5) {
+                    SoberShortcutRow(key: "Space", action: "Play / Pause playback")
+                    SoberShortcutRow(key: "R", action: "Restart current song from start (0:00)")
+                    SoberShortcutRow(key: "I", action: "Toggle Infinite Loop on active section")
+                    SoberShortcutRow(key: "F", action: "Smooth Fade Out / Fade In tracks")
+                    SoberShortcutRow(key: "→", action: "Advance to next song in setlist")
+                    SoberShortcutRow(key: "←", action: "Return to previous song in setlist")
+                    SoberShortcutRow(key: "1 .. 9", action: "Jump directly to corresponding section")
+                    SoberShortcutRow(key: "Cmd + ,", action: "Open Settings window")
+                    SoberShortcutRow(key: "Cmd + S", action: "Save current setlist to disk")
                 }
             }
         }
@@ -531,18 +608,18 @@ struct FilesLibrarySettingsTabView: View {
     @State private var reindexMessage: String? = nil
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             // Storage Locations
-            SettingsCardView(title: "STORAGE LOCATIONS") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "STORAGE LOCATIONS") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Tracks Directory (VS)")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text(NativeSongLibrary.shared.getTracksDirectory().path)
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -550,19 +627,19 @@ struct FilesLibrarySettingsTabView: View {
                         Button("Choose Folder...") {
                             chooseFolder(forTracks: true)
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(SoberPillButtonStyle())
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Setlists Directory (.vset)")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text(getSetlistsFolderPath())
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -570,22 +647,22 @@ struct FilesLibrarySettingsTabView: View {
                         Button("Choose Folder...") {
                             chooseFolder(forTracks: false)
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(SoberPillButtonStyle())
                     }
                 }
             }
             
             // Library Maintenance
-            SettingsCardView(title: "LIBRARY MAINTENANCE") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "LIBRARY MAINTENANCE") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Reindex Library & Clear Cache")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Rescan tracks folder, rebuild metadata and clear audio caches")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         Button(action: {
@@ -594,15 +671,15 @@ struct FilesLibrarySettingsTabView: View {
                             HStack(spacing: 6) {
                                 if isReindexing {
                                     ProgressView()
-                                        .scaleEffect(0.65)
+                                        .scaleEffect(0.60)
                                 } else {
                                     Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 11))
+                                        .font(.system(size: 10.5))
                                 }
                                 Text(isReindexing ? "Indexing..." : "Reindex Now")
                             }
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(SoberPillButtonStyle())
                         .disabled(isReindexing)
                     }
                     
@@ -665,21 +742,21 @@ struct RemoteSettingsTabView: View {
     @State private var copied: Bool = false
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             // Remote Server
-            SettingsCardView(title: "REMOTE CONTROL SERVER") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "REMOTE CONTROL SERVER") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Remote Control Server")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Enable transport and setlist control via web browser on tablet/mobile")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Toggle("", isOn: Binding(
+                        SoberToggle(isOn: Binding(
                             get: { NativeRemoteServer.shared.isRunning },
                             set: { enable in
                                 if enable {
@@ -689,61 +766,65 @@ struct RemoteSettingsTabView: View {
                                 }
                             }
                         ))
-                        .toggleStyle(SwitchToggleStyle(tint: .blue))
                     }
                     
-                    Divider().background(Color.white.opacity(0.05))
+                    Divider().background(Color.white.opacity(0.04))
                     
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Server Port")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("TCP port used for HTTP and WebSocket connections")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
                         TextField("Port", value: $state.remoteServerPort, formatter: NumberFormatter())
                             .textFieldStyle(PlainTextFieldStyle())
+                            .font(.system(size: 11.5, design: .monospaced))
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.07))
+                            .padding(.vertical, 4.5)
+                            .background(Color.white.opacity(0.05))
                             .cornerRadius(6)
-                            .frame(width: 80)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                            )
+                            .frame(width: 75)
                     }
                 }
             }
             
             // Device Connection & QR Code
-            SettingsCardView(title: "DEVICE CONNECTION") {
-                HStack(spacing: 18) {
+            SoberSectionCard(title: "DEVICE CONNECTION") {
+                HStack(spacing: 16) {
                     let urlStr = state.serverUrl
                     if let qrImg = generateQRCodeImage(from: urlStr) {
                         Image(nsImage: qrImg)
                             .interpolation(.none)
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 105, height: 105)
-                            .padding(6)
+                            .frame(width: 95, height: 95)
+                            .padding(5)
                             .background(Color.white)
-                            .cornerRadius(8)
+                            .cornerRadius(7)
                     } else {
                         Rectangle()
                             .fill(Color.white.opacity(0.05))
-                            .frame(width: 105, height: 105)
-                            .cornerRadius(8)
+                            .frame(width: 95, height: 95)
+                            .cornerRadius(7)
                     }
                     
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 7) {
                         Text("Scan QR code with any mobile device connected to the same Wi-Fi network:")
                             .font(.system(size: 11.5))
-                            .foregroundColor(.white.opacity(0.55))
+                            .foregroundColor(.white.opacity(0.50))
                             .lineLimit(2)
                         
                         Text(state.serverUrl)
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white)
+                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.90))
                             .textSelection(.enabled)
                         
                         Button(action: {
@@ -756,35 +837,33 @@ struct RemoteSettingsTabView: View {
                         }) {
                             HStack(spacing: 5) {
                                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                    .font(.system(size: 11))
+                                    .font(.system(size: 10.5))
                                 Text(copied ? "Copied!" : "Copy Link")
                             }
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(SoberPillButtonStyle())
                     }
                     Spacer()
                 }
             }
             
             // Access Permissions
-            SettingsCardView(title: "ACCESS PERMISSIONS") {
-                VStack(spacing: 12) {
+            SoberSectionCard(title: "ACCESS PERMISSIONS") {
+                VStack(spacing: 11) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2.5) {
                             Text("Access Permission")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("Read-Only disables transport and section jump buttons on mobile")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(.white.opacity(0.40))
                         }
                         Spacer()
-                        Picker("", selection: $state.remoteReadOnlyMode) {
-                            Text("Full Control").tag(false)
-                            Text("Read-Only").tag(true)
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .frame(width: 200)
+                        SoberSegmentedPicker(
+                            items: [("Full Control", false), ("Read-Only", true)],
+                            selection: $state.remoteReadOnlyMode
+                        )
                     }
                 }
             }
@@ -807,10 +886,10 @@ struct RemoteSettingsTabView: View {
 }
 
 // ==========================================
-// REUSABLE MINIMALIST COMPONENTS
+// SOBER / RAYCAST REUSABLE COMPONENTS
 // ==========================================
 
-struct SettingsCardView<Content: View>: View {
+struct SoberSectionCard<Content: View>: View {
     let title: String
     let content: Content
     
@@ -820,64 +899,132 @@ struct SettingsCardView<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundColor(.white.opacity(0.40))
-                .padding(.horizontal, 4)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.35))
+                .padding(.horizontal, 3)
             
             VStack(spacing: 0) {
                 content
             }
-            .padding(14)
-            .background(Color.white.opacity(0.035))
-            .cornerRadius(10)
+            .padding(13)
+            .background(Color.white.opacity(0.025))
+            .cornerRadius(8)
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
         }
     }
 }
 
-struct ShortcutRowView: View {
+struct SoberSegmentedPicker<T: Hashable>: View {
+    let items: [(title: String, value: T)]
+    @Binding var selection: T
+    
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.value) { item in
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        selection = item.value
+                    }
+                }) {
+                    Text(item.title)
+                        .font(.system(size: 11, weight: selection == item.value ? .medium : .regular))
+                        .foregroundColor(selection == item.value ? .white : .white.opacity(0.45))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4.5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(selection == item.value ? Color.white.opacity(0.13) : Color.clear)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(2.5)
+        .background(Color.white.opacity(0.04))
+        .cornerRadius(6.5)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6.5)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+}
+
+struct SoberToggle: View {
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        Button(action: {
+            withAnimation(.easeInOut(duration: 0.14)) {
+                isOn.toggle()
+            }
+        }) {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(isOn ? Color(red: 0.28, green: 0.48, blue: 0.85) : Color.white.opacity(0.12))
+                    .frame(width: 32, height: 18)
+                
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 14, height: 14)
+                    .padding(2)
+                    .shadow(color: Color.black.opacity(0.20), radius: 1, x: 0, y: 0.5)
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct KeyCapBadge: View {
+    let text: String
+    
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundColor(.white.opacity(0.65))
+            .padding(.horizontal, 5.5)
+            .padding(.vertical, 2)
+            .background(Color.white.opacity(0.06))
+            .cornerRadius(4)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.white.opacity(0.09), lineWidth: 1)
+            )
+    }
+}
+
+struct SoberShortcutRow: View {
     let key: String
     let action: String
     
     var body: some View {
         HStack {
             Text(action)
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.85))
+                .font(.system(size: 11.5))
+                .foregroundColor(.white.opacity(0.80))
             Spacer()
-            Text(key)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.9))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.white.opacity(0.09))
-                .cornerRadius(5)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+            KeyCapBadge(text: key)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1.5)
     }
 }
 
-struct SecondaryButtonStyle: ButtonStyle {
+struct SoberPillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundColor(.white)
-            .padding(.horizontal, 11)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.white.opacity(0.9))
+            .padding(.horizontal, 10)
             .padding(.vertical, 4.5)
-            .background(configuration.isPressed ? Color.white.opacity(0.14) : Color.white.opacity(0.07))
-            .cornerRadius(6)
+            .background(configuration.isPressed ? Color.white.opacity(0.12) : Color.white.opacity(0.06))
+            .cornerRadius(5.5)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 5.5)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
     }
 }
