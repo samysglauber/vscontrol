@@ -64,6 +64,15 @@ final class NativeSongLibrary {
         return result
     }
     
+    func cacheSong(_ song: SongItem) {
+        lock.lock()
+        songsCache[song.id] = song
+        if !song.filename.isEmpty {
+            songsCache[song.filename] = song
+        }
+        lock.unlock()
+    }
+    
     func getSong(id: String) -> SongItem? {
         lock.lock()
         if let cached = songsCache[id] {
@@ -71,8 +80,25 @@ final class NativeSongLibrary {
             return cached
         }
         lock.unlock()
+        
+        // Se for metrônomo virtual, busca diretamente no banco SQLite
+        if id.starts(with: "metro_") || id.contains(".virtual") || id.starts(with: "virtual://") {
+            if let dbSong = NativeDatabase.shared.getSong(id: id) {
+                cacheSong(dbSong)
+                return dbSong
+            }
+        }
+        
         let dir = getTracksDirectory()
-        return indexFile(id, directory: dir)
+        if let indexed = indexFile(id, directory: dir) {
+            return indexed
+        }
+        
+        if let dbSong = NativeDatabase.shared.getSong(id: id) {
+            cacheSong(dbSong)
+            return dbSong
+        }
+        return nil
     }
     
     func findSong(byId id: String) -> SongItem? {
@@ -255,7 +281,11 @@ final class NativeSongLibrary {
             guideLeadIn: guideLeadIn
         )
         
-        // Atualiza ou cria o arquivo .cues.json para persistência e compatibilidade
+        // Atualiza ou cria o arquivo .cues.json para persistência e compatibilidade apenas se não for virtual
+        guard !songId.starts(with: "metro_") && !songId.contains(".virtual") && !songId.starts(with: "virtual://") else {
+            return
+        }
+        
         let dir = getTracksDirectory()
         let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"
         var payload: [String: Any] = [:]
@@ -317,10 +347,12 @@ final class NativeSongLibrary {
     // MARK: - Verificação e Análise Automática de Cues
     
     func needsAutoCueAnalysis(songId: String) -> Bool {
+        if songId.hasPrefix("metro_") || songId.hasPrefix("metronome_") || songId.contains(".virtual") || songId.starts(with: "virtual://") {
+            return false
+        }
         if let song = getSong(id: songId) {
             if song.is_metronome == true { return false }
         }
-        if songId.hasPrefix("metronome_") { return false }
         
         let dir = getTracksDirectory()
         let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"

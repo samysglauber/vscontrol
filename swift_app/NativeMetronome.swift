@@ -1,8 +1,9 @@
 import Foundation
 import AVFoundation
 
-/// Gerador Nativo em Swift de Metrônomos e Click Tracks.
-/// Produz faixas estéreo de ~10 minutos:
+/// Gerador Nativo em Swift de Metrônomos Procedurais (Opção 1 - Playback MultiTracks).
+/// Zero arquivos gerados no disco (0 MB).
+/// Síntese de áudio procedural sample-accurate em tempo real pelo NativeAudioEngine:
 /// - Canal L (In-Ear): Click rítmico cristalino de estúdio com acentuação no tempo 1 e subdivisões
 /// - Canal R (PA / VS): Silêncio absoluto
 final class NativeMetronomeGenerator {
@@ -13,7 +14,7 @@ final class NativeMetronomeGenerator {
         "#10b981", "#f59e0b", "#06b6d4", "#a855f7"
     ]
     
-    private var clickCache: [Double: ([Float], [Float])] = [:]
+    private var clickCache: [Double: (downbeat: [Float], beat: [Float])] = [:]
     
     private func loadWavMono(path: String) -> [Float]? {
         let url = URL(fileURLWithPath: path)
@@ -28,7 +29,7 @@ final class NativeMetronomeGenerator {
         return Array(UnsafeBufferPointer(start: ptr, count: Int(buffer.frameLength)))
     }
     
-    private func getClickSamples(sampleRate: Double = 44100.0) -> ([Float], [Float]) {
+    func getClickSamples(sampleRate: Double = 44100.0) -> (downbeat: [Float], beat: [Float]) {
         if let cached = clickCache[sampleRate] {
             return cached
         }
@@ -78,11 +79,14 @@ final class NativeMetronomeGenerator {
             if max2 > 0 {
                 for i in 0..<m2.count { m2[i] = (m2[i] / max2) * 0.98 }
             }
-            clickCache[sampleRate] = (m1, m2)
-            return (m1, m2)
+            // m2 (Click Track-2, 1320 Hz) é o Downbeat (TIC acentuado)
+            // m1 (Click Track-1, 820 Hz) é o Beat padrão (toc de corpo)
+            let result = (downbeat: m2, beat: m1)
+            clickCache[sampleRate] = result
+            return result
         }
         
-        // Fallback sintetizado caso os arquivos não existam
+        // Fallback sintetizado cristalino caso os arquivos não existam
         let clickLen = Int(sampleRate * 0.025)
         var c1 = [Float](repeating: 0, count: clickLen)
         var c2 = [Float](repeating: 0, count: clickLen)
@@ -93,110 +97,22 @@ final class NativeMetronomeGenerator {
             c1[i] = Float(sin(twoPi * 2500.0 * t)) * env * 0.95
             c2[i] = Float(sin(twoPi * 1600.0 * t)) * env * 0.85
         }
-        clickCache[sampleRate] = (c1, c2)
-        return (c1, c2)
+        let result = (downbeat: c1, beat: c2)
+        clickCache[sampleRate] = result
+        return result
     }
     
-    func generateMetronome(
-        name: String = "Click",
-        bpm: Double = 120.0,
-        timeSignature: String = "4/4",
-        subdivision: String = "1/4",
-        subdivide: Bool = false,
-        durationSec: Double = 600.0
-    ) throws -> SongItem {
+    // MARK: - Geração de Cues Procedurais
+    
+    func generateMetronomeCues(durationSec: Double = 600.0, bpm: Double = 120.0, timeSignature: String = "4/4") -> [CueSection] {
         let cleanBpm = max(30.0, min(300.0, bpm))
         let parts = timeSignature.split(separator: "/")
         let num = parts.count > 0 ? (Int(parts[0]) ?? 4) : 4
-        _ = parts.count > 1 ? (Int(parts[1]) ?? 4) : 4
-        
-        // 1. Título e nome de arquivo seguro para disco
-        var baseName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if baseName.isEmpty {
-            baseName = "Click \(timeSignature) (\(Int(cleanBpm)) BPM)"
-        } else if !baseName.lowercased().contains("bpm") {
-            baseName = "\(baseName) (\(Int(cleanBpm)) BPM)"
-        }
-        let displayTitle = resolveSongDisplayName(name: baseName, timeSignature: timeSignature, isMetronome: true)
-        let safeTs = timeSignature.replacingOccurrences(of: "/", with: "_")
-        let filenameBase = displayTitle.replacingOccurrences(of: timeSignature, with: safeTs)
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "-")
-        let filename = "\(filenameBase).wav"
-        
-        let dir = NativeSongLibrary.shared.getTracksDirectory()
-        let fileUrl = dir.appendingPathComponent(filename)
-        
-        // 2. Parâmetros temporais
-        let sr: Double = 44100.0
-        let beatSec = 60.0 / cleanBpm
-        let barSec = Double(num) * beatSec
+        let den = parts.count > 1 ? (Int(parts[1]) ?? 4) : 4
+        let beatsPerBar = Double(num) * (4.0 / Double(den))
+        let barSec = (60.0 / cleanBpm) * beatsPerBar
         let nBars = max(4, Int(durationSec / barSec))
-        let totalSamples = Int(Double(nBars) * barSec * sr)
         
-        // 3. Carrega os samples originais do projeto (Click Track-1.wav e Click Track-2.wav)
-        let (clickTrack1, clickTrack2) = getClickSamples(sampleRate: sr)
-        
-        // 4. Monta buffer do Canal L (Click com alternância profissional de samples)
-        var leftChannel = [Float](repeating: 0, count: totalSamples)
-        
-        // Fator de subdivisão
-        var subPerBeat = 1
-        if subdivide {
-            if subdivision == "1/8" { subPerBeat = 2 }
-            else if subdivision == "1/16" { subPerBeat = 4 }
-            else if subdivision == "1/8T" || subdivision == "1/12" { subPerBeat = 3 }
-        }
-        let subIntervalSec = beatSec / Double(subPerBeat)
-        
-        var totalSteps = 0
-        for bar in 0..<nBars {
-            let barStartSec = Double(bar) * barSec
-            for beat in 0..<num {
-                let beatStartSec = barStartSec + Double(beat) * beatSec
-                for sub in 0..<subPerBeat {
-                    let clickTime = beatStartSec + Double(sub) * subIntervalSec
-                    let sampleIdx = Int(clickTime * sr)
-                    
-                    // Alternância contínua entre Click Track-1 e Click Track-2 idêntica ao app original
-                    let sample = (totalSteps % 2 == 0) ? clickTrack1 : clickTrack2
-                    let avail = min(sample.count, totalSamples - sampleIdx)
-                    if avail > 0 && sampleIdx >= 0 {
-                        for k in 0..<avail {
-                            leftChannel[sampleIdx + k] = sample[k]
-                        }
-                    }
-                    totalSteps += 1
-                }
-            }
-        }
-        
-        // 5. Canal R = Silêncio
-        let rightChannel = [Float](repeating: 0, count: totalSamples)
-        
-        // 6. Grava arquivo WAV estéreo usando AVAudioFile
-        let format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
-        let audioFile = try AVAudioFile(
-            forWriting: fileUrl,
-            settings: format.settings,
-            commonFormat: .pcmFormatFloat32,
-            interleaved: false
-        )
-        guard let pcmBuf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalSamples)) else {
-            throw NSError(domain: "Metronome", code: -1)
-        }
-        pcmBuf.frameLength = AVAudioFrameCount(totalSamples)
-        if let chData = pcmBuf.floatChannelData {
-            leftChannel.withUnsafeBufferPointer { src in
-                _ = memcpy(chData[0], src.baseAddress!, totalSamples * MemoryLayout<Float>.size)
-            }
-            rightChannel.withUnsafeBufferPointer { src in
-                _ = memcpy(chData[1], src.baseAddress!, totalSamples * MemoryLayout<Float>.size)
-            }
-        }
-        try audioFile.write(from: pcmBuf)
-        
-        // 7. Estruturação dos Cues (Contagem + Blocos de 8 compassos)
         var cuesList: [CueSection] = []
         let countInBars = 2
         let countInDuration = Double(countInBars) * barSec
@@ -237,50 +153,122 @@ final class NativeMetronomeGenerator {
             sectionNum += 1
             colorIdx += 1
         }
+        return cuesList
+    }
+    
+    // MARK: - Geração de Forma de Onda Rítmica Procedural (7200 picos)
+    
+    func generateMetronomeWaveform(
+        durationSec: Double = 600.0,
+        bpm: Double = 120.0,
+        timeSignature: String = "4/4",
+        subdivision: String = "1/4",
+        subdivide: Bool = false
+    ) -> [Double] {
+        let cleanBpm = max(30.0, min(300.0, bpm))
+        let parts = timeSignature.split(separator: "/")
+        let num = parts.count > 0 ? (Int(parts[0]) ?? 4) : 4
+        let den = parts.count > 1 ? (Int(parts[1]) ?? 4) : 4
+        let beatsPerBar = Double(num) * (4.0 / Double(den))
+        let beatSec = 60.0 / cleanBpm
+        let barSec = beatSec * beatsPerBar
         
-        // 8. Waveform contínuo
-        let wf = [Double](repeating: 0.35, count: 7200)
+        var subPerBeat = 1
+        if subdivide {
+            if subdivision == "1/8" { subPerBeat = 2 }
+            else if subdivision == "1/16" { subPerBeat = 4 }
+            else if subdivision == "1/8T" || subdivision == "1/12" { subPerBeat = 3 }
+        }
+        let subIntervalSec = beatSec / Double(subPerBeat)
         
-        // 9. Persiste .cues.json
-        NativeSongLibrary.shared.saveCues(
-            songId: filename,
-            cues: cuesList,
-            bpm: cleanBpm,
-            timeSignature: timeSignature,
-            fullWaveform: wf
-        )
+        let totalPoints = 7200
+        var wf = [Double](repeating: 0.04, count: totalPoints)
+        let secPerPoint = durationSec / Double(totalPoints)
+        guard secPerPoint > 0 && barSec > 0 else { return wf }
         
-        // Atualiza nome de exibição no json
-        let cuesPath = fileUrl.path + ".cues.json"
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            json["name"] = displayTitle
-            json["is_metronome"] = true
-            json["subdivide"] = subdivide
-            json["subdivision"] = subdivision
-            json["total_duration"] = Double(totalSamples) / sr
-            if let updatedData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
-                try? updatedData.write(to: URL(fileURLWithPath: cuesPath))
+        for i in 0..<totalPoints {
+            let t = Double(i) * secPerPoint
+            let timeInBar = t.truncatingRemainder(dividingBy: barSec)
+            let beatInBar = Int(timeInBar / beatSec)
+            let timeInBeat = timeInBar.truncatingRemainder(dividingBy: beatSec)
+            
+            if timeInBeat < secPerPoint * 1.5 {
+                if beatInBar == 0 {
+                    wf[i] = 0.85
+                } else {
+                    wf[i] = 0.50
+                }
+            } else if subPerBeat > 1 {
+                let subInBeat = Int(timeInBeat / subIntervalSec)
+                let timeInSub = timeInBeat.truncatingRemainder(dividingBy: subIntervalSec)
+                if subInBeat > 0 && timeInSub < secPerPoint * 1.5 {
+                    wf[i] = 0.25
+                }
             }
         }
+        return wf
+    }
+    
+    // MARK: - Criação Procedural de Metrônomo (Zero Disco)
+    
+    func generateMetronome(
+        id: String? = nil,
+        name: String = "Click",
+        bpm: Double = 120.0,
+        timeSignature: String = "4/4",
+        subdivision: String = "1/4",
+        subdivide: Bool = false,
+        durationSec: Double = 600.0
+    ) throws -> SongItem {
+        let cleanBpm = max(30.0, min(300.0, bpm))
+        
+        // 1. Título de exibição padronizado
+        var baseName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if baseName.isEmpty {
+            baseName = "Click \(timeSignature) (\(Int(cleanBpm)) BPM)"
+        } else if !baseName.lowercased().contains("bpm") {
+            baseName = "\(baseName) (\(Int(cleanBpm)) BPM)"
+        }
+        let displayTitle = resolveSongDisplayName(name: baseName, timeSignature: timeSignature, isMetronome: true)
+        let safeTs = timeSignature.replacingOccurrences(of: "/", with: "_")
+        let idString = id ?? "metro_\(safeTs)_\(Int(cleanBpm))"
+        let virtualPath = "virtual://metronome/\(safeTs)/\(cleanBpm)"
+        let virtualFilename = "\(displayTitle).virtual"
+        
+        // 2. Cues estruturados em memória (Count-In + Intro + Seções de 8 compassos)
+        let cuesList = generateMetronomeCues(durationSec: durationSec, bpm: cleanBpm, timeSignature: timeSignature)
+        
+        // 3. Forma de onda rítmica procedural (7200 pontos de alta resolução)
+        let wf = generateMetronomeWaveform(
+            durationSec: durationSec,
+            bpm: cleanBpm,
+            timeSignature: timeSignature,
+            subdivision: subdivision,
+            subdivide: subdivide
+        )
         
         let item = SongItem(
-            id: filename,
+            id: idString,
             name: displayTitle,
-            filename: filename,
-            path: fileUrl.path,
+            filename: virtualFilename,
+            path: virtualPath,
             bpm: cleanBpm,
             time_signature: timeSignature,
             default_key: "D",
             full_waveform: wf,
             has_cover: false,
             search_query: displayTitle,
-            total_duration: Double(totalSamples) / sr,
+            total_duration: durationSec,
             cues: cuesList,
             is_metronome: true,
             subdivide: subdivide,
             subdivision: subdivision
         )
+        
+        // 4. Salva no SQLite local para resiliência sem poluir o disco com arquivos de áudio
+        NativeDatabase.shared.saveSong(item: item)
+        NativeSongLibrary.shared.cacheSong(item)
+        
         return item
     }
     
@@ -293,12 +281,15 @@ final class NativeMetronomeGenerator {
         subdivide: Bool = false
     ) throws -> SongItem {
         let song = try generateMetronome(
+            id: existingItem.id,
             name: name,
             bpm: bpm,
             timeSignature: timeSignature,
             subdivision: subdivision,
             subdivide: subdivide
         )
+        NativeDatabase.shared.saveSong(item: song)
+        NativeSongLibrary.shared.cacheSong(song)
         return song
     }
 }

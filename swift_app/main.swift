@@ -618,6 +618,32 @@ class PlaybackState: ObservableObject {
     var songCache: [String: CachedSongData] = [:]
     
     func getOrLoadSongData(for song: SongItem, fallbackCues: [CueSection]? = nil) -> CachedSongData? {
+        // 0. Metrônomos Virtuais e Procedurais (0.00 ms, zero disco)
+        if song.is_metronome == true || song.path.starts(with: "virtual://") || song.isMetronomeTrack {
+            let bpmVal = song.bpm ?? 120.0
+            let tsVal = song.time_signature ?? "4/4"
+            let dur = (song.total_duration ?? 0) > 0 ? song.total_duration! : 600.0
+            let cues = (song.cues?.isEmpty == false) ? song.cues! : (fallbackCues ?? NativeMetronomeGenerator.shared.generateMetronomeCues(durationSec: dur, bpm: bpmVal, timeSignature: tsVal))
+            let wf = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : NativeMetronomeGenerator.shared.generateMetronomeWaveform(
+                durationSec: dur,
+                bpm: bpmVal,
+                timeSignature: tsVal,
+                subdivision: song.subdivision ?? "1/4",
+                subdivide: song.subdivide ?? false
+            )
+            let leadIn = song.guide_lead_in ?? 1.0
+            let data = CachedSongData(
+                bpm: bpmVal,
+                timeSignature: tsVal,
+                totalSeconds: dur,
+                cues: cues,
+                waveform: wf,
+                guideLeadIn: leadIn
+            )
+            songCache[song.id] = data
+            return data
+        }
+
         let fileBpm = extractBpmFromFilename(song.filename) ?? extractBpmFromFilename(song.id)
 
         // 1. Memória RAM (0.00 ms)

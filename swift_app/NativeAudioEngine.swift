@@ -56,6 +56,13 @@ final class NativeAudioEngine {
         return sampleRate > 0 ? Double(totalFrames) / sampleRate : 0.0
     }
     
+    // Metrônomo Procedural em Tempo Real (Opção 1 - Playback MultiTracks)
+    var isProceduralMetronome: Bool = false
+    var proceduralSubPerBeat: Int = 1
+    private var clickSampleDownbeat: [Float] = []
+    private var clickSampleBeat: [Float] = []
+    private var clickSampleSub: [Float] = []
+    
     // Estado do Transporte
     var isPlaying: Bool = false
     var currentCueIdx: Int = 0
@@ -131,6 +138,10 @@ final class NativeAudioEngine {
         lock.initialize(to: os_unfair_lock())
         setupAudioEngine()
         padBuffer = padGen.getPadChunk(key: padKey)
+        let (downbeat, beat) = NativeMetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
+        self.clickSampleDownbeat = downbeat
+        self.clickSampleBeat = beat
+        self.clickSampleSub = beat.map { $0 * 0.65 }
     }
     
     deinit {
@@ -243,12 +254,74 @@ final class NativeAudioEngine {
             }
         }
         
+        let metroSr = sampleRate > 0 ? sampleRate : 44100.0
+        let metroBpm = bpm > 30 ? bpm : 120.0
+        let metroSubFactor = max(1, proceduralSubPerBeat)
+        let metroStepFrames = (60.0 * metroSr) / (metroBpm * Double(metroSubFactor))
+        let metroBeatsPerBar = max(1, timeSignature.0)
+        let metroStepsPerBar = metroBeatsPerBar * metroSubFactor
+
         for i in 0..<frameCount {
             var sampleL: Float = 0.0
             var sampleR: Float = 0.0
             
+            if isProceduralMetronome {
+                sampleR = 0.0
+                
+                // Salto agendado alcançou o ponto de virada do compasso
+                if let jump = queuedJump, curPos >= jump.leadInAtFrame {
+                    curPos = jump.targetDownbeatFrame
+                    currentCueIdx = jump.cueIdx
+                    queuedCueIdx = nil
+                    queuedJump = nil
+                    let jumpedIdx = jump.cueIdx
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onCueJumped?(jumpedIdx)
+                    }
+                }
+                // Repetição de seção em loop
+                else if let loop = loopInfo, curPos >= loop.end {
+                    curPos = loop.start
+                    currentCueIdx = loop.cueIdx
+                    if !loopInfinite {
+                        loopActive = false
+                        loopCueIdx = nil
+                    }
+                    let loopedIdx = loop.cueIdx
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onCueJumped?(loopedIdx)
+                    }
+                }
+                
+                // Síntese sample-accurate em tempo real do click no Canal L
+                let stepIdx = Int(Double(curPos) / metroStepFrames)
+                let stepStartFrame = Int64(round(Double(stepIdx) * metroStepFrames))
+                let clickOffset = Int(curPos - stepStartFrame)
+                
+                var stepInBar = stepIdx % metroStepsPerBar
+                if stepInBar < 0 { stepInBar += metroStepsPerBar }
+                
+                let isDownbeat = (stepInBar == 0)
+                let isBeat = (stepInBar % metroSubFactor == 0)
+                
+                if isDownbeat {
+                    if clickOffset >= 0 && clickOffset < clickSampleDownbeat.count {
+                        sampleL = clickSampleDownbeat[clickOffset]
+                    }
+                } else if isBeat {
+                    if clickOffset >= 0 && clickOffset < clickSampleBeat.count {
+                        sampleL = clickSampleBeat[clickOffset]
+                    }
+                } else {
+                    if clickOffset >= 0 && clickOffset < clickSampleSub.count {
+                        sampleL = clickSampleSub[clickOffset]
+                    }
+                }
+                
+                curPos += 1
+            }
             // A. Lead-In de Voz Guia em andamento no Canal L
-            if var guide = guideLeadIn {
+            else if var guide = guideLeadIn {
                 let gFrame = Int(guide.posFrame)
                 sampleL = (gFrame < audioLeft.count && gFrame >= 0) ? audioLeft[gFrame] : 0.0
                 guide.posFrame += 1
@@ -515,6 +588,10 @@ final class NativeAudioEngine {
     // MARK: - Controle de Reprodução
     
     func loadSong(_ song: SongItem, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
+        if song.is_metronome == true || song.path.starts(with: "virtual://") || song.isMetronomeTrack {
+            loadProceduralMetronome(song, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
+            return
+        }
         let url = URL(fileURLWithPath: song.path)
         try? loadSong(
             url: url,
@@ -524,6 +601,103 @@ final class NativeAudioEngine {
             crossfade: crossfade,
             crossfadeDuration: crossfadeDuration
         )
+    }
+
+    func loadProceduralMetronome(_ song: SongItem, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        
+        // Se crossfade solicitado, captura cauda de saída do Canal R atual
+        if crossfade && !audioRight.isEmpty && isPlaying {
+            let remFrames = Int(max(0.5, crossfadeDuration) * sampleRate)
+            let startF = Int(posFrame)
+            let endF = min(audioRight.count, startF + remFrames)
+            if endF > startF {
+                outgoingRight = Array(audioRight[startF..<endF])
+                outgoingPos = 0
+            }
+        } else {
+            outgoingRight = nil
+            outgoingPos = 0
+        }
+        
+        self.isProceduralMetronome = true
+        self.currentUrl = URL(string: song.path)
+        self.sampleRate = 44100.0
+        self.audioLeft = []
+        self.audioRight = []
+        
+        let duration = (song.total_duration ?? 0) > 0 ? song.total_duration! : 600.0
+        self.totalFrames = Int64(duration * self.sampleRate)
+        self.posFrame = 0
+        self.bpm = (song.bpm ?? 120.0) > 30 ? (song.bpm ?? 120.0) : 120.0
+        
+        let parts = (song.time_signature ?? "4/4").split(separator: "/")
+        if parts.count >= 2, let n = Int(parts[0]), let d = Int(parts[1]) {
+            self.timeSignature = (n, d)
+        } else {
+            self.timeSignature = (4, 4)
+        }
+        
+        var subPerBeat = 1
+        if song.subdivide == true {
+            let sub = song.subdivision ?? "1/4"
+            if sub == "1/8" { subPerBeat = 2 }
+            else if sub == "1/16" { subPerBeat = 4 }
+            else if sub == "1/8T" || sub == "1/12" { subPerBeat = 3 }
+        }
+        self.proceduralSubPerBeat = subPerBeat
+        
+        var resolvedCues = song.cues ?? []
+        if resolvedCues.isEmpty {
+            resolvedCues = NativeMetronomeGenerator.shared.generateMetronomeCues(
+                durationSec: duration,
+                bpm: self.bpm,
+                timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)"
+            )
+        }
+        self.cues = resolvedCues
+        
+        let peaks = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : NativeMetronomeGenerator.shared.generateMetronomeWaveform(
+            durationSec: duration,
+            bpm: self.bpm,
+            timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
+            subdivision: song.subdivision ?? "1/4",
+            subdivide: song.subdivide ?? false
+        )
+        self.fullWaveform = peaks
+        
+        self.currentCueIdx = 0
+        self.queuedCueIdx = nil
+        self.queuedJump = nil
+        self.guideLeadIn = nil
+        self.loopActive = false
+        self.loopInfinite = false
+        self.loopCueIdx = nil
+        self.tracksFadeGain = 1.0
+        self.tracksFadeState = "normal"
+        self.tracksFadeFramesLeft = 0
+        
+        self.firstDownbeatFrame = 0
+        self.abletonPlayTriggered = false
+        
+        midiClock.resetTick(currentFrame: 0, sampleRate: self.sampleRate, bpm: self.bpm)
+        
+        if crossfade {
+            self.isPlaying = true
+            abletonPlayTriggered = true
+            if syncTempoToDaw {
+                osc.sendTempo(self.bpm)
+                osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
+            }
+            midiClock.sendContinue()
+            if enableAbletonPlaySync {
+                osc.sendContinuePlaying()
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onAbletonSynced?()
+            }
+        }
     }
     
     func loadSong(
@@ -538,6 +712,7 @@ final class NativeAudioEngine {
         
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
+        self.isProceduralMetronome = false
         
         // Se crossfade solicitado, captura cauda de saída do Canal R atual
         if crossfade && !audioRight.isEmpty && isPlaying {
@@ -666,7 +841,7 @@ final class NativeAudioEngine {
     func play() {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
-        guard !audioLeft.isEmpty else { return }
+        guard !audioLeft.isEmpty || isProceduralMetronome else { return }
         
         tracksFadeState = "normal"
         tracksFadeGain = 1.0
