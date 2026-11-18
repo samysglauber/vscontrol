@@ -14,7 +14,7 @@ final class NativeMetronomeGenerator {
         "#10b981", "#f59e0b", "#06b6d4", "#a855f7"
     ]
     
-    private var clickCache: [Double: (downbeat: [Float], beat: [Float])] = [:]
+    private var clickCache: [Double: (click1: [Float], click2: [Float])] = [:]
     
     private func loadWavMono(path: String) -> [Float]? {
         let url = URL(fileURLWithPath: path)
@@ -29,7 +29,7 @@ final class NativeMetronomeGenerator {
         return Array(UnsafeBufferPointer(start: ptr, count: Int(buffer.frameLength)))
     }
     
-    func getClickSamples(sampleRate: Double = 44100.0) -> (downbeat: [Float], beat: [Float]) {
+    func getClickSamples(sampleRate: Double = 44100.0) -> (click1: [Float], click2: [Float]) {
         if let cached = clickCache[sampleRate] {
             return cached
         }
@@ -79,9 +79,8 @@ final class NativeMetronomeGenerator {
             if max2 > 0 {
                 for i in 0..<m2.count { m2[i] = (m2[i] / max2) * 0.98 }
             }
-            // m2 (Click Track-2, 1320 Hz) é o Downbeat (TIC acentuado)
-            // m1 (Click Track-1, 820 Hz) é o Beat padrão (toc de corpo)
-            let result = (downbeat: m2, beat: m1)
+            // m1 é Click Track-1.wav, m2 é Click Track-2.wav
+            let result = (click1: m1, click2: m2)
             clickCache[sampleRate] = result
             return result
         }
@@ -94,10 +93,10 @@ final class NativeMetronomeGenerator {
         for i in 0..<clickLen {
             let t = Double(i) / sampleRate
             let env = Float(exp(-Double(i) / (sampleRate * 0.005)))
-            c1[i] = Float(sin(twoPi * 2500.0 * t)) * env * 0.95
+            c1[i] = Float(sin(twoPi * 2200.0 * t)) * env * 0.95
             c2[i] = Float(sin(twoPi * 1600.0 * t)) * env * 0.85
         }
-        let result = (downbeat: c1, beat: c2)
+        let result = (click1: c1, click2: c2)
         clickCache[sampleRate] = result
         return result
     }
@@ -186,6 +185,8 @@ final class NativeMetronomeGenerator {
         let secPerPoint = durationSec / Double(totalPoints)
         guard secPerPoint > 0 && barSec > 0 else { return wf }
         
+        let isTriple = (num == 3)
+        
         for i in 0..<totalPoints {
             let t = Double(i) * secPerPoint
             let timeInBar = t.truncatingRemainder(dividingBy: barSec)
@@ -193,16 +194,24 @@ final class NativeMetronomeGenerator {
             let timeInBeat = timeInBar.truncatingRemainder(dividingBy: beatSec)
             
             if timeInBeat < secPerPoint * 1.5 {
-                if beatInBar == 0 {
-                    wf[i] = 0.85
+                if isTriple {
+                    // Em 3/4: clicktrack-1, clicktrack-2, clicktrack-2
+                    wf[i] = (beatInBar == 0) ? 0.70 : 0.48
                 } else {
-                    wf[i] = 0.50
+                    // Demais compassos: sequência contínua clicktrack-1, clicktrack-2
+                    let stepIdx = Int(t / subIntervalSec)
+                    wf[i] = (stepIdx % 2 == 0) ? 0.65 : 0.48
                 }
             } else if subPerBeat > 1 {
                 let subInBeat = Int(timeInBeat / subIntervalSec)
                 let timeInSub = timeInBeat.truncatingRemainder(dividingBy: subIntervalSec)
                 if subInBeat > 0 && timeInSub < secPerPoint * 1.5 {
-                    wf[i] = 0.25
+                    if isTriple {
+                        wf[i] = 0.28
+                    } else {
+                        let stepIdx = Int(t / subIntervalSec)
+                        wf[i] = (stepIdx % 2 == 0) ? 0.35 : 0.25
+                    }
                 }
             }
         }

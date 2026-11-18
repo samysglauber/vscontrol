@@ -59,9 +59,8 @@ final class NativeAudioEngine {
     // Metrônomo Procedural em Tempo Real (Opção 1 - Playback MultiTracks)
     var isProceduralMetronome: Bool = false
     var proceduralSubPerBeat: Int = 1
-    private var clickSampleDownbeat: [Float] = []
-    private var clickSampleBeat: [Float] = []
-    private var clickSampleSub: [Float] = []
+    private var clickSample1: [Float] = [] // Click Track-1
+    private var clickSample2: [Float] = [] // Click Track-2
     
     // Estado do Transporte
     var isPlaying: Bool = false
@@ -138,10 +137,9 @@ final class NativeAudioEngine {
         lock.initialize(to: os_unfair_lock())
         setupAudioEngine()
         padBuffer = padGen.getPadChunk(key: padKey)
-        let (downbeat, beat) = NativeMetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
-        self.clickSampleDownbeat = downbeat
-        self.clickSampleBeat = beat
-        self.clickSampleSub = beat.map { $0 * 0.65 }
+        let (c1, c2) = NativeMetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
+        self.clickSample1 = c1
+        self.clickSample2 = c2
     }
     
     deinit {
@@ -259,7 +257,6 @@ final class NativeAudioEngine {
         let metroSubFactor = max(1, proceduralSubPerBeat)
         let metroStepFrames = (60.0 * metroSr) / (metroBpm * Double(metroSubFactor))
         let metroBeatsPerBar = max(1, timeSignature.0)
-        let metroStepsPerBar = metroBeatsPerBar * metroSubFactor
 
         for i in 0..<frameCount {
             var sampleL: Float = 0.0
@@ -298,24 +295,22 @@ final class NativeAudioEngine {
                 let stepStartFrame = Int64(round(Double(stepIdx) * metroStepFrames))
                 let clickOffset = Int(curPos - stepStartFrame)
                 
-                var stepInBar = stepIdx % metroStepsPerBar
-                if stepInBar < 0 { stepInBar += metroStepsPerBar }
-                
-                let isDownbeat = (stepInBar == 0)
-                let isBeat = (stepInBar % metroSubFactor == 0)
-                
-                if isDownbeat {
-                    if clickOffset >= 0 && clickOffset < clickSampleDownbeat.count {
-                        sampleL = clickSampleDownbeat[clickOffset]
-                    }
-                } else if isBeat {
-                    if clickOffset >= 0 && clickOffset < clickSampleBeat.count {
-                        sampleL = clickSampleBeat[clickOffset]
-                    }
+                // Regra Sonora do Metrônomo:
+                // - Em 3/4: clicktrack-1, clicktrack-2, clicktrack-2 (reiniciando no tempo 1 de cada compasso).
+                // - Demais compassos: sempre clicktrack-1 e clicktrack-2 em sequência contínua, sem marcação de compasso.
+                let isTripleMeter = (metroBeatsPerBar == 3)
+                let useClick1: Bool
+                if isTripleMeter {
+                    let beatInBar = (stepIdx / metroSubFactor) % 3
+                    let subInBeat = stepIdx % metroSubFactor
+                    useClick1 = (beatInBar == 0 && subInBeat == 0)
                 } else {
-                    if clickOffset >= 0 && clickOffset < clickSampleSub.count {
-                        sampleL = clickSampleSub[clickOffset]
-                    }
+                    useClick1 = (stepIdx % 2 == 0)
+                }
+                
+                let activeClickBuffer = useClick1 ? clickSample1 : clickSample2
+                if clickOffset >= 0 && clickOffset < activeClickBuffer.count {
+                    sampleL = activeClickBuffer[clickOffset]
                 }
                 
                 curPos += 1
