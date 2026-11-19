@@ -194,9 +194,11 @@ final class NativeSongLibrary {
         var guideLeadIn: Double? = nil
         let cuesPath = directory.appendingPathComponent(entry).path + ".cues.json"
         if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let gli = json["guide_lead_in"] as? Double {
-            guideLeadIn = gli
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let gli = json["guide_lead_in"] as? Double {
+                guideLeadIn = gli
+            }
+            try? FileManager.default.removeItem(atPath: cuesPath)
         }
         
         let item = SongItem(
@@ -298,9 +300,11 @@ final class NativeSongLibrary {
         var guideLeadIn: Double? = nil
         let cuesPath = filePath + ".cues.json"
         if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let gli = json["guide_lead_in"] as? Double {
-            guideLeadIn = gli
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let gli = json["guide_lead_in"] as? Double {
+                guideLeadIn = gli
+            }
+            try? FileManager.default.removeItem(atPath: cuesPath)
         }
         
         let item = SongItem(
@@ -393,44 +397,18 @@ final class NativeSongLibrary {
             guideLeadIn: guideLeadIn
         )
         
-        // Atualiza ou cria o arquivo .cues.json para persistência e compatibilidade apenas se não for virtual
+        // Limpa arquivo legado .cues.json se existir no disco para manter a pasta 100% limpa
         guard !songId.starts(with: "metro_") && !songId.contains(".virtual") && !songId.starts(with: "virtual://") else {
             return
         }
         
         let dir = getTracksDirectory()
         let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"
-        var payload: [String: Any] = [:]
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            payload = existing
-        }
-        
-        payload["cues"] = cues.map { cue in
-            [
-                "id": cue.id,
-                "name": cue.name,
-                "time": cue.time,
-                "bar": cue.bar,
-                "color": cue.color,
-                "waveform": cue.waveform ?? []
-            ]
-        }
-        if let b = bpm { payload["bpm"] = b }
-        if let ts = timeSignature { payload["time_signature"] = ts }
-        if let wf = fullWaveform { payload["full_waveform"] = wf }
-        if let aa = autoAnalysis { payload["auto_analysis"] = aa }
-        if let gli = guideLeadIn { payload["guide_lead_in"] = gli }
-        
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
-            try? jsonData.write(to: URL(fileURLWithPath: cuesPath))
-            
-            // Se a música possuir caminho próprio em outro diretório, salva também seu .cues.json adjacente
-            if let songItem = getSong(id: songId), !songItem.path.isEmpty {
-                let altCuesPath = songItem.path + ".cues.json"
-                if altCuesPath != cuesPath {
-                    try? jsonData.write(to: URL(fileURLWithPath: altCuesPath))
-                }
+        try? FileManager.default.removeItem(atPath: cuesPath)
+        if let songItem = getSong(id: songId), !songItem.path.isEmpty {
+            let altCuesPath = songItem.path + ".cues.json"
+            if altCuesPath != cuesPath {
+                try? FileManager.default.removeItem(atPath: altCuesPath)
             }
         }
         
@@ -462,48 +440,22 @@ final class NativeSongLibrary {
         if songId.hasPrefix("metro_") || songId.hasPrefix("metronome_") || songId.contains(".virtual") || songId.starts(with: "virtual://") {
             return false
         }
-        if let song = getSong(id: songId) {
+        if let song = getSong(id: songId) ?? NativeDatabase.shared.getSong(id: songId) {
             if song.is_metronome == true { return false }
-        }
-        
-        let dir = getTracksDirectory()
-        let cuesPath = dir.appendingPathComponent(songId).path + ".cues.json"
-        
-        if FileManager.default.fileExists(atPath: cuesPath) {
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return true
-            }
-            if let auto = json["auto_analysis"] as? String {
+            if let auto = song.auto_analysis {
                 if auto == "pending" { return true }
-                if auto == "done" { return false }
-                if auto == "failed" { return false }
+                if auto == "done" || auto == "failed" { return false }
             }
-            guard let cues = json["cues"] as? [[String: Any]], !cues.isEmpty else {
-                return true
-            }
-            // Se as seções tiverem nomes genéricos como "Section 1, Section 2...", PRECISA de análise nativa!
-            let hasGenericNames = cues.contains { cueDict in
-                guard let name = cueDict["name"] as? String else { return false }
-                return name.hasPrefix("Section ") || name == "Section"
-            }
-            if hasGenericNames {
-                return true
-            }
-            return false
-        }
-        
-        if let dbSong = NativeDatabase.shared.getSong(id: songId) {
-            if dbSong.is_metronome == true { return false }
-            if dbSong.auto_analysis == "pending" { return true }
-            if dbSong.auto_analysis == "done" { return false }
-            if let cues = dbSong.cues, !cues.isEmpty {
-                if cues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Section" }) {
+            if let cues = song.cues, !cues.isEmpty {
+                let hasGenericNames = cues.contains { cue in
+                    cue.name.hasPrefix("Section ") || cue.name == "Section"
+                }
+                if hasGenericNames {
                     return true
                 }
+                return false
             }
         }
-        
         return true
     }
     

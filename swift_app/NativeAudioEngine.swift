@@ -767,13 +767,12 @@ final class NativeAudioEngine {
         let peaks = NativeSongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 7200)
         self.fullWaveform = peaks
         
-        // Salva na biblioteca e no arquivo .cues.json para que a música nova fique permanentemente salva apenas se o arquivo ainda não existir
+        // Salva na biblioteca SQLite para que a música nova fique permanentemente salva
         let filename = url.lastPathComponent
         let needsAuto = NativeSongLibrary.shared.needsAutoCueAnalysis(songId: filename)
         
-        // Se a música já possui arquivo .cues.json no disco, atualiza a resolução da waveform se tiver menos de 7000 picos
-        let cuesPath = NativeSongLibrary.shared.getTracksDirectory().appendingPathComponent(filename).path + ".cues.json"
-        if !FileManager.default.fileExists(atPath: cuesPath) && !resolvedCues.isEmpty {
+        let existingItem = NativeSongLibrary.shared.getSong(id: filename)
+        if existingItem == nil && !resolvedCues.isEmpty {
             NativeSongLibrary.shared.saveCues(
                 songId: filename,
                 cues: resolvedCues,
@@ -782,15 +781,15 @@ final class NativeAudioEngine {
                 fullWaveform: peaks,
                 autoAnalysis: needsAuto ? "pending" : nil
             )
-        } else if let existingItem = NativeSongLibrary.shared.getSong(id: filename), (existingItem.full_waveform?.count ?? 0) < 7000 {
+        } else if let existing = existingItem, (existing.full_waveform?.count ?? 0) < 7000 {
             NativeSongLibrary.shared.saveCues(
                 songId: filename,
-                cues: existingItem.cues ?? resolvedCues,
-                bpm: existingItem.bpm ?? self.bpm,
-                timeSignature: existingItem.time_signature ?? "\(self.timeSignature.0)/\(self.timeSignature.1)",
+                cues: existing.cues ?? resolvedCues,
+                bpm: existing.bpm ?? self.bpm,
+                timeSignature: existing.time_signature ?? "\(self.timeSignature.0)/\(self.timeSignature.1)",
                 fullWaveform: peaks,
-                autoAnalysis: existingItem.auto_analysis,
-                guideLeadIn: existingItem.guide_lead_in
+                autoAnalysis: existing.auto_analysis,
+                guideLeadIn: existing.guide_lead_in
             )
         }
         

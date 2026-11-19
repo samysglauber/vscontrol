@@ -727,6 +727,7 @@ class PlaybackState: ObservableObject {
                     guideLeadIn: leadInVal
                 )
                 songCache[song.id] = data
+                try? FileManager.default.removeItem(atPath: path)
                 return data
             }
         }
