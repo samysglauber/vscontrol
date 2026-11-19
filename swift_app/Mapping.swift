@@ -658,6 +658,7 @@ struct FloatingMappingHUD: View {
     @ObservedObject var state: PlaybackState
     @ObservedObject var mapping = MappingManager.shared
     @State private var showingClearConfirmation: Bool = false
+    @State private var isClearHovered: Bool = false
     
     var body: some View {
         HStack(spacing: 3) {
@@ -729,22 +730,21 @@ struct FloatingMappingHUD: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "trash")
-                            .font(.system(size: 10.5))
-                        Text(mapping.mode == .key ? "Clear Keys" : "Clear MIDI")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Clear")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundColor(Color.red.opacity(0.85))
-                    .padding(.horizontal, 9)
+                    .foregroundColor(isClearHovered ? Color.white.opacity(0.95) : Color.white.opacity(0.55))
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 5.5)
-                    .background(Color.red.opacity(0.14))
-                    .cornerRadius(6)
-                    .overlay(
+                    .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.red.opacity(0.35), lineWidth: 1)
+                            .fill(isClearHovered ? Color.white.opacity(0.08) : Color.white.opacity(0.001))
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(PlainButtonStyle())
+                .onHover { h in isClearHovered = h }
                 .help(mapping.mode == .key ? "Clear all keyboard mappings" : "Clear all MIDI mappings")
             }
         }
@@ -764,12 +764,12 @@ struct FloatingMappingHUD: View {
         .fixedSize(horizontal: true, vertical: true)
         .alert(isPresented: $showingClearConfirmation) {
             Alert(
-                title: Text(mapping.mode == .key ? "Limpar Mapeamento de Teclado?" : "Limpar Mapeamento MIDI?"),
-                message: Text(mapping.mode == .key ? "Tem certeza de que deseja apagar todos os atalhos de teclado mapeados?" : "Tem certeza de que deseja apagar todos os mapeamentos de comandos e notas MIDI?"),
-                primaryButton: .destructive(Text("Limpar Tudo")) {
+                title: Text(mapping.mode == .key ? "Clear Keyboard Mappings?" : "Clear MIDI Mappings?"),
+                message: Text(mapping.mode == .key ? "Are you sure you want to delete all mapped keyboard shortcuts?" : "Are you sure you want to delete all mapped MIDI commands?"),
+                primaryButton: .default(Text("Clear All")) {
                     mapping.clearAllCurrentMode()
                 },
-                secondaryButton: .cancel(Text("Cancelar"))
+                secondaryButton: .cancel(Text("Cancel"))
             )
         }
     }
