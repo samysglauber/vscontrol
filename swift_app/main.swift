@@ -7212,55 +7212,55 @@ struct AddSongSheetView: View {
                         .cornerRadius(5)
                     }
                     
-                    // Botão para Gerar Metrônomo (Click)
-                    Button(action: {
-                        isShowingClickAndPad = true
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "metronome")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(Color(red: 0.0, green: 0.55, blue: 1.0))
-                            Text("Create Click (Metrônomo)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.4))
+                    // Barra de Busca + Botão para Criar Metrônomo (Ideia 2: Mesma Linha)
+                    HStack(spacing: 8) {
+                        // 1. Campo de busca nativo minimalista
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(.gray)
+                                .font(.system(size: 11))
+                            TextField("Search songs...", text: $searchText)
+                                .textFieldStyle(PlainTextFieldStyle())
+                                .font(.system(size: 12))
+                            if !searchText.isEmpty {
+                                Button(action: { searchText = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.gray)
+                                        .font(.system(size: 11))
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
                         .background(Color.white.opacity(0.06))
                         .cornerRadius(7)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(Color(red: 0.0, green: 0.55, blue: 1.0).opacity(0.35), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    // Campo de busca nativo minimalista
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.gray)
-                            .font(.system(size: 11))
-                        TextField("Search songs...", text: $searchText)
-                            .textFieldStyle(PlainTextFieldStyle())
-                            .font(.system(size: 12))
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.gray)
-                                    .font(.system(size: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        
+                        // 2. Botão Sóbrio para Gerar Metrônomo (Click)
+                        Button(action: {
+                            isShowingClickAndPad = true
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "metronome")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.85))
+                                Text("+ Click")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundColor(.white)
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(7)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            )
                         }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Create a procedural click/metronome track")
                     }
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(7)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 1))
                     
                     if (state.isLoadingLibrary || state.isScanningFolder) && filteredSongs.isEmpty {
                         VStack(spacing: 12) {
