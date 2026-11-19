@@ -35,28 +35,37 @@
   - `BottomMixerDock`: Faders e botões Mute dedicados para Click/Guia e Tracks, menu dinâmico de saída de áudio.
   - `SongEditorSheetView`: Modal completo para edição de BPM, fórmula de compasso e seções.
 
-### `swift_app/NativeAudioEngine.swift`
+### `swift_app/AudioEngine.swift`
 - Motor de áudio de baixa latência baseado em CoreAudio e `AVAudioEngine`.
 - Callback de renderização em tempo real (60 fps), gerência de buffers PCM, controle de faders e relógio MIDI Clock.
 - `updateCurrentCueIdx()`: Determina qual seção está ativa com base na posição exata de reprodução (`currentSec >= cue.time`).
 - Transições de áudio quantizadas no tempo 1 com crossfades suaves.
 
-### `swift_app/NativeCueDetector.swift`
+### `swift_app/CueDetector.swift`
 - Análise de áudio nativa no canal L (Click/Guia) sem depender de Python.
 - Detecção de picos de clique e transientes para cálculo de BPM quando o arquivo não traz o BPM no nome.
 - Detecção de fórmula de compasso (4/4, 6/8, 3/4) via padrões de acentuação rítmica.
 - Transcrição local de guias de voz usando o binário embutido Whisper.cpp (`whisper-cli` com modelo de alta fidelidade `ggml-base.bin` de 141 MB e fallback para `ggml-tiny.bin`).
 
-### `swift_app/NativeSongLibrary.swift`
+### `swift_app/SongLibrary.swift`
 - Varredura de pastas de músicas, extração e salvamento de seções em arquivos `.cues.json`.
 - Extração resiliente de metadados do nome do arquivo (BPM fracionado com vírgula ou ponto, Tonalidade, Fórmula de Compasso).
 - Cache em memória de durações, formas de onda e capas de disco.
 
-### `swift_app/NativeDatabase.swift`
+### `swift_app/Database.swift`
 - Indexador de metadados em SQLite local (`library.db`).
 
-### `swift_app/NativeRemoteServer.swift`
+### `swift_app/RemoteServer.swift`
 - Servidor local HTTP e WebSocket (Bonjour/mDNS) para controle remoto em tempo real via iPad, iPhone ou navegador.
+
+### `swift_app/Mapping.swift`
+- Gerenciamento de mapeamento de atalhos de teclado (KEY MAP) e controladores MIDI (MIDI MAP).
+
+### `swift_app/Metronome.swift`
+- Gerador e sintetizador de metrônomo/click procedural e editor de fórmula de compasso.
+
+### `swift_app/MIDI.swift` & `swift_app/OSC.swift`
+- Relógio MIDI Clock nativo (CoreMIDI) e protocolo de sincronização OSC para Ableton Live.
 
 ---
 

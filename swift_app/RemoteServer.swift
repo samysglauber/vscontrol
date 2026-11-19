@@ -412,12 +412,6 @@ fileprivate final class RemoteConnection {
                 let dir = (payload["direction"] as? String) ?? "toggle"
                 let dur = (payload["duration"] as? Double) ?? 3.0
                 engine.fadeTracks(direction: dir, duration: dur)
-            case "pad":
-                if let key = payload["key"] as? String {
-                    let active = (payload["active"] as? Bool) ?? true
-                    let vol = (payload["volume"] as? Double) ?? 0.35
-                    engine.setPad(active: active, key: key, volume: Float(vol))
-                }
             case "volumes":
                 let cVol = (payload["click_vol"] as? Double) ?? (payload["volume_l"] as? Double) ?? Double(engine.clickVol)
                 let vVol = (payload["vs_vol"] as? Double) ?? (payload["volume_r"] as? Double) ?? Double(engine.vsVol)

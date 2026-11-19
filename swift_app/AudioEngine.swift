@@ -26,7 +26,7 @@ struct GuideLeadInInfo {
 /// Motor de Áudio em Tempo Real 100% Nativo em Swift.
 /// Executa CoreAudio através de AVAudioEngine e AVAudioSourceNode com baixa latência (< 5ms),
 /// roteamento de canais L (Click/Guia) e R (VS/Instrumentos), loops, saltos quantizados,
-/// crossfades instantâneos, sintetizador de pad contínuo e MIDI Clock embutido.
+/// crossfades instantâneos e MIDI Clock embutido.
 final class NativeAudioEngine {
     static let shared = NativeAudioEngine()
     
@@ -39,7 +39,6 @@ final class NativeAudioEngine {
     // Sincronizadores
     let osc = NativeOSCClient()
     let midiClock = NativeMIDIClock()
-    let padGen = NativePadGenerator.shared
     
     // Dados de Áudio Carregados
     var currentUrl: URL?
@@ -125,13 +124,6 @@ final class NativeAudioEngine {
     var clickMute: Bool = false
     var vsMute: Bool = false
     
-    // Pad de Ambiência
-    var padActive: Bool = false
-    var padKey: String = "D"
-    var padVol: Float = 0.35
-    private var padBuffer: [Float] = []
-    private var padPos: Int = 0
-    
     // Dispositivo de Saída
     var currentDeviceId: AudioDeviceID = 0
     var currentDeviceName: String = ""
@@ -145,7 +137,6 @@ final class NativeAudioEngine {
     init() {
         lock.initialize(to: os_unfair_lock())
         setupAudioEngine()
-        padBuffer = padGen.getPadChunk(key: padKey)
         let (c1, c2) = NativeMetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
         self.clickSample1 = c1
         self.clickSample2 = c2
@@ -189,16 +180,12 @@ final class NativeAudioEngine {
         defer { os_unfair_lock_unlock(lock) }
         
         if !isPlaying || totalFrames == 0 {
-            // Silêncio ou apenas Pad se ativo
-            if padActive && !padBuffer.isEmpty {
-                renderPadOnly(ptrL: ptrL, ptrR: ptrR, frames: frameCount, isDeinterleaved: isDeinterleaved)
+            // Silêncio
+            if isDeinterleaved {
+                ptrL.initialize(repeating: 0, count: frameCount)
+                ptrR.initialize(repeating: 0, count: frameCount)
             } else {
-                if isDeinterleaved {
-                    ptrL.initialize(repeating: 0, count: frameCount)
-                    ptrR.initialize(repeating: 0, count: frameCount)
-                } else {
-                    ptrL.initialize(repeating: 0, count: frameCount * 2)
-                }
+                ptrL.initialize(repeating: 0, count: frameCount * 2)
             }
             return noErr
         }
@@ -476,15 +463,8 @@ final class NativeAudioEngine {
             let effL = clickMute ? 0.0 : (sampleL * clickVol)
             let effR = vsMute ? 0.0 : (sampleR * vsVol * tracksFadeGain)
             
-            // Mixa Pad contínuo se ativo
-            var padSample: Float = 0.0
-            if padActive && !padBuffer.isEmpty {
-                padSample = padBuffer[padPos % padBuffer.count] * padVol
-                padPos += 1
-            }
-            
-            let outL = effL + padSample
-            let outR = max(-1.0, min(1.0, effR + padSample))
+            let outL = effL
+            let outR = max(-1.0, min(1.0, effR))
             if isDeinterleaved {
                 ptrL[i] = outL
                 ptrR[i] = outR
@@ -524,20 +504,6 @@ final class NativeAudioEngine {
         updateCurrentCueIdx()
         
         return noErr
-    }
-    
-    private func renderPadOnly(ptrL: UnsafeMutablePointer<Float>, ptrR: UnsafeMutablePointer<Float>, frames: Int, isDeinterleaved: Bool) {
-        for i in 0..<frames {
-            let sample = padBuffer[padPos % padBuffer.count] * padVol
-            padPos += 1
-            if isDeinterleaved {
-                ptrL[i] = sample
-                ptrR[i] = sample
-            } else {
-                ptrL[2 * i] = sample
-                ptrL[2 * i + 1] = sample
-            }
-        }
     }
     
     private func updateCurrentCueIdx() {
@@ -1186,18 +1152,6 @@ final class NativeAudioEngine {
         self.vsMute = vsMute
     }
     
-    func setPad(active: Bool, key: String, volume: Float) {
-        os_unfair_lock_lock(lock)
-        defer { os_unfair_lock_unlock(lock) }
-        self.padActive = active
-        self.padVol = volume
-        if self.padKey != key {
-            self.padKey = key
-            self.padBuffer = padGen.getPadChunk(key: key)
-            self.padPos = 0
-        }
-    }
-    
     // MARK: - Roteamento de Dispositivos CoreAudio
     
     func getAvailableOutputDevices() -> [AudioDeviceInfo] {
@@ -1275,10 +1229,6 @@ final class NativeAudioEngine {
         setVolumes(click: clickVolume, vs: vsVolume, clickMute: clickMute, vsMute: vsMute)
     }
     
-    func setPadKey(_ key: String, active: Bool) {
-        setPad(active: active, key: key, volume: padVol)
-    }
-    
     func buildStatusDictionary() -> [String: Any] {
         let curSec = sampleRate > 0 ? Double(posFrame) / sampleRate : 0.0
         let totSec = sampleRate > 0 ? Double(totalFrames) / sampleRate : 0.0
@@ -1327,9 +1277,6 @@ final class NativeAudioEngine {
             "time_signature": "\(timeSignature.0)/\(timeSignature.1)",
             "bar": curBar,
             "beat": curBeat,
-            "pad_active": padActive,
-            "pad_playing": padActive,
-            "pad_key": padKey,
             "device": currentDeviceName,
             "output_device_name": currentDeviceName,
             "output_device_id": Int(currentDeviceId)

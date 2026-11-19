@@ -10,16 +10,15 @@ echo "  🚀 Compilando VS Control (100% Native Swift)"
 echo "=========================================="
 
 swiftc -O \
-    swift_app/NativeOSC.swift \
-    swift_app/NativeMIDI.swift \
-    swift_app/NativeMapping.swift \
-    swift_app/NativePadGenerator.swift \
-    swift_app/NativeAudioEngine.swift \
-    swift_app/NativeDatabase.swift \
-    swift_app/NativeCueDetector.swift \
-    swift_app/NativeSongLibrary.swift \
-    swift_app/NativeMetronome.swift \
-    swift_app/NativeRemoteServer.swift \
+    swift_app/OSC.swift \
+    swift_app/MIDI.swift \
+    swift_app/Mapping.swift \
+    swift_app/AudioEngine.swift \
+    swift_app/Database.swift \
+    swift_app/CueDetector.swift \
+    swift_app/SongLibrary.swift \
+    swift_app/Metronome.swift \
+    swift_app/RemoteServer.swift \
     swift_app/SettingsView.swift \
     swift_app/main.swift \
     -o swift_app/VSControl \

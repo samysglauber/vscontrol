@@ -861,8 +861,6 @@ class PlaybackState: ObservableObject {
         }
         return true
     }
-    @Published var padActive: Bool = false
-    @Published var padKey: String = "D"
     
     @Published var clickVol: Double = 1.0
     @Published var vsVol: Double = 1.0
@@ -1519,7 +1517,6 @@ class PlaybackState: ObservableObject {
                 if let inf = eventData["loop_infinite"] as? Bool, self.loopInfinite != inf { self.loopInfinite = inf }
                 let newLoopCue = eventData["loop_cue_idx"] as? Int
                 if self.loopCueIdx != newLoopCue { self.loopCueIdx = newLoopCue }
-                if let pad = eventData["pad_active"] as? Bool, self.padActive != pad { self.padActive = pad }
                 if event == "status" && self.selectedDeviceId < 0 {
                     if let devId = eventData["output_device_id"] as? Int, devId >= 0 {
                         self.selectedDeviceId = devId
@@ -3111,10 +3108,6 @@ class PlaybackState: ObservableObject {
         sendAction("toggle_loop", body: body)
     }
     
-    func togglePad() {
-        sendAction("pad", body: ["active": !padActive, "key": padKey, "volume": 0.35])
-    }
-    
     func sendVolumes() {
         NativeAudioEngine.shared.setVolumes(
             click: Float(clickVol),
@@ -3515,12 +3508,6 @@ class PlaybackState: ObservableObject {
             let dir = (body?["direction"] as? String) ?? "toggle"
             let dur = (body?["duration"] as? Double) ?? 3.0
             engine.fadeTracks(direction: dir, duration: dur)
-        case "pad":
-            if let key = body?["key"] as? String {
-                let active = (body?["active"] as? Bool) ?? true
-                let vol = (body?["volume"] as? Double) ?? 0.35
-                engine.setPad(active: active, key: key, volume: Float(vol))
-            }
         case "volumes":
             let cVol = (body?["click_vol"] as? Double) ?? (body?["volume_l"] as? Double) ?? Double(self.clickVol)
             let vVol = (body?["vs_vol"] as? Double) ?? (body?["volume_r"] as? Double) ?? Double(self.vsVol)
@@ -7272,9 +7259,6 @@ struct MetronomeModalView: View {
     }
 }
 
-// Compatibilidade de nome
-typealias ClickAndPadView = MetronomeModalView
-
 // ==========================================
 // 10. MODAL PARA ADICIONAR MÚSICAS AO SETLIST
 // ==========================================
@@ -7282,7 +7266,7 @@ struct AddSongSheetView: View {
     @ObservedObject var state: PlaybackState
     @Environment(\.presentationMode) var presentationMode
     @State private var searchText = ""
-    @State private var isShowingClickAndPad = false
+    @State private var isShowingMetronomeModal = false
     
     var availablePool: [SongItem] {
         return state.librarySongs.isEmpty ? state.songs : state.librarySongs
@@ -7298,13 +7282,13 @@ struct AddSongSheetView: View {
     
     var body: some View {
         Group {
-            if isShowingClickAndPad {
+            if isShowingMetronomeModal {
                 MetronomeModalView(
                     state: state,
                     editingItem: nil,
-                    onBack: { isShowingClickAndPad = false },
+                    onBack: { isShowingMetronomeModal = false },
                     onDismiss: {
-                        isShowingClickAndPad = false
+                        isShowingMetronomeModal = false
                         presentationMode.wrappedValue.dismiss()
                     }
                 )
@@ -7406,7 +7390,7 @@ struct AddSongSheetView: View {
                         
                         // 2. Botão Sóbrio para Gerar Metrônomo (Click)
                         Button(action: {
-                            isShowingClickAndPad = true
+                            isShowingMetronomeModal = true
                         }) {
                             HStack(spacing: 5) {
                                 Image(systemName: "metronome")
