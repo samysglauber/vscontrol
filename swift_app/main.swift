@@ -876,6 +876,12 @@ class PlaybackState: ObservableObject {
             UserDefaults.standard.set(enableAbletonSceneSync, forKey: "saved_enable_ableton_scene_sync")
         }
     }
+    @Published var abletonTriggerOffsetMs: Double = 0.0 {
+        didSet {
+            NativeAudioEngine.shared.abletonTriggerOffsetMs = abletonTriggerOffsetMs
+            UserDefaults.standard.set(abletonTriggerOffsetMs, forKey: "saved_ableton_trigger_offset_ms")
+        }
+    }
     @Published var isSyncingAbleton: Bool = false
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
@@ -1136,6 +1142,13 @@ class PlaybackState: ObservableObject {
         } else {
             self.enableAbletonSceneSync = true
             NativeAudioEngine.shared.enableAbletonSceneSync = true
+        }
+        if let savedTriggerOffset = UserDefaults.standard.object(forKey: "saved_ableton_trigger_offset_ms") as? Double {
+            self.abletonTriggerOffsetMs = savedTriggerOffset
+            NativeAudioEngine.shared.abletonTriggerOffsetMs = savedTriggerOffset
+        } else {
+            self.abletonTriggerOffsetMs = 0.0
+            NativeAudioEngine.shared.abletonTriggerOffsetMs = 0.0
         }
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")

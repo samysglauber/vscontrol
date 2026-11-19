@@ -74,8 +74,15 @@ final class NativeAudioEngine {
     var enableAbletonPlaySync: Bool = true
     var enableAbletonSceneSync: Bool = true
     var currentSetlistIndex: Int = 0
+    var abletonTriggerOffsetMs: Double = 0.0
     var syncTempoToDaw: Bool = true
     var triggerAtBeat1: Bool = true
+    
+    var effectiveDownbeatFrame: Int64 {
+        let offsetFrames = Int64(round((abletonTriggerOffsetMs / 1000.0) * sampleRate))
+        let base = triggerAtBeat1 ? firstDownbeatFrame : 0
+        return max(0, base + offsetFrames)
+    }
     var enableMidiClock: Bool {
         get { midiClock.isEnabled }
         set { midiClock.isEnabled = newValue }
@@ -489,9 +496,9 @@ final class NativeAudioEngine {
         
         posFrame = curPos
         
-        // Disparo com Alinhamento no Tempo 1 (Primeiro clique da contagem / downbeat)
+        // Disparo com Alinhamento no Tempo 1 (Primeiro clique da contagem / downbeat com compensação de offset)
         if !abletonPlayTriggered && isPlaying {
-            if !triggerAtBeat1 || curPos >= firstDownbeatFrame {
+            if !triggerAtBeat1 || curPos >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
                 if syncTempoToDaw {
                     osc.sendTempo(self.bpm)
@@ -821,7 +828,7 @@ final class NativeAudioEngine {
         
         if crossfade {
             self.isPlaying = true
-            if !triggerAtBeat1 || posFrame >= firstDownbeatFrame {
+            if !triggerAtBeat1 || posFrame >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
                 if syncTempoToDaw {
                     osc.sendTempo(self.bpm)
@@ -852,7 +859,7 @@ final class NativeAudioEngine {
         tracksFadeFramesLeft = 0
         isPlaying = true
         
-        if !triggerAtBeat1 || posFrame >= firstDownbeatFrame {
+        if !triggerAtBeat1 || posFrame >= effectiveDownbeatFrame {
             abletonPlayTriggered = true
             if syncTempoToDaw {
                 osc.sendTempo(self.bpm)
@@ -868,7 +875,7 @@ final class NativeAudioEngine {
                 self?.onAbletonSynced?()
             }
         } else {
-            // Aguarda atingir o Tempo 1 (firstDownbeatFrame / início da contagem) no callback do CoreAudio
+            // Aguarda atingir o Tempo 1 (com compensação de offset) no callback do CoreAudio
             abletonPlayTriggered = false
         }
         
@@ -892,7 +899,7 @@ final class NativeAudioEngine {
                 osc.sendStopPlaying()
             }
         }
-        if posFrame < firstDownbeatFrame {
+        if posFrame < effectiveDownbeatFrame {
             abletonPlayTriggered = false
         }
         
@@ -937,7 +944,7 @@ final class NativeAudioEngine {
         queuedCueIdx = nil
         queuedJump = nil
         guideLeadIn = nil
-        if posFrame >= firstDownbeatFrame {
+        if posFrame >= effectiveDownbeatFrame {
             abletonPlayTriggered = true
         } else {
             abletonPlayTriggered = false

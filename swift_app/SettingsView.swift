@@ -539,6 +539,40 @@ struct MidiSyncSettingsTabView: View {
                     }
                     .padding(.vertical, 5)
                     
+                    // Trigger Offset Compensation (Offset do Disparo em ms)
+                    HStack {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(Color.white.opacity(0.20))
+                                .frame(width: 6, height: 6)
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                Text("Trigger Offset Compensation")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("Fine millisecond offset to eliminate flam between click and DAW")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.40))
+                            }
+                        }
+                        Spacer()
+                        HStack(spacing: 8) {
+                            Slider(value: $state.abletonTriggerOffsetMs, in: -100.0...100.0, step: 1.0)
+                                .frame(width: 105)
+                            Text(String(format: "%+.0f ms", state.abletonTriggerOffsetMs))
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(state.abletonTriggerOffsetMs == 0 ? .white.opacity(0.40) : .white)
+                                .frame(width: 54, alignment: .trailing)
+                            if state.abletonTriggerOffsetMs != 0 {
+                                Button("Reset") {
+                                    state.abletonTriggerOffsetMs = 0
+                                }
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white.opacity(0.70))
+                            }
+                        }
+                    }
+                    .padding(.vertical, 5)
+                    
                     // Sync Setlist Scenes to Ableton
                     HStack {
                         HStack(spacing: 12) {
