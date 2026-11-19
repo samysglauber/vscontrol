@@ -3661,14 +3661,14 @@ struct PlaybackAppView: View {
                     }
                 }
                 
+                // Se algum modal ou popover estiver aberto, não processa atalhos globais de playback nem mapeamento
+                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented || state.isShowingMetronomeEditor || state.quickEditingCueIdx != nil {
+                    return event
+                }
+                
                 // Mapeamento de Teclado (Modo de Aprendizado KEY MAP ou Execução de Atalhos Mapeados)
                 if NativeMappingManager.shared.handleKeyDown(event: event) {
                     return nil
-                }
-                
-                // Se algum modal ou popover estiver aberto, não processa atalhos globais de playback
-                if state.isAddSongSheetPresented || state.isQrModalPresented || state.isSongEditorPresented || state.isShowingMetronomeEditor || state.quickEditingCueIdx != nil {
-                    return event
                 }
                 if event.keyCode == 49 { // 49 = Barra de Espaço
                     state.playPause()
@@ -3765,8 +3765,8 @@ struct PlaybackAppView: View {
                     }
                 }
                 
-                // Atalhos Numéricos e Letras (sem teclas modificadoras como Cmd/Opt/Ctrl)
-                if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                // Fallback legado de atalhos (apenas se nenhum mapeamento estiver configurado)
+                if NativeMappingManager.shared.keyMappings.isEmpty && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
                     let char = event.charactersIgnoringModifiers ?? ""
                     
                     // Tecla L: Alterna o modo Loop 1x da seção focada ou da seção atual

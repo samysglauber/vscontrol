@@ -189,9 +189,35 @@ final class NativeMappingManager: ObservableObject {
     private let keyStorageKey = "vs_control_key_mappings"
     private let midiStorageKey = "vs_control_midi_mappings"
     
+    // Atalhos nativos padrão do VS Control (Space, I, L, 0, 1..8, etc.)
+    static let defaultKeyMappings: [MappableAction: KeyMapping] = [
+        .playPause: KeyMapping(keyCode: 49, displayName: "Space"),
+        .toggleInfinite: KeyMapping(keyCode: 34, displayName: "I"),
+        .toggleLoop: KeyMapping(keyCode: 37, displayName: "L"),
+        .fadeTracks: KeyMapping(keyCode: 29, displayName: "0"),
+        .song1: KeyMapping(keyCode: 18, displayName: "1"),
+        .song2: KeyMapping(keyCode: 19, displayName: "2"),
+        .song3: KeyMapping(keyCode: 20, displayName: "3"),
+        .song4: KeyMapping(keyCode: 21, displayName: "4"),
+        .song5: KeyMapping(keyCode: 23, displayName: "5"),
+        .song6: KeyMapping(keyCode: 22, displayName: "6"),
+        .song7: KeyMapping(keyCode: 26, displayName: "7"),
+        .song8: KeyMapping(keyCode: 28, displayName: "8"),
+        .prevSong: KeyMapping(keyCode: 126, displayName: "↑"),
+        .nextSong: KeyMapping(keyCode: 125, displayName: "↓"),
+        .prevSection: KeyMapping(keyCode: 123, displayName: "←"),
+        .nextSection: KeyMapping(keyCode: 124, displayName: "→")
+    ]
+    
     private init() {
         loadMappings()
         _ = NativeMIDIReceiver.shared // Inicializa escuta CoreMIDI nativa
+    }
+    
+    func resetKeyDefaults() {
+        self.keyMappings = Self.defaultKeyMappings
+        self.selectedAction = nil
+        saveMappings()
     }
     
     // MARK: - Seleção e Limpeza
@@ -257,8 +283,8 @@ final class NativeMappingManager: ObservableObject {
     // MARK: - Tratamento de Eventos de Teclado
     
     func handleKeyDown(event: NSEvent) -> Bool {
-        // 1. Se estiver no modo de Mapeamento de Teclado:
-        if mode == .key {
+        // 1. Se estiver no modo de Mapeamento (KEY MAP ou MIDI MAP):
+        if mode != .none {
             // Tecla Delete / Backspace (51) ou Forward Delete (117): limpa o botão selecionado!
             if event.keyCode == 51 || event.keyCode == 117 {
                 if let action = selectedAction {
@@ -273,11 +299,13 @@ final class NativeMappingManager: ObservableObject {
                     return true
                 }
             }
-            // Qualquer outra tecla: mapeia para a ação selecionada
-            if let action = selectedAction {
-                let name = keyDisplayName(for: event)
-                assignKey(action: action, keyCode: event.keyCode, name: name)
-                return true
+            // No modo KEY MAP, qualquer outra tecla atribui ao botão selecionado
+            if mode == .key {
+                if let action = selectedAction {
+                    let name = keyDisplayName(for: event)
+                    assignKey(action: action, keyCode: event.keyCode, name: name)
+                    return true
+                }
             }
             return false
         }
@@ -285,13 +313,35 @@ final class NativeMappingManager: ObservableObject {
         // 2. Se estiver em modo de execução normal (mode == .none):
         if mode == .none {
             // Procura se a tecla pressionada possui ação mapeada
-            for (action, mapping) in keyMappings where mapping.keyCode == event.keyCode {
-                executeAction(action)
-                return true
+            for (action, mapping) in keyMappings {
+                if mapping.keyCode == event.keyCode {
+                    executeAction(action)
+                    return true
+                }
+                // Suporte para teclado numérico equivalente a 0..8
+                if let alt = keypadAlternative(for: mapping.keyCode), alt == event.keyCode {
+                    executeAction(action)
+                    return true
+                }
             }
         }
         
         return false
+    }
+    
+    private func keypadAlternative(for keyCode: UInt16) -> UInt16? {
+        switch keyCode {
+        case 18: return 83 // 1
+        case 19: return 84 // 2
+        case 20: return 85 // 3
+        case 21: return 86 // 4
+        case 23: return 87 // 5
+        case 22: return 88 // 6
+        case 26: return 89 // 7
+        case 28: return 91 // 8
+        case 29: return 82 // 0
+        default: return nil
+        }
     }
     
     // MARK: - Tratamento de Eventos MIDI Recebidos
@@ -334,24 +384,42 @@ final class NativeMappingManager: ObservableObject {
             state.switchToPreviousSong()
         case .nextSection:
             if !state.currentCues.isEmpty {
-                let nextIdx = min(state.currentCues.count - 1, state.currentCueIdx + 1)
-                state.triggerCue(idx: nextIdx, quantize: true)
+                let curIdx: Int = {
+                    if let f = state.focusedCueIdx { return f }
+                    if let q = state.queuedCueIdx { return q }
+                    return state.currentCueIdx
+                }()
+                let nextIdx = min(state.currentCues.count - 1, curIdx + 1)
+                state.focusedCueIdx = nextIdx
             }
         case .prevSection:
             if !state.currentCues.isEmpty {
-                let prevIdx = max(0, state.currentCueIdx - 1)
-                state.triggerCue(idx: prevIdx, quantize: true)
+                let curIdx: Int = {
+                    if let f = state.focusedCueIdx { return f }
+                    if let q = state.queuedCueIdx { return q }
+                    return state.currentCueIdx
+                }()
+                let prevIdx = max(0, curIdx - 1)
+                state.focusedCueIdx = prevIdx
             }
         case .toggleLoop:
-            state.toggleLoop()
+            if let focusedIdx = state.focusedCueIdx {
+                state.toggleLoop(cueIdx: focusedIdx)
+            } else {
+                state.toggleLoop()
+            }
         case .toggleInfinite:
-            state.toggleInfinite()
+            if let focusedIdx = state.focusedCueIdx {
+                state.toggleInfinite(cueIdx: focusedIdx)
+            } else {
+                state.toggleInfinite()
+            }
         case .muteClick:
             state.toggleClickMute()
         case .muteTracks:
             state.toggleVsMute()
         case .fadeTracks:
-            state.toggleFadeTracks()
+            state.toggleFadeTracks(duration: 3.0)
         case .song1: state.playSetlistSong(at: 0)
         case .song2: state.playSetlistSong(at: 1)
         case .song3: state.playSetlistSong(at: 2)
@@ -418,13 +486,24 @@ final class NativeMappingManager: ObservableObject {
     }
     
     private func loadMappings() {
-        if let data = UserDefaults.standard.data(forKey: keyStorageKey),
-           let loaded = try? JSONDecoder().decode([MappableAction: KeyMapping].self, from: data) {
+        let seeded = UserDefaults.standard.bool(forKey: "vs_control_key_mappings_seeded_v3")
+        if seeded,
+           let data = UserDefaults.standard.data(forKey: keyStorageKey),
+           let loaded = try? JSONDecoder().decode([MappableAction: KeyMapping].self, from: data),
+           !loaded.isEmpty {
             self.keyMappings = loaded
+        } else {
+            // Inicializa com os atalhos nativos padrão do VS Control
+            self.keyMappings = Self.defaultKeyMappings
+            UserDefaults.standard.set(true, forKey: "vs_control_key_mappings_seeded_v3")
+            saveMappings()
         }
+        
         if let data = UserDefaults.standard.data(forKey: midiStorageKey),
            let loaded = try? JSONDecoder().decode([MappableAction: MIDIMapping].self, from: data) {
             self.midiMappings = loaded
+        } else {
+            self.midiMappings = [:]
         }
     }
 }
@@ -450,68 +529,70 @@ struct MappableControlModifier: ViewModifier {
     @ObservedObject var mapping = NativeMappingManager.shared
     
     private var isKey: Bool { mapping.mode == .key }
+    private var isMidi: Bool { mapping.mode == .midi }
+    private var isMappingActive: Bool { mapping.mode != .none }
+    
+    // Cores fiéis ao estilo DAW / Ableton Live: Âmbar/Laranja no KEY MAP e Roxo/Azulado no MIDI MAP
     private var accentColor: Color {
-        isKey ? Color(red: 1.0, green: 0.65, blue: 0.15) : Color(red: 0.60, green: 0.45, blue: 1.0)
+        isKey ? Color(red: 0.95, green: 0.55, blue: 0.15) : Color(red: 0.60, green: 0.45, blue: 1.0)
     }
     private var isSelected: Bool { mapping.selectedAction == action }
     
     private var mappedText: String? {
         if isKey {
             return mapping.keyMappings[action]?.displayName
-        } else {
+        } else if isMidi {
             return mapping.midiMappings[action]?.displayName
         }
+        return nil
     }
     
     func body(content: Content) -> some View {
-        if mapping.mode == .none {
+        if !isMappingActive {
             content
         } else {
-            ZStack(alignment: .topTrailing) {
-                content
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cornerRadius)
-                            // Foco de Aprendizado: Contorno sólido nítido bem definido sem pulsação/brilho
-                            .stroke(
-                                isSelected ? accentColor : accentColor.opacity(0.35),
-                                lineWidth: isSelected ? 2.2 : 1.0
-                            )
-                    )
-                
-                // Badge com a tecla ou MIDI mapeado
-                if let text = mappedText {
-                    Text(text)
-                        .font(.system(size: 8.5, weight: .black, design: .monospaced))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Color.black.opacity(0.85))
-                        .cornerRadius(3.5)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3.5)
-                                .stroke(accentColor, lineWidth: 0.8)
-                        )
-                        .offset(x: 4, y: -4)
+            content
+                .overlay(
+                    // 1. Tint característico de mapeamento estilo Ableton Live (âmbar ou roxo)
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(isSelected ? accentColor.opacity(0.38) : accentColor.opacity(0.20))
                         .allowsHitTesting(false)
-                } else {
-                    Text("+")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundColor(accentColor.opacity(0.8))
-                        .frame(width: 13, height: 13)
-                        .background(Color.black.opacity(0.75))
-                        .cornerRadius(3)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(accentColor.opacity(0.4), lineWidth: 0.6)
+                )
+                .overlay(
+                    // 2. Contorno sólido nítido (SEM pulsação ou brilho difuso)
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(
+                            isSelected ? Color.white : accentColor.opacity(0.40),
+                            lineWidth: isSelected ? 2.5 : 1.0
                         )
-                        .offset(x: 3, y: -3)
                         .allowsHitTesting(false)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                mapping.selectAction(action)
-            }
+                )
+                .overlay(
+                    // 3. Camada transparente cobrindo 100% da área do botão para capturar clique
+                    Color.black.opacity(0.001)
+                        .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
+                        .onTapGesture {
+                            mapping.selectAction(action)
+                        }
+                )
+                .overlay(
+                    // 4. Badge branca estilo DAW com texto preto no canto superior direito (SOMENTE se houver atalho!)
+                    Group {
+                        if let text = mappedText {
+                            Text(text)
+                                .font(.system(size: 9.5, weight: .black, design: .rounded))
+                                .foregroundColor(Color.black)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                                .shadow(color: Color.black.opacity(0.5), radius: 2, x: 0, y: 1)
+                                .offset(x: 4, y: -4)
+                                .allowsHitTesting(false)
+                        }
+                    },
+                    alignment: .topTrailing
+                )
         }
     }
 }
@@ -646,6 +727,21 @@ struct BottomMappingBar: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Clear mapping for selected button (or press Delete)")
+                }
+                
+                // Botão Restaurar Atalhos Padrão (KEY MAP)
+                if mapping.mode == .key {
+                    Button(action: { mapping.resetKeyDefaults() }) {
+                        Text("Reset Defaults")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.white.opacity(0.65))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Restore default keyboard shortcuts (Space, I, L, 0, 1-8)")
                 }
                 
                 // Botão de Limpar Tudo
