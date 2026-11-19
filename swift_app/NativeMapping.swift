@@ -258,6 +258,9 @@ final class NativeMappingManager: ObservableObject {
     // MARK: - Atribuição de Teclado
     
     func assignKey(action: MappableAction, keyCode: UInt16, name: String) {
+        // Tecla Enter/Return (36) e Keypad Enter (76) são estritamente reservadas pelo sistema e não podem ser mapeadas
+        guard keyCode != 36 && keyCode != 76 else { return }
+        
         // Remove qualquer ação anterior mapeada para a mesma tecla
         for (act, mapping) in keyMappings where mapping.keyCode == keyCode {
             keyMappings.removeValue(forKey: act)
@@ -298,6 +301,10 @@ final class NativeMappingManager: ObservableObject {
                     selectedAction = nil
                     return true
                 }
+            }
+            // Tecla Enter/Return (36) ou Keypad Enter (76): estritamente reservadas pelo sistema e não podem ser mapeadas
+            if event.keyCode == 36 || event.keyCode == 76 {
+                return true // Consome no modo de mapeamento para não disparar saltos acidentais
             }
             // No modo KEY MAP, qualquer outra tecla atribui ao botão selecionado
             if mode == .key {
@@ -491,7 +498,8 @@ final class NativeMappingManager: ObservableObject {
            let data = UserDefaults.standard.data(forKey: keyStorageKey),
            let loaded = try? JSONDecoder().decode([MappableAction: KeyMapping].self, from: data),
            !loaded.isEmpty {
-            self.keyMappings = loaded
+            // Garante que Enter/Return nunca faça parte dos atalhos carregados
+            self.keyMappings = loaded.filter { $0.value.keyCode != 36 && $0.value.keyCode != 76 }
         } else {
             // Inicializa com os atalhos nativos padrão do VS Control
             self.keyMappings = Self.defaultKeyMappings
