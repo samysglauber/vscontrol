@@ -4097,6 +4097,103 @@ struct TopBarView: View {
 // ==========================================
 // 6. SETLIST CAROUSEL COM DRAG-AND-DROP E EXCLUSÃO EM EDIT MODE
 // ==========================================
+struct SetlistScrollWheelHook: NSViewRepresentable {
+    func makeNSView(context: Context) -> SetlistScrollNSView {
+        SetlistScrollNSView()
+    }
+    func updateNSView(_ nsView: SetlistScrollNSView, context: Context) {
+        nsView.findScrollView()
+    }
+}
+
+class SetlistScrollNSView: NSView {
+    weak var targetScrollView: NSScrollView?
+    var monitor: Any?
+    
+    override var mouseDownCanMoveWindow: Bool { false }
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            findScrollView()
+            DispatchQueue.main.async { [weak self] in
+                self?.findScrollView()
+            }
+            setupMonitor()
+        } else {
+            removeMonitor()
+        }
+    }
+    
+    func findScrollView() {
+        if let sv = self.enclosingScrollView {
+            self.targetScrollView = sv
+            return
+        }
+        var current: NSView? = self
+        while let parent = current?.superview {
+            if let sv = parent as? NSScrollView {
+                self.targetScrollView = sv
+                return
+            }
+            current = parent
+        }
+    }
+    
+    func setupMonitor() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            guard let self = self, let window = self.window, event.window == window else {
+                return event
+            }
+            if self.targetScrollView == nil {
+                self.findScrollView()
+            }
+            guard let sv = self.targetScrollView else { return event }
+            
+            let mouseInWindow = event.locationInWindow
+            let mouseInSV = sv.convert(mouseInWindow, from: nil)
+            guard sv.bounds.contains(mouseInSV) else { return event }
+            
+            let deltaY = event.scrollingDeltaY
+            let deltaX = event.scrollingDeltaX
+            
+            var horizontalDelta: CGFloat = 0.0
+            if abs(deltaX) > 0.001 {
+                horizontalDelta = deltaX
+            } else if abs(deltaY) > 0.001 {
+                horizontalDelta = deltaY
+            }
+            
+            if abs(horizontalDelta) > 0.001 {
+                let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1.0 : 22.0
+                let shift = -horizontalDelta * factor
+                
+                let clipView = sv.contentView
+                var newOrigin = clipView.bounds.origin
+                let docWidth = sv.documentView?.frame.width ?? 0
+                let maxOffsetX = max(0, docWidth - clipView.bounds.width)
+                newOrigin.x = max(0, min(maxOffsetX, newOrigin.x + shift))
+                clipView.scroll(to: newOrigin)
+                sv.reflectScrolledClipView(clipView)
+                return nil
+            }
+            return event
+        }
+    }
+    
+    func removeMonitor() {
+        if let m = monitor {
+            NSEvent.removeMonitor(m)
+            monitor = nil
+        }
+    }
+    
+    deinit {
+        removeMonitor()
+    }
+}
+
 struct SetlistCarouselView: View {
     @ObservedObject var state: PlaybackState
     @State private var lastClickedSongId: String? = nil
@@ -4104,174 +4201,211 @@ struct SetlistCarouselView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
-                        let isSelected = state.currentSong?.id == item.song.id
-                        let isCountingIn = isSelected && state.isCurrentSongCountingIn
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        SetlistScrollWheelHook()
+                            .frame(width: 1, height: 1)
                         
-                        VStack(alignment: .leading, spacing: 6) {
-                            ZStack(alignment: .topTrailing) {
-                                // Card da Música com Capa do Álbum
-                                Button(action: {
-                                    if !state.isEditMode {
-                                        let now = Date()
-                                        let isDoubleClick = (lastClickedSongId == item.song.id && now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval)
-                                        lastClickedSongId = item.song.id
-                                        lastClickTime = now
-                                        
-                                        if state.isPlaying {
-                                            if isDoubleClick {
-                                                // Duplo clique enquanto toca: troca imediata com crossfade e contagem
-                                                state.switchSetlistSongWithCrossfade(to: item)
-                                            }
-                                            // Com 1 clique enquanto já tiver uma música tocando: NÃO ACONTECE NADA!
-                                        } else {
-                                            if isDoubleClick {
-                                                state.loadSong(item.song, cues: item.cues, autoPlay: true)
+                        ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
+                            let isSelected = state.currentSong?.id == item.song.id
+                            let isCountingIn = isSelected && state.isCurrentSongCountingIn
+                            
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack(alignment: .topTrailing) {
+                                    // Card da Música com Capa do Álbum
+                                    Button(action: {
+                                        if !state.isEditMode {
+                                            let now = Date()
+                                            let isDoubleClick = (lastClickedSongId == item.song.id && now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval)
+                                            lastClickedSongId = item.song.id
+                                            lastClickTime = now
+                                            
+                                            if state.isPlaying {
+                                                if isDoubleClick {
+                                                    // Duplo clique enquanto toca: troca imediata com crossfade e contagem
+                                                    state.switchSetlistSongWithCrossfade(to: item)
+                                                }
+                                                // Com 1 clique enquanto já tiver uma música tocando: NÃO ACONTECE NADA!
                                             } else {
-                                                state.loadSong(item.song, cues: item.cues, autoPlay: false)
+                                                if isDoubleClick {
+                                                    state.loadSong(item.song, cues: item.cues, autoPlay: true)
+                                                } else {
+                                                    state.loadSong(item.song, cues: item.cues, autoPlay: false)
+                                                }
                                             }
                                         }
+                                    }) {
+                                        SongCoverView(
+                                            song: item.song,
+                                            width: 160,
+                                            height: 88,
+                                            cornerRadius: 10,
+                                            isSelected: isSelected,
+                                            isCountingIn: isCountingIn,
+                                            refreshId: state.coverRefreshTrigger
+                                        )
                                     }
-                                }) {
-                                    SongCoverView(
-                                        song: item.song,
-                                        width: 160,
-                                        height: 88,
-                                        cornerRadius: 10,
-                                        isSelected: isSelected,
-                                        isCountingIn: isCountingIn,
-                                        refreshId: state.coverRefreshTrigger
-                                    )
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                                .frame(width: 160, height: 88)
-                                .contextMenu {
-                                    if item.song.isMetronomeTrack {
-                                        Button(action: {
-                                            state.openMetronomeEditor(for: item)
-                                        }) {
-                                            Label("Edit Metronome...", systemImage: "metronome")
-                                        }
-                                    } else {
-                                        Button(action: {
-                                            state.openCoverPicker(for: item.song)
-                                        }) {
-                                            Label("Change Cover...", systemImage: "photo.badge.plus")
-                                        }
-                                        
-                                        if item.song.has_cover == true {
-                                            Button(role: .destructive, action: {
-                                                state.removeCover(for: item.song)
+                                    .buttonStyle(PlainButtonStyle())
+                                    .frame(width: 160, height: 88)
+                                    .contextMenu {
+                                        if item.song.isMetronomeTrack {
+                                            Button(action: {
+                                                state.openMetronomeEditor(for: item)
                                             }) {
-                                                Label("Remove Cover", systemImage: "trash")
+                                                Label("Edit Metronome...", systemImage: "metronome")
+                                            }
+                                        } else {
+                                            Button(action: {
+                                                state.openCoverPicker(for: item.song)
+                                            }) {
+                                                Label("Change Cover...", systemImage: "photo.badge.plus")
+                                            }
+                                            
+                                            if item.song.has_cover == true {
+                                                Button(role: .destructive, action: {
+                                                    state.removeCover(for: item.song)
+                                                }) {
+                                                    Label("Remove Cover", systemImage: "trash")
+                                                }
+                                            }
+                                            
+                                            Divider()
+                                            
+                                            Button(action: {
+                                                state.openSongEditor(for: item.song)
+                                            }) {
+                                                Label("Edit Song", systemImage: "slider.horizontal.3")
                                             }
                                         }
                                         
                                         Divider()
                                         
                                         Button(action: {
-                                            state.openSongEditor(for: item.song)
+                                            state.playSetlistSong(at: index)
                                         }) {
-                                            Label("Edit Song", systemImage: "slider.horizontal.3")
+                                            Label("Play Now", systemImage: "play.fill")
+                                        }
+                                        
+                                        Button(role: .destructive, action: {
+                                            state.removeSetlistSong(at: index)
+                                        }) {
+                                            Label("Remove from Setlist", systemImage: "trash")
                                         }
                                     }
-                                    
-                                    Divider()
-                                    
-                                    Button(action: {
-                                        state.playSetlistSong(at: index)
-                                    }) {
-                                        Label("Play Now", systemImage: "play.fill")
+                                    .onDrag {
+                                        guard state.isEditMode else { return NSItemProvider() }
+                                        state.draggedSetlistSong = item
+                                        return NSItemProvider(object: item.id.uuidString as NSString)
                                     }
+                                    .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
                                     
-                                    Button(role: .destructive, action: {
-                                        state.removeSetlistSong(at: index)
-                                    }) {
-                                        Label("Remove from Setlist", systemImage: "trash")
+                                    // Indicação Numérica Minimalista (1, 2, 3...) no Canto Superior Esquerdo
+                                    Text("\(index + 1)")
+                                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.92))
+                                        .frame(minWidth: 17, minHeight: 17)
+                                        .padding(.horizontal, 3.5)
+                                        .background(Color.black.opacity(0.68))
+                                        .cornerRadius(4.5)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4.5)
+                                                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                                        )
+                                        .shadow(color: Color.black.opacity(0.50), radius: 2, x: 0, y: 1)
+                                        .padding(6)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                        .allowsHitTesting(false)
+                                    
+                                    // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
+                                    if state.isEditMode {
+                                        Button(action: { state.removeSetlistSong(at: index) }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 16))
+                                                .foregroundColor(Color.red)
+                                                .background(Color.white.clipShape(Circle()))
+                                                .padding(4)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .transition(.scale.combined(with: .opacity))
                                     }
                                 }
-                                .onDrag {
-                                    guard state.isEditMode else { return NSItemProvider() }
-                                    state.draggedSetlistSong = item
-                                    return NSItemProvider(object: item.id.uuidString as NSString)
-                                }
-                                .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
+                                .frame(width: 160, height: 88)
                                 
-                                // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
-                                if state.isEditMode {
-                                    Button(action: { state.removeSetlistSong(at: index) }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 16))
-                                            .foregroundColor(Color.red)
-                                            .background(Color.white.clipShape(Circle()))
-                                            .padding(4)
+                                // Info da Música Embaixo (Apenas o Nome da Música)
+                                HStack(alignment: .center, spacing: 4) {
+                                    if isSelected {
+                                        Image(systemName: "play.fill")
+                                            .font(.system(size: 8, weight: .bold))
+                                            .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
                                     }
-                                    .buttonStyle(PlainButtonStyle())
-                                    .transition(.scale.combined(with: .opacity))
+                                    
+                                    Text(item.song.name)
+                                        .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
                                 }
+                                .frame(width: 160, alignment: .leading)
                             }
-                            .frame(width: 160, height: 88)
+                            .id(item.song.id)
+                            .opacity(isSelected ? 1.0 : 0.7)
+                            .animation(.easeInOut(duration: 0.2), value: isSelected)
                             
-                            // Info da Música Embaixo (Apenas o Nome da Música)
-                            HStack(alignment: .center, spacing: 4) {
-                                if isSelected {
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
-                                }
-                                
-                                Text(item.song.name)
-                                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
+                            // Botão de Transição com Popover (Cue Next Song, Pause, Crossfade)
+                            if index < state.setlist.count - 1 {
+                                SetlistTransitionButton(index: index, state: state)
                             }
-                            .frame(width: 160, alignment: .leading)
                         }
-                        .opacity(isSelected ? 1.0 : 0.7)
-                        .animation(.easeInOut(duration: 0.2), value: isSelected)
                         
-                        // Botão de Transição com Popover (Cue Next Song, Pause, Crossfade)
-                        if index < state.setlist.count - 1 {
-                            SetlistTransitionButton(index: index, state: state)
-                        }
-                    }
-                    
-                    // Card "Add a Song" no mesmo formato e tamanho das músicas (adicionando ao lado)
-                    Button(action: { state.isAddSongSheetPresented = true }) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.85))
-                                    .frame(width: 160, height: 88)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(Color.white.opacity(0.20), lineWidth: 1.2)
-                                    )
-                                
-                                VStack(spacing: 6) {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 22, weight: .light))
-                                        .foregroundColor(.white)
-                                    Text("Add a Song")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundColor(.white)
+                        // Card "Add a Song" no mesmo formato e tamanho das músicas (adicionando ao lado)
+                        Button(action: { state.isAddSongSheetPresented = true }) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.85))
+                                        .frame(width: 160, height: 88)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(Color.white.opacity(0.20), lineWidth: 1.2)
+                                        )
+                                    
+                                    VStack(spacing: 6) {
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 22, weight: .light))
+                                            .foregroundColor(.white)
+                                        Text("Add a Song")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
                                 }
+                                .frame(width: 160, height: 88)
+                                
+                                Text("")
+                                    .font(.system(size: 11))
+                                    .frame(width: 160, height: 16)
                             }
-                            .frame(width: 160, height: 88)
-                            
-                            Text("")
-                                .font(.system(size: 11))
-                                .frame(width: 160, height: 16)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Add a song to setlist")
+                        .id("setlist_add_song_card")
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                }
+                .onChange(of: state.isEditMode) { _, isEdit in
+                    if isEdit {
+                        withAnimation(.easeInOut(duration: 0.45)) {
+                            proxy.scrollTo("setlist_add_song_card", anchor: .trailing)
+                        }
+                    } else {
+                        if let cur = state.currentSong {
+                            withAnimation(.easeInOut(duration: 0.35)) {
+                                proxy.scrollTo(cur.id, anchor: .center)
+                            }
                         }
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Add a song to setlist")
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
             }
         }
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
