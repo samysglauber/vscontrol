@@ -792,7 +792,13 @@ class PlaybackState: ObservableObject {
         }
     }
     @Published var draggedSetlistSong: SetlistSong? = nil
-    @Published var isEditMode: Bool = false
+    @Published var isEditMode: Bool = false {
+        didSet {
+            if !isEditMode {
+                draggedSetlistSong = nil
+            }
+        }
+    }
     
     @Published var currentSong: SongItem? = nil
     @Published var currentCues: [CueSection] = []
@@ -3433,7 +3439,9 @@ struct SetlistDropDelegate: DropDelegate {
     @ObservedObject var state: PlaybackState
     
     func performDrop(info: DropInfo) -> Bool {
-        state.draggedSetlistSong = nil
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            state.draggedSetlistSong = nil
+        }
         state.saveSetlistState()
         return true
     }
@@ -3445,9 +3453,13 @@ struct SetlistDropDelegate: DropDelegate {
               let from = state.setlist.firstIndex(where: { $0.id == dragged.id }),
               let to = state.setlist.firstIndex(where: { $0.id == item.id }) else { return }
         
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
             state.setlist.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
         }
+    }
+    
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        return DropProposal(operation: .move)
     }
 }
 
@@ -4210,10 +4222,11 @@ struct SetlistCarouselView: View {
                         ForEach(Array(state.setlist.enumerated()), id: \.element.id) { index, item in
                             let isSelected = state.currentSong?.id == item.song.id
                             let isCountingIn = isSelected && state.isCurrentSongCountingIn
+                            let isBeingDragged = state.isEditMode && (state.draggedSetlistSong?.id == item.id)
                             
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack(alignment: .topTrailing) {
-                                    // Card da Música com Capa do Álbum
+                                    // Card da Música com Capa do Álbum ou Efeito Raio-X durante Arraste
                                     Button(action: {
                                         if !state.isEditMode {
                                             let now = Date()
@@ -4236,15 +4249,60 @@ struct SetlistCarouselView: View {
                                             }
                                         }
                                     }) {
-                                        SongCoverView(
-                                            song: item.song,
-                                            width: 160,
-                                            height: 88,
-                                            cornerRadius: 10,
-                                            isSelected: isSelected,
-                                            isCountingIn: isCountingIn,
-                                            refreshId: state.coverRefreshTrigger
-                                        )
+                                        ZStack {
+                                            if isBeingDragged {
+                                                // Efeito Raio-X / Ghost Cover (Ideia 3):
+                                                // Capa esmaecida e desfocada ao fundo + borda pontilhada + nota musical central
+                                                ZStack {
+                                                    // 1. Capa original dessaturada, desfocada e esmaecida
+                                                    SongCoverView(
+                                                        song: item.song,
+                                                        width: 160,
+                                                        height: 88,
+                                                        cornerRadius: 10,
+                                                        isSelected: false,
+                                                        isCountingIn: false,
+                                                        refreshId: state.coverRefreshTrigger
+                                                    )
+                                                    .saturation(0)
+                                                    .blur(radius: 6)
+                                                    .opacity(0.18)
+                                                    
+                                                    // 2. Fundo escuro fosco translúcido
+                                                    RoundedRectangle(cornerRadius: 10)
+                                                        .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.65))
+                                                    
+                                                    // 3. Borda pontilhada / tracejada elegante
+                                                    RoundedRectangle(cornerRadius: 10)
+                                                        .strokeBorder(
+                                                            style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]),
+                                                            antialiased: true
+                                                        )
+                                                        .foregroundColor(Color.white.opacity(0.40))
+                                                    
+                                                    // 4. Ícone de Nota Musical Centralizado
+                                                    Image(systemName: "music.note")
+                                                        .font(.system(size: 24, weight: .medium))
+                                                        .foregroundColor(.white.opacity(0.65))
+                                                        .shadow(color: Color.black.opacity(0.6), radius: 3)
+                                                }
+                                                .frame(width: 160, height: 88)
+                                                .transition(.opacity)
+                                            } else {
+                                                // Capa normal da música
+                                                SongCoverView(
+                                                    song: item.song,
+                                                    width: 160,
+                                                    height: 88,
+                                                    cornerRadius: 10,
+                                                    isSelected: isSelected,
+                                                    isCountingIn: isCountingIn,
+                                                    refreshId: state.coverRefreshTrigger
+                                                )
+                                                .transition(.opacity)
+                                            }
+                                        }
+                                        .animation(.easeInOut(duration: 0.22), value: isBeingDragged)
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                     .frame(width: 160, height: 88)
@@ -4295,30 +4353,32 @@ struct SetlistCarouselView: View {
                                     }
                                     .onDrag {
                                         guard state.isEditMode else { return NSItemProvider() }
-                                        state.draggedSetlistSong = item
+                                        withAnimation(.easeInOut(duration: 0.20)) {
+                                            state.draggedSetlistSong = item
+                                        }
                                         return NSItemProvider(object: item.id.uuidString as NSString)
                                     }
                                     .onDrop(of: [UTType.text], delegate: SetlistDropDelegate(item: item, state: state))
                                     
-                                    // Indicação Numérica Minimalista (1, 2, 3...) no Canto Superior Esquerdo
+                                    // Indicação Numérica (Opção A com cantos arredondados) no Canto Superior Esquerdo
                                     Text("\(index + 1)")
-                                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white.opacity(0.92))
-                                        .frame(minWidth: 17, minHeight: 17)
-                                        .padding(.horizontal, 3.5)
-                                        .background(Color.black.opacity(0.68))
-                                        .cornerRadius(4.5)
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.95))
+                                        .frame(width: (index + 1) >= 10 ? 24 : 20, height: 20)
+                                        .background(Color.black.opacity(0.72))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4.5))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 4.5)
-                                                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
                                         )
-                                        .shadow(color: Color.black.opacity(0.50), radius: 2, x: 0, y: 1)
+                                        .shadow(color: Color.black.opacity(0.55), radius: 2, x: 0, y: 1)
                                         .padding(6)
+                                        .opacity(isBeingDragged ? 0.45 : 1.0)
                                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                                         .allowsHitTesting(false)
                                     
-                                    // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE
-                                    if state.isEditMode {
+                                    // Botão Excluir (✕) - VISÍVEL APENAS EM EDIT MODE (e oculto enquanto arrasta)
+                                    if state.isEditMode && !isBeingDragged {
                                         Button(action: { state.removeSetlistSong(at: index) }) {
                                             Image(systemName: "xmark.circle.fill")
                                                 .font(.system(size: 16))
@@ -4334,7 +4394,7 @@ struct SetlistCarouselView: View {
                                 
                                 // Info da Música Embaixo (Apenas o Nome da Música)
                                 HStack(alignment: .center, spacing: 4) {
-                                    if isSelected {
+                                    if isSelected && !isBeingDragged {
                                         Image(systemName: "play.fill")
                                             .font(.system(size: 8, weight: .bold))
                                             .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.5))
@@ -4342,13 +4402,14 @@ struct SetlistCarouselView: View {
                                     
                                     Text(item.song.name)
                                         .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(isBeingDragged ? .white.opacity(0.35) : .white)
+                                        .italic(isBeingDragged)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                 }
                                 .frame(width: 160, alignment: .leading)
                             }
-                            .id(item.song.id)
+                            .id(item.id)
                             .opacity(isSelected ? 1.0 : 0.7)
                             .animation(.easeInOut(duration: 0.2), value: isSelected)
                             
@@ -4392,6 +4453,7 @@ struct SetlistCarouselView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.82), value: state.setlist.map { $0.id })
                 }
                 .onChange(of: state.isEditMode) { _, isEdit in
                     if isEdit {
@@ -4399,10 +4461,19 @@ struct SetlistCarouselView: View {
                             proxy.scrollTo("setlist_add_song_card", anchor: .trailing)
                         }
                     } else {
-                        if let cur = state.currentSong {
+                        if let cur = state.currentSong,
+                           let activeItem = state.setlist.first(where: { $0.song.id == cur.id }) {
                             withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo(cur.id, anchor: .center)
+                                proxy.scrollTo(activeItem.id, anchor: .center)
                             }
+                        }
+                    }
+                }
+                .onChange(of: state.currentSong?.id) { _, newSongId in
+                    if let songId = newSongId,
+                       let activeItem = state.setlist.first(where: { $0.song.id == songId }) {
+                        withAnimation(.easeInOut(duration: 0.38)) {
+                            proxy.scrollTo(activeItem.id, anchor: .center)
                         }
                     }
                 }
