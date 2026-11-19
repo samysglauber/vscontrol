@@ -3569,28 +3569,39 @@ struct PlaybackAppView: View {
     @ObservedObject var state: PlaybackState = PlaybackState.shared
     
     var body: some View {
-        VStack(spacing: 0) {
-            // 1. Top Bar com Botão EDIT, Métricas e Transporte
-            TopBarView(state: state)
-            
-            Divider().background(Color.white.opacity(0.08))
-            
-            // 2. Carrossel Reordenável por Arraste (Drag-and-Drop)
-            SetlistCarouselView(state: state)
-            
-            Divider().background(Color.white.opacity(0.08))
-            
-            // 3. Espectrograma Real & Blocos de Seções Quantizados
-            SpectrogramWaveformView(state: state)
-            
-            Divider().background(Color.white.opacity(0.08))
-            
-            // 4. Barra de Mapeamento no Modo EDIT e Mixer Dock
-            if state.isEditMode {
-                BottomMappingBar(state: state)
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                // 1. Top Bar com Botão EDIT, Métricas e Transporte
+                TopBarView(state: state)
+                
                 Divider().background(Color.white.opacity(0.08))
+                
+                // 2. Carrossel Reordenável por Arraste (Drag-and-Drop)
+                SetlistCarouselView(state: state)
+                
+                Divider().background(Color.white.opacity(0.08))
+                
+                // 3. Espectrograma Real & Blocos de Seções Quantizados
+                SpectrogramWaveformView(state: state)
+                
+                Divider().background(Color.white.opacity(0.08))
+                
+                // 4. Mixer Dock
+                BottomMixerDock(state: state)
             }
-            BottomMixerDock(state: state)
+            
+            // Cápsula Flutuante de Mapeamento (Modo EDIT - Pairando acima do Mixer)
+            if state.isEditMode {
+                FloatingMappingHUD(state: state)
+                    .padding(.bottom, 62)
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity.combined(with: .scale(scale: 0.95))
+                        )
+                    )
+                    .zIndex(100)
+            }
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
         .edgesIgnoringSafeArea(.all)

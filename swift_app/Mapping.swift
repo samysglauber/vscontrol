@@ -649,174 +649,194 @@ struct MappableControlModifier: ViewModifier {
 }
 
 // ==========================================
-// 7. BARRA INFERIOR DE MAPEAMENTO NO MODO EDIT
+// 7. CÁPSULA FLUTUANTE DE MAPEAMENTO (MODO EDIT)
 // ==========================================
 
-struct BottomMappingBar: View {
+typealias BottomMappingBar = FloatingMappingHUD
+
+struct FloatingMappingHUD: View {
     @ObservedObject var state: PlaybackState
     @ObservedObject var mapping = MappingManager.shared
     
     var body: some View {
-        HStack(spacing: 12) {
-            // Seletor de Modo: Mixer vs KEY MAP vs MIDI MAP
-            HStack(spacing: 4) {
-                // Modo Mixer
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        mapping.mode = .none
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "slider.vertical.3")
-                            .font(.system(size: 11))
-                        Text("Mixer")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(mapping.mode == .none ? .white : .white.opacity(0.5))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4.5)
-                    .background(mapping.mode == .none ? Color.white.opacity(0.18) : Color.clear)
-                    .cornerRadius(6)
-                }
-                .buttonStyle(PlainButtonStyle())
-                
+        HStack(spacing: 10) {
+            // Seletor de Modo: KEY MAP vs MIDI MAP
+            HStack(spacing: 3) {
                 // Modo KEY MAP
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
                         mapping.mode = (mapping.mode == .key ? .none : .key)
                     }
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: "keyboard")
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, weight: .semibold))
                         Text("KEY MAP")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     }
-                    .foregroundColor(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15) : .white.opacity(0.6))
+                    .foregroundColor(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15) : .white.opacity(0.65))
                     .padding(.horizontal, 9)
-                    .padding(.vertical, 4.5)
-                    .background(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.20) : Color.clear)
+                    .padding(.vertical, 5)
+                    .background(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.24) : Color.white.opacity(0.04))
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.5) : Color.clear, lineWidth: 1)
+                            .stroke(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.60) : Color.white.opacity(0.06), lineWidth: 1)
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+                .help("Map keyboard keys to app controls")
                 
                 // Modo MIDI MAP
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
                         mapping.mode = (mapping.mode == .midi ? .none : .midi)
                     }
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: "pianokeys")
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, weight: .semibold))
                         Text("MIDI MAP")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     }
-                    .foregroundColor(mapping.mode == .midi ? Color(red: 0.65, green: 0.50, blue: 1.0) : .white.opacity(0.6))
+                    .foregroundColor(mapping.mode == .midi ? Color(red: 0.65, green: 0.50, blue: 1.0) : .white.opacity(0.65))
                     .padding(.horizontal, 9)
-                    .padding(.vertical, 4.5)
-                    .background(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.20) : Color.clear)
+                    .padding(.vertical, 5)
+                    .background(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.24) : Color.white.opacity(0.04))
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.5) : Color.clear, lineWidth: 1)
+                            .stroke(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.60) : Color.white.opacity(0.06), lineWidth: 1)
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+                .help("Map MIDI controller notes and CC to app controls")
             }
-            .padding(2.5)
-            .background(Color.white.opacity(0.06))
+            .padding(2)
+            .background(Color.black.opacity(0.30))
             .cornerRadius(8)
             
-            // Divisor
+            // Divisor vertical
             Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 1, height: 18)
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1, height: 16)
             
-            // Texto de Instrução Dinâmico
+            // Instrução Dinâmica ou Status
             if mapping.mode != .none {
                 HStack(spacing: 6) {
                     if let selected = mapping.selectedAction {
                         Text("Mapeando:")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.white.opacity(0.5))
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.white.opacity(0.50))
                         Text(selected.displayName)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15) : Color(red: 0.65, green: 0.50, blue: 1.0))
                         
-                        Text(mapping.mode == .key ? "➔ Aperte a tecla física (Delete para limpar)" : "➔ Pise no pedal / envie MIDI (Delete para limpar)")
+                        Text(mapping.mode == .key ? "➔ aperte uma tecla" : "➔ envie comando MIDI")
                             .font(.system(size: 10.5))
                             .foregroundColor(.white.opacity(0.65))
                     } else {
-                        Text(mapping.mode == .key ? "Clique em qualquer botão marcado na tela para associar uma tecla" : "Clique em qualquer botão marcado na tela para associar um comando MIDI")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.55))
+                        Text(mapping.mode == .key ? "Clique em qualquer botão marcado para mapear" : "Clique em qualquer botão marcado para mapear via MIDI")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.white.opacity(0.60))
                     }
                 }
                 
-                Spacer()
+                // Divisor sutil
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(width: 1, height: 14)
                 
-                // Botão de Limpeza do Botão Selecionado
+                // Botão Clear Selected
                 if mapping.selectedAction != nil {
                     Button(action: { mapping.clearSelectedMapping() }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "delete.left")
-                                .font(.system(size: 10))
+                                .font(.system(size: 9.5))
                             Text("Clear")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                         }
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.white.opacity(0.85))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3.5)
-                        .background(Color.red.opacity(0.20))
+                        .background(Color.red.opacity(0.22))
                         .cornerRadius(5)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.red.opacity(0.4), lineWidth: 0.8))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.red.opacity(0.45), lineWidth: 0.8))
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Clear mapping for selected button (or press Delete)")
                 }
                 
-                // Botão Restaurar Atalhos Padrão (KEY MAP)
+                // Botão Reset Defaults (apenas no modo Key)
                 if mapping.mode == .key {
                     Button(action: { mapping.resetKeyDefaults() }) {
                         Text("Reset Defaults")
-                            .font(.system(size: 10.5, weight: .medium))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.white.opacity(0.65))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3.5)
-                            .background(Color.white.opacity(0.08))
+                            .background(Color.white.opacity(0.06))
                             .cornerRadius(5)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Restore default keyboard shortcuts (Space, I, L, 0, 1-8)")
                 }
                 
-                // Botão de Limpar Tudo
+                // Botão Clear All
                 Button(action: { mapping.clearAllCurrentMode() }) {
                     Text("Clear All")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.white.opacity(0.45))
-                        .padding(.horizontal, 7)
+                        .padding(.horizontal, 6)
                         .padding(.vertical, 3.5)
-                        .background(Color.white.opacity(0.05))
+                        .background(Color.white.opacity(0.04))
                         .cornerRadius(5)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help("Clear all mappings for current mode")
             } else {
-                Text("Selecione KEY MAP ou MIDI MAP para vincular atalhos e pedaleiras aos botões do app")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
-                Spacer()
+                Text("Selecione KEY MAP ou MIDI MAP para vincular controles")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.white.opacity(0.45))
             }
+            
+            // Divisor vertical
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 1, height: 16)
+            
+            // Botão DONE para fechar a cápsula flutuante
+            Button(action: {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+                    state.isEditMode = false
+                }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9.5, weight: .bold))
+                    Text("Done")
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .foregroundColor(Color.white.opacity(0.85))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.12))
+                .cornerRadius(6)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Close edit mode")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .frame(height: 38)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+        .background(
+            Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.95)
+        )
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.15), lineWidth: 1.0)
+        )
+        .shadow(color: Color.black.opacity(0.50), radius: 12, x: 0, y: 6)
+        .fixedSize(horizontal: true, vertical: true)
     }
 }
