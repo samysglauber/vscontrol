@@ -48,7 +48,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.isFloatingPanel = true
         window.level = .floating
         window.isReleasedWhenClosed = false
@@ -149,6 +149,7 @@ struct SettingsView: View {
             .padding(.horizontal, 20)
             .padding(.top, 13)
             .padding(.bottom, 11)
+            .background(WindowDragArea())
             
             Divider()
                 .background(Color.white.opacity(0.06))
@@ -238,28 +239,39 @@ struct GeneralSettingsTabView: View {
                                     }
                                 }
                             }
+                            
+                            Divider()
+                            
+                            Button(action: {
+                                state.fetchDevices()
+                            }) {
+                                Label("Rescan Audio Devices", systemImage: "arrow.clockwise")
+                            }
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "speaker.wave.2.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.70))
+                                
                                 Text(state.devices.first(where: { $0.id == state.selectedDeviceId })?.name ?? "Select Device...")
                                     .font(.system(size: 11.5, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.9))
+                                    .foregroundColor(.white.opacity(0.95))
                                     .lineLimit(1)
-                                Spacer()
+                                
                                 Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(.white.opacity(0.35))
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.40))
                             }
                             .padding(.horizontal, 10)
-                            .padding(.vertical, 4.5)
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(6)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.06))
+                            .cornerRadius(6.5)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                RoundedRectangle(cornerRadius: 6.5)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
                             )
                         }
                         .menuStyle(BorderlessButtonMenuStyle())
-                        .frame(width: 200)
                     }
                     .padding(.vertical, 8)
                     
@@ -1124,13 +1136,148 @@ struct VisualEffectBlur: NSViewRepresentable {
     }
 }
 
-struct SoberSlider: View {
+final class WindowDragAreaNSView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowDragAreaNSView {
+        WindowDragAreaNSView()
+    }
+    func updateNSView(_ nsView: WindowDragAreaNSView, context: Context) {}
+}
+
+final class SoberSliderNSView: NSView {
+    var value: Double = 0.0 {
+        didSet {
+            if abs(value - oldValue) > 0.0001 {
+                needsDisplay = true
+            }
+        }
+    }
+    var range: ClosedRange<Double> = 0.0...1.0
+    var step: Double = 1.0
+    var onValueChanged: ((Double) -> Void)?
+    
+    private var isDragging: Bool = false
+    private var isHovered: Bool = false
+    private var trackingArea: NSTrackingArea?
+    
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 110, height: 18)
+    }
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackingArea {
+            removeTrackingArea(ta)
+        }
+        let ta = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(ta)
+        self.trackingArea = ta
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+    
+    private func updateValue(from event: NSEvent) {
+        let loc = convert(event.locationInWindow, from: nil)
+        let thumbRadius: CGFloat = 6.5
+        let usableWidth = max(1.0, bounds.width - thumbRadius * 2.0)
+        let clampedX = min(max(0.0, loc.x - thumbRadius), usableWidth)
+        let fraction = clampedX / usableWidth
+        var newVal = range.lowerBound + Double(fraction) * (range.upperBound - range.lowerBound)
+        if step > 0 {
+            newVal = (newVal / step).rounded() * step
+        }
+        newVal = min(max(newVal, range.lowerBound), range.upperBound)
+        if abs(newVal - value) > 0.0001 {
+            value = newVal
+            onValueChanged?(newVal)
+            needsDisplay = true
+        }
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        isDragging = true
+        updateValue(from: event)
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        updateValue(from: event)
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        isDragging = false
+        needsDisplay = true
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        
+        let thumbRadius: CGFloat = 6.5
+        let usableWidth = max(1.0, bounds.width - thumbRadius * 2.0)
+        let clamped = min(max(value, range.lowerBound), range.upperBound)
+        let fraction = (range.upperBound > range.lowerBound) ? CGFloat((clamped - range.lowerBound) / (range.upperBound - range.lowerBound)) : 0.0
+        let thumbX = thumbRadius + fraction * usableWidth
+        let centerY = bounds.midY
+        let trackHeight: CGFloat = 4.0
+        
+        // Background Track (Dark Gray / Translucent)
+        let bgTrackRect = CGRect(x: thumbRadius, y: centerY - trackHeight / 2.0, width: usableWidth, height: trackHeight)
+        let bgTrackPath = CGPath(roundedRect: bgTrackRect, cornerWidth: trackHeight / 2.0, cornerHeight: trackHeight / 2.0, transform: nil)
+        ctx.addPath(bgTrackPath)
+        ctx.setFillColor(CGColor(gray: 1.0, alpha: 0.12))
+        ctx.fillPath()
+        
+        // Active Track (White)
+        let activeWidth = max(0.0, thumbX - thumbRadius)
+        if activeWidth > 0 {
+            let activeTrackRect = CGRect(x: thumbRadius, y: centerY - trackHeight / 2.0, width: activeWidth, height: trackHeight)
+            let activeTrackPath = CGPath(roundedRect: activeTrackRect, cornerWidth: trackHeight / 2.0, cornerHeight: trackHeight / 2.0, transform: nil)
+            ctx.addPath(activeTrackPath)
+            ctx.setFillColor(CGColor(gray: 1.0, alpha: 0.85))
+            ctx.fillPath()
+        }
+        
+        // Thumb (White circle with subtle shadow)
+        let currentRadius: CGFloat = isDragging ? 7.5 : (isHovered ? 7.0 : 6.5)
+        let thumbRect = CGRect(x: thumbX - currentRadius, y: centerY - currentRadius, width: currentRadius * 2.0, height: currentRadius * 2.0)
+        
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 2.5, color: CGColor(gray: 0.0, alpha: 0.40))
+        ctx.addEllipse(in: thumbRect)
+        ctx.setFillColor(CGColor(gray: 1.0, alpha: 1.0))
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
+}
+
+struct SoberSlider: NSViewRepresentable {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double
-    
-    @State private var isHovered: Bool = false
-    @State private var isDragging: Bool = false
     
     init(value: Binding<Double>, in range: ClosedRange<Double>, step: Double = 1.0) {
         self._value = value
@@ -1138,64 +1285,30 @@ struct SoberSlider: View {
         self.step = step
     }
     
-    var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let thumbRadius: CGFloat = 6.5
-            let usableWidth = max(1, width - thumbRadius * 2)
-            let clamped = min(max(value, range.lowerBound), range.upperBound)
-            let fraction = (range.upperBound > range.lowerBound) ? (clamped - range.lowerBound) / (range.upperBound - range.lowerBound) : 0.0
-            let thumbX = thumbRadius + CGFloat(fraction) * usableWidth
-            
-            ZStack(alignment: .leading) {
-                // Background Track (Sóbrio escuro)
-                Capsule()
-                    .fill(Color.white.opacity(0.12))
-                    .frame(height: 4)
-                    .padding(.horizontal, thumbRadius)
-                
-                // Active Track (Branco puro, sem azul!)
-                Capsule()
-                    .fill(Color.white.opacity(0.85))
-                    .frame(width: max(0, thumbX - thumbRadius), height: 4)
-                    .padding(.leading, thumbRadius)
-                
-                // Thumb Circular Branco
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: thumbRadius * 2, height: thumbRadius * 2)
-                    .shadow(color: Color.black.opacity(0.40), radius: 2, x: 0, y: 1)
-                    .scaleEffect(isDragging ? 1.2 : (isHovered ? 1.1 : 1.0))
-                    .offset(x: thumbX - thumbRadius)
+    func makeNSView(context: Context) -> SoberSliderNSView {
+        let view = SoberSliderNSView()
+        view.range = range
+        view.step = step
+        view.value = value
+        view.onValueChanged = { newVal in
+            DispatchQueue.main.async {
+                self.value = newVal
             }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onHover { hover in
-                withAnimation(.easeInOut(duration: 0.12)) {
-                    isHovered = hover
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { gesture in
-                        isDragging = true
-                        let x = gesture.location.x - thumbRadius
-                        let rawFrac = min(max(0, x / usableWidth), 1)
-                        var newVal = range.lowerBound + Double(rawFrac) * (range.upperBound - range.lowerBound)
-                        if step > 0 {
-                            newVal = (newVal / step).rounded() * step
-                        }
-                        newVal = min(max(newVal, range.lowerBound), range.upperBound)
-                        if value != newVal {
-                            value = newVal
-                        }
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                    }
-            )
         }
-        .frame(height: 18)
+        return view
+    }
+    
+    func updateNSView(_ nsView: SoberSliderNSView, context: Context) {
+        nsView.range = range
+        nsView.step = step
+        if abs(nsView.value - value) > 0.0001 {
+            nsView.value = value
+        }
+        nsView.onValueChanged = { newVal in
+            DispatchQueue.main.async {
+                self.value = newVal
+            }
+        }
     }
 }
 
