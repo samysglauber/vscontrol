@@ -509,7 +509,56 @@ final class NativeMappingManager: ObservableObject {
 }
 
 // ==========================================
-// 6. MODIFICADOR VISUAL DE BOTÕES MAPEÁVEIS
+// 6.1 BADGE NATIVA DE INDICADOR DE ATALHO
+// ==========================================
+
+struct MappingBadgeView: View {
+    let text: String
+    let accentColor: Color
+    
+    var body: some View {
+        HStack(spacing: 2) {
+            if text == "Space" || text == "␣" {
+                // Ícone nativo de Barra de Espaço do macOS
+                Image(systemName: "space")
+                    .font(.system(size: 8.5, weight: .black))
+            } else {
+                Text(badgeText)
+                    .font(.system(size: 8.5, weight: .black, design: .monospaced))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundColor(Color.white)
+        .padding(.horizontal, 4.5)
+        .frame(height: 15)
+        .frame(minWidth: 15)
+        .background(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.95))
+        .cornerRadius(3.5)
+        .overlay(
+            RoundedRectangle(cornerRadius: 3.5)
+                .stroke(accentColor.opacity(0.90), lineWidth: 1.0)
+        )
+        .fixedSize()
+        .offset(x: 3, y: -3)
+        .allowsHitTesting(false)
+    }
+    
+    private var badgeText: String {
+        // Encurtamento inteligente para canais e notas MIDI
+        if text.contains("Note ") {
+            return text.replacingOccurrences(of: "Ch", with: "")
+                       .replacingOccurrences(of: " Note ", with: ":N")
+        }
+        if text.contains("CC ") {
+            return text.replacingOccurrences(of: "Ch", with: "")
+                       .replacingOccurrences(of: " CC ", with: ":CC")
+        }
+        return text
+    }
+}
+
+// ==========================================
+// 6.2 MODIFICADOR VISUAL DE BOTÕES MAPEÁVEIS
 // ==========================================
 
 extension View {
@@ -576,19 +625,10 @@ struct MappableControlModifier: ViewModifier {
                         }
                 )
                 .overlay(
-                    // 4. Badge branca estilo DAW com texto preto no canto superior direito (SOMENTE se houver atalho!)
+                    // 4. Badge escura com borda no acento do modo e ícone nativo de espaço (SOMENTE se houver atalho!)
                     Group {
                         if let text = mappedText {
-                            Text(text)
-                                .font(.system(size: 9.5, weight: .black, design: .rounded))
-                                .foregroundColor(Color.black)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.white)
-                                .clipShape(Capsule())
-                                .shadow(color: Color.black.opacity(0.5), radius: 2, x: 0, y: 1)
-                                .offset(x: 4, y: -4)
-                                .allowsHitTesting(false)
+                            MappingBadgeView(text: text, accentColor: accentColor)
                         }
                     },
                     alignment: .topTrailing

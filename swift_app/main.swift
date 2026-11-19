@@ -4190,8 +4190,8 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .disabled(!state.isPlaying && !isFadeActive && NativeMappingManager.shared.mode == .none)
                     .mappableControl(.fadeTracks, cornerRadius: 8)
-                    .disabled(!state.isPlaying && !isFadeActive)
                     .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
                     
                     // 5. Botão Loop da Seção Atual (Repete 1 única vez e segue adiante)
