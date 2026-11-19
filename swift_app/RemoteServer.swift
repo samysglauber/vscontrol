@@ -4,8 +4,10 @@ import CommonCrypto
 
 /// Servidor HTTP e WebSocket 100% Nativo em Swift para Controle Remoto Mobile (Android / iOS / Web).
 /// Substitui completamente FastAPI, Uvicorn e Starlette do Python sem dependências externas.
-public final class NativeRemoteServer {
-    public static let shared = NativeRemoteServer()
+public typealias NativeRemoteServer = RemoteServer
+
+public final class RemoteServer {
+    public static let shared = RemoteServer()
     
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.vscontrol.remoteserver", qos: .userInitiated)
@@ -32,11 +34,11 @@ public final class NativeRemoteServer {
             nwListener.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    print("🚀 [NativeRemoteServer] Servidor nativo ouvindo na porta \(port)")
+                    print("🚀 [RemoteServer] Servidor nativo ouvindo na porta \(port)")
                     self?.isRunning = true
                     self?.startBroadcastTimer()
                 case .failed(let error):
-                    print("❌ [NativeRemoteServer] Falha ao iniciar: \(error.localizedDescription)")
+                    print("❌ [RemoteServer] Falha ao iniciar: \(error.localizedDescription)")
                     self?.isRunning = false
                 case .cancelled:
                     self?.isRunning = false
@@ -52,7 +54,7 @@ public final class NativeRemoteServer {
             nwListener.start(queue: queue)
             self.listener = nwListener
         } catch {
-            print("❌ [NativeRemoteServer] Erro ao criar listener: \(error)")
+            print("❌ [RemoteServer] Erro ao criar listener: \(error)")
         }
     }
     
@@ -84,7 +86,7 @@ public final class NativeRemoteServer {
             let wsConns = conns.filter { $0.isWebSocket }
             guard !wsConns.isEmpty else { return }
             
-            let status = NativeAudioEngine.shared.buildStatusDictionary()
+            let status = AudioEngine.shared.buildStatusDictionary()
             let payload: [String: Any] = [
                 "event": "tick",
                 "data": status
@@ -164,11 +166,11 @@ public final class NativeRemoteServer {
 // MARK: - Conexão Individual (HTTP / WebSocket)
 fileprivate final class RemoteConnection {
     let connection: NWConnection
-    unowned let server: NativeRemoteServer
+    unowned let server: RemoteServer
     var isWebSocket = false
     private var readBuffer = Data()
     
-    init(connection: NWConnection, server: NativeRemoteServer) {
+    init(connection: NWConnection, server: RemoteServer) {
         self.connection = connection
         self.server = server
     }
@@ -374,12 +376,12 @@ fileprivate final class RemoteConnection {
     }
     
     private func executeAction(action: String, payload: [String: Any]) {
-        if NativeRemoteServer.shared.isReadOnlyMode && action != "status" && action != "ping" {
-            print("⚠️ [NativeRemoteServer] Ação '\(action)' bloqueada: modo Apenas Visualização ativo.")
+        if RemoteServer.shared.isReadOnlyMode && action != "status" && action != "ping" {
+            print("⚠️ [RemoteServer] Ação '\(action)' bloqueada: modo Apenas Visualização ativo.")
             return
         }
         DispatchQueue.main.async {
-            let engine = NativeAudioEngine.shared
+            let engine = AudioEngine.shared
             
             switch action {
             case "play":
@@ -424,7 +426,7 @@ fileprivate final class RemoteConnection {
                 }
             case "load":
                 if let songId = payload["song_id"] as? String {
-                    if let song = NativeSongLibrary.shared.findSong(byId: songId) {
+                    if let song = SongLibrary.shared.findSong(byId: songId) {
                         let cf = (payload["crossfade"] as? Bool) ?? false
                         let cfDur = (payload["crossfade_duration"] as? Double) ?? 4.0
                         engine.loadSong(song, crossfade: cf, crossfadeDuration: cfDur)
@@ -438,7 +440,7 @@ fileprivate final class RemoteConnection {
     
     private func sendCurrentStatus() {
         DispatchQueue.main.async { [weak self] in
-            let status = NativeAudioEngine.shared.buildStatusDictionary()
+            let status = AudioEngine.shared.buildStatusDictionary()
             let payload: [String: Any] = [
                 "event": "status",
                 "data": status
@@ -472,10 +474,10 @@ fileprivate final class RemoteConnection {
             sendJsonResponse(resp)
             
         case ("GET", "/api/status"):
-            sendJsonResponse(NativeAudioEngine.shared.buildStatusDictionary())
+            sendJsonResponse(AudioEngine.shared.buildStatusDictionary())
             
         case ("GET", "/api/tracks/folder"):
-            let dir = NativeSongLibrary.shared.getTracksDirectory().path
+            let dir = SongLibrary.shared.getTracksDirectory().path
             sendJsonResponse(["path": dir])
             
         case ("POST", "/api/tracks/folder"):
@@ -485,22 +487,22 @@ fileprivate final class RemoteConnection {
                 dir = p
             }
             if !dir.isEmpty {
-                _ = NativeSongLibrary.shared.setTracksDirectory(dir)
+                _ = SongLibrary.shared.setTracksDirectory(dir)
             }
-            sendJsonResponse(["status": "ok", "path": NativeSongLibrary.shared.getTracksDirectory().path])
+            sendJsonResponse(["status": "ok", "path": SongLibrary.shared.getTracksDirectory().path])
             
         case ("POST", "/api/tracks/refresh"):
-            _ = NativeSongLibrary.shared.getAllSongs()
+            _ = SongLibrary.shared.getAllSongs()
             sendJsonResponse(["status": "refreshed"])
             
         case ("GET", "/api/devices"):
-            let devs = NativeAudioEngine.shared.getOutputDevices().map { dev in
+            let devs = AudioEngine.shared.getOutputDevices().map { dev in
                 ["id": dev.id, "name": dev.name, "is_default": dev.isDefault]
             }
             sendJsonResponse(devs)
             
         case ("GET", "/api/songs"):
-            let songs = NativeSongLibrary.shared.getAllSongs()
+            let songs = SongLibrary.shared.getAllSongs()
             if let data = try? JSONEncoder().encode(songs),
                let json = try? JSONSerialization.jsonObject(with: data) {
                 sendJsonResponse(json)
@@ -510,7 +512,7 @@ fileprivate final class RemoteConnection {
             
         case ("GET", let p) where p.starts(with: "/covers/"):
             let songId = p.replacingOccurrences(of: "/covers/", with: "")
-            let coverPath = NativeSongLibrary.shared.getCoverPath(for: songId)
+            let coverPath = SongLibrary.shared.getCoverPath(for: songId)
             if let fileData = try? Data(contentsOf: URL(fileURLWithPath: coverPath)) {
                 serveImageData(fileData)
             } else {
@@ -522,7 +524,7 @@ fileprivate final class RemoteConnection {
             if let q = path.components(separatedBy: "?").last, q.starts(with: "q=") {
                 query = q.replacingOccurrences(of: "q=", with: "").removingPercentEncoding ?? ""
             }
-            NativeSongLibrary.shared.searchCovers(query: query) { [weak self] results in
+            SongLibrary.shared.searchCovers(query: query) { [weak self] results in
                 if let data = try? JSONEncoder().encode(results),
                    let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                     self?.sendJsonResponse(list)
@@ -536,7 +538,7 @@ fileprivate final class RemoteConnection {
             if let q = path.components(separatedBy: "?").last, q.starts(with: "id=") {
                 songId = q.replacingOccurrences(of: "id=", with: "").removingPercentEncoding ?? ""
             }
-            let coverPath = NativeSongLibrary.shared.getCoverPath(for: songId)
+            let coverPath = SongLibrary.shared.getCoverPath(for: songId)
             if let fileData = try? Data(contentsOf: URL(fileURLWithPath: coverPath)) {
                 serveImageData(fileData)
             } else {
@@ -550,7 +552,7 @@ fileprivate final class RemoteConnection {
             }
             if let songId = payload["song_id"] as? String,
                let artworkUrl = payload["artwork_url"] as? String {
-                NativeSongLibrary.shared.saveCoverFromUrl(songId: songId, artworkUrl: artworkUrl) { [weak self] success in
+                SongLibrary.shared.saveCoverFromUrl(songId: songId, artworkUrl: artworkUrl) { [weak self] success in
                     if success {
                         self?.sendJsonResponse(["status": "ok", "song_id": songId])
                     } else {
@@ -568,7 +570,7 @@ fileprivate final class RemoteConnection {
             }
             if let songId = payload["song_id"] as? String,
                let filePath = payload["file_path"] as? String {
-                NativeSongLibrary.shared.saveCoverFromFile(songId: songId, filePath: filePath) { [weak self] success in
+                SongLibrary.shared.saveCoverFromFile(songId: songId, filePath: filePath) { [weak self] success in
                     if success {
                         self?.sendJsonResponse(["status": "ok", "song_id": songId])
                     } else {
@@ -585,7 +587,7 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             if let songId = payload["song_id"] as? String {
-                NativeSongLibrary.shared.removeCover(songId: songId)
+                SongLibrary.shared.removeCover(songId: songId)
                 sendJsonResponse(["status": "ok", "song_id": songId])
                 return
             }
@@ -597,8 +599,8 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             if let songId = payload["song_id"] as? String,
-               let song = NativeSongLibrary.shared.findSong(byId: songId) {
-                NativeSongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
+               let song = SongLibrary.shared.findSong(byId: songId) {
+                SongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
                     self?.sendJsonResponse(["status": success ? "ok" : "failed", "song_id": songId])
                 }
                 return
@@ -617,7 +619,7 @@ fileprivate final class RemoteConnection {
             let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
             let dur = (payload["duration_sec"] as? Double) ?? 600.0
             do {
-                let song = try NativeMetronomeGenerator.shared.generateMetronome(
+                let song = try MetronomeGenerator.shared.generateMetronome(
                     name: name,
                     bpm: bpm,
                     timeSignature: ts,
@@ -647,11 +649,11 @@ fileprivate final class RemoteConnection {
             let sub = (payload["subdivision"] as? String) ?? "1/4"
             let subdivide = (payload["subdivide"] as? Bool) ?? (sub != "1/4")
             let songId = (payload["song_id"] as? String) ?? ""
-            let existing = NativeSongLibrary.shared.findSong(byId: songId)
+            let existing = SongLibrary.shared.findSong(byId: songId)
             do {
                 let song: SongItem
                 if let ex = existing {
-                    song = try NativeMetronomeGenerator.shared.updateMetronome(
+                    song = try MetronomeGenerator.shared.updateMetronome(
                         existingItem: ex,
                         name: name,
                         bpm: bpm,
@@ -660,7 +662,7 @@ fileprivate final class RemoteConnection {
                         subdivide: subdivide
                     )
                 } else {
-                    song = try NativeMetronomeGenerator.shared.generateMetronome(
+                    song = try MetronomeGenerator.shared.generateMetronome(
                         name: name,
                         bpm: bpm,
                         timeSignature: ts,
@@ -685,9 +687,9 @@ fileprivate final class RemoteConnection {
                 payload = json
             }
             if let songId = payload["song_id"] as? String,
-               let song = NativeSongLibrary.shared.findSong(byId: songId) {
+               let song = SongLibrary.shared.findSong(byId: songId) {
                 let cf = (payload["crossfade"] as? Bool) ?? false
-                NativeAudioEngine.shared.loadSong(song, crossfade: cf)
+                AudioEngine.shared.loadSong(song, crossfade: cf)
                 if let data = try? JSONEncoder().encode(song),
                    let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     sendJsonResponse(["status": "loaded", "song": songDict])
@@ -710,8 +712,8 @@ fileprivate final class RemoteConnection {
                    let decoded = try? JSONDecoder().decode([CueSection].self, from: data) {
                     parsedCues = decoded
                 }
-                NativeSongLibrary.shared.saveCues(songId: songId, cues: parsedCues, bpm: bpm, timeSignature: ts)
-                if let song = NativeSongLibrary.shared.findSong(byId: songId),
+                SongLibrary.shared.saveCues(songId: songId, cues: parsedCues, bpm: bpm, timeSignature: ts)
+                if let song = SongLibrary.shared.findSong(byId: songId),
                    let data = try? JSONEncoder().encode(song),
                    let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     sendJsonResponse(["status": "success", "song": songDict])
@@ -728,7 +730,7 @@ fileprivate final class RemoteConnection {
             if let songId = payload["song_id"] as? String {
                 let bpm = parseBpm(payload["bpm"])
                 let ts = payload["time_signature"] as? String
-                NativeSongLibrary.shared.reprocessWithAI(songId: songId, bpm: bpm, timeSignature: ts) { [weak self] updatedSong in
+                SongLibrary.shared.reprocessWithAI(songId: songId, bpm: bpm, timeSignature: ts) { [weak self] updatedSong in
                     if let song = updatedSong,
                        let data = try? JSONEncoder().encode(song),
                        let songDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {

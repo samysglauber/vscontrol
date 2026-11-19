@@ -4,7 +4,9 @@ import CoreMIDI
 /// Gerenciador de MIDI Beat Clock com precisão de áudio (Sample-Accurate) nativo em Swift.
 /// Cria a porta virtual 'VS Control Sync' e transmite Clock (0xF8), Continue (0xFB) e Stop (0xFC)
 /// para o Ableton Live sem usar SPP (permitindo gravação contínua na timeline).
-final class NativeMIDIClock {
+typealias NativeMIDIClock = MIDIClock
+
+final class MIDIClock {
     private var client: MIDIClientRef = 0
     private var source: MIDIEndpointRef = 0
     private var outPort: MIDIPortRef = 0

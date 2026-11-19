@@ -4,8 +4,10 @@ import SQLite3
 /// Gerenciador de Banco de Dados Local 100% Nativo em Swift usando Apple SQLite (libsqlite3).
 /// Armazena todos os metadados, seções (cues), formas de onda e estado de capas em:
 /// ~/Library/Application Support/VSControl/library.db
-final class NativeDatabase {
-    static let shared = NativeDatabase()
+typealias NativeDatabase = Database
+
+final class Database {
+    static let shared = Database()
     
     private var db: OpaquePointer?
     private let lock = NSLock()
@@ -48,7 +50,7 @@ final class NativeDatabase {
             execute(sql: "PRAGMA synchronous = NORMAL;")
             execute(sql: "PRAGMA foreign_keys = ON;")
         } else {
-            print("[NativeDatabase] Failed to open SQLite database at \(dbPath)")
+            print("[Database] Failed to open SQLite database at \(dbPath)")
         }
     }
     
@@ -56,7 +58,7 @@ final class NativeDatabase {
         var errMsg: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &errMsg) != SQLITE_OK {
             if let err = errMsg {
-                print("[NativeDatabase] SQLite error executing: \(sql) -> \(String(cString: err))")
+                print("[Database] SQLite error executing: \(sql) -> \(String(cString: err))")
                 sqlite3_free(errMsg)
             }
         }

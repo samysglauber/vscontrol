@@ -14,8 +14,10 @@ import Speech
 ///   5. Cada frase vira uma seção, no primeiro tempo 1 depois do início da palavra.
 ///   6. Reconhece o nome falado (Speech, on-device, pt-BR e en-US). Sem permissão ou sem
 ///      modelo, as seções saem como "Section N", já nos tempos certos.
-final class NativeCueDetector {
-    static let shared = NativeCueDetector()
+typealias NativeCueDetector = CueDetector
+
+final class CueDetector {
+    static let shared = CueDetector()
     private init() {}
 
     struct Result {
@@ -132,7 +134,7 @@ final class NativeCueDetector {
         let minD = max(1, Int(0.065 / dt1))
         let peakIdx = pickPeaks(env, threshold: thr, minDistance: minD)
         guard peakIdx.count >= 24 else {
-            print("[NativeCueDetector] poucos picos de click (\(peakIdx.count)); sem faixa de click no L?")
+            print("[CueDetector] poucos picos de click (\(peakIdx.count)); sem faixa de click no L?")
             return nil
         }
         let times = peakIdx.map { Double($0) * dt1 }
@@ -365,7 +367,7 @@ final class NativeCueDetector {
             }
         }
         guard !phrases.isEmpty else {
-            print("[NativeCueDetector] nenhuma frase de voz encontrada")
+            print("[CueDetector] nenhuma frase de voz encontrada")
             return nil
         }
 
@@ -375,7 +377,7 @@ final class NativeCueDetector {
             let beats = Double(num) * (4.0 / Double(den))
             let barHint = (60.0 / bpmHint) * beats
             bar = barHint
-            print(String(format: "[NativeCueDetector] Usando BPM explícito de %.2f (compasso: %.3fs)", bpmHint, bar))
+            print(String(format: "[CueDetector] Usando BPM explícito de %.2f (compasso: %.3fs)", bpmHint, bar))
         }
 
         // 8. Contagem protegida (máximo 2 compassos)
@@ -388,7 +390,7 @@ final class NativeCueDetector {
             for p in phrases where p.start < maxCountInTime {
                 let a = max(0, Int((p.start - 0.2) * sr))
                 let b = min(left.count, Int((p.end + 0.3) * sr))
-                if let whisperRes = NativeCueDetector.transcribeWithWhisper(slice: left[a..<b], sr: sr) {
+                if let whisperRes = CueDetector.transcribeWithWhisper(slice: left[a..<b], sr: sr) {
                     let txt = whisperRes.text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
                     let countWords = ["1", "2", "3", "4", "5", "6", "um", "dois", "tres", "quatro", "cinco", "seis", "one", "two", "three", "four", "paixo", "paixa"]
                     let hasCountWord = countWords.contains { txt.contains($0) }
@@ -423,14 +425,14 @@ final class NativeCueDetector {
             var label: Label? = nil
             var isDynamic = false
             
-            if let whisperRes = NativeCueDetector.transcribeWithWhisper(slice: slice, sr: sr) {
+            if let whisperRes = CueDetector.transcribeWithWhisper(slice: slice, sr: sr) {
                 isDynamic = whisperRes.isDynamic
                 label = whisperRes.label
             }
             
             // Se for aviso de dinâmica ("cresce", "pausa", "segura", "com palmas"), IGNORA como corte de seção!
             if isDynamic {
-                print(String(format: "[NativeCueDetector] Aviso de dinâmica ignorado como corte de bloco em %.2fs", tc))
+                print(String(format: "[CueDetector] Aviso de dinâmica ignorado como corte de bloco em %.2fs", tc))
                 continue
             }
             
@@ -462,7 +464,7 @@ final class NativeCueDetector {
         
         // Se a faixa não tiver nenhuma guia falada reconhecida (ex: faixa instrumental só com clique), gera a grade padrão estrutural
         if candidates.isEmpty {
-            let defaultCues = NativeSongLibrary.shared.generateDefaultCues(
+            let defaultCues = SongLibrary.shared.generateDefaultCues(
                 totalDuration: totalDuration,
                 bpm: hasHint ? bpmHint : (60.0 * Double(num) * (4.0 / Double(den)) / bar),
                 timeSignature: "\(num)/\(den)"
@@ -497,7 +499,7 @@ final class NativeCueDetector {
 
         let gridBpm = hasHint ? bpmHint : (60.0 * Double(num) * (4.0 / Double(den)) / bar)
         let clickBpm = 60.0 * Double(num) * (4.0 / Double(den)) / barClick
-        print(String(format: "[NativeCueDetector] %ld seções (100%% via fala da guia) | compasso %@ | grade %.3f BPM | click %.3f BPM", cues.count, finalTs, gridBpm, clickBpm))
+        print(String(format: "[CueDetector] %ld seções (100%% via fala da guia) | compasso %@ | grade %.3f BPM | click %.3f BPM", cues.count, finalTs, gridBpm, clickBpm))
         return Result(cues: cues, gridBpm: gridBpm, clickBpm: clickBpm, namedCount: cues.count, timeSignature: finalTs)
     }
 
@@ -626,7 +628,7 @@ final class NativeCueDetector {
         let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin")!
         let sem = DispatchSemaphore(value: 0)
         var success = false
-        print("[NativeCueDetector] Baixando modelo Whisper Tiny para \(targetPath)...")
+        print("[CueDetector] Baixando modelo Whisper Tiny para \(targetPath)...")
         let task = URLSession.shared.downloadTask(with: url) { tempFile, _, err in
             if let tempFile = tempFile, err == nil {
                 try? FileManager.default.removeItem(atPath: targetPath)
@@ -634,7 +636,7 @@ final class NativeCueDetector {
                     try FileManager.default.moveItem(at: tempFile, to: URL(fileURLWithPath: targetPath))
                     success = true
                 } catch {
-                    print("[NativeCueDetector] Erro ao mover modelo: \(error)")
+                    print("[CueDetector] Erro ao mover modelo: \(error)")
                 }
             }
             sem.signal()
@@ -785,7 +787,7 @@ final class NativeCueDetector {
         var bestConf: Float = -1
         for rec in recognizers {
             if let (text, conf) = transcribe(slice, sr: sr, recognizer: rec),
-               let lab = NativeCueDetector.mapLabel(text), conf > bestConf {
+               let lab = CueDetector.mapLabel(text), conf > bestConf {
                 bestLabel = lab
                 bestConf = conf
             }
@@ -807,7 +809,7 @@ final class NativeCueDetector {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = false
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-        request.contextualStrings = NativeCueDetector.vocabulary
+        request.contextualStrings = CueDetector.vocabulary
         request.append(buffer)
         request.endAudio()
 

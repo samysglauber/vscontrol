@@ -3,11 +3,13 @@ import AVFoundation
 
 /// Gerador Nativo em Swift de Metrônomos Procedurais (Opção 1 - Playback MultiTracks).
 /// Zero arquivos gerados no disco (0 MB).
-/// Síntese de áudio procedural sample-accurate em tempo real pelo NativeAudioEngine:
+/// Síntese de áudio procedural sample-accurate em tempo real pelo AudioEngine:
 /// - Canal L (In-Ear): Click rítmico cristalino de estúdio com acentuação no tempo 1 e subdivisões
 /// - Canal R (PA / VS): Silêncio absoluto
-final class NativeMetronomeGenerator {
-    static let shared = NativeMetronomeGenerator()
+typealias NativeMetronomeGenerator = MetronomeGenerator
+
+final class MetronomeGenerator {
+    static let shared = MetronomeGenerator()
     
     private let sectionColors = [
         "#38bdf8", "#3b82f6", "#8b5cf6", "#ec4899",
@@ -37,7 +39,7 @@ final class NativeMetronomeGenerator {
         let fm = FileManager.default
         let baseDir = "/Users/samysglauber/Documents/AbletonTracks"
         let curDir = fm.currentDirectoryPath
-        let tracksDir = NativeSongLibrary.shared.getTracksDirectory().path
+        let tracksDir = SongLibrary.shared.getTracksDirectory().path
         
         let c1Candidates = [
             "\(baseDir)/Click Track-1.wav",
@@ -236,8 +238,8 @@ final class NativeMetronomeGenerator {
         )
         
         // 4. Salva no SQLite local para resiliência sem poluir o disco com arquivos de áudio
-        NativeDatabase.shared.saveSong(item: item)
-        NativeSongLibrary.shared.cacheSong(item)
+        Database.shared.saveSong(item: item)
+        SongLibrary.shared.cacheSong(item)
         
         return item
     }
@@ -258,8 +260,8 @@ final class NativeMetronomeGenerator {
             subdivision: subdivision,
             subdivide: subdivide
         )
-        NativeDatabase.shared.saveSong(item: song)
-        NativeSongLibrary.shared.cacheSong(song)
+        Database.shared.saveSong(item: song)
+        SongLibrary.shared.cacheSong(song)
         return song
     }
 }

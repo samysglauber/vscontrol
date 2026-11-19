@@ -826,7 +826,7 @@ struct FilesLibrarySettingsTabView: View {
                                 Text("Tracks Directory (VS)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
-                                Text(NativeSongLibrary.shared.getTracksDirectory().path)
+                                Text(SongLibrary.shared.getTracksDirectory().path)
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.40))
                                     .lineLimit(1)
@@ -933,7 +933,7 @@ struct FilesLibrarySettingsTabView: View {
         
         if panel.runModal() == .OK, let url = panel.url {
             if forTracks {
-                _ = NativeSongLibrary.shared.setTracksDirectory(url.path)
+                _ = SongLibrary.shared.setTracksDirectory(url.path)
             } else {
                 UserDefaults.standard.set(url.path, forKey: "saved_setlists_dir")
             }
@@ -944,7 +944,7 @@ struct FilesLibrarySettingsTabView: View {
         isReindexing = true
         reindexMessage = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let songs = NativeSongLibrary.shared.getAllSongs()
+            let songs = SongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
                 self.isReindexing = false
                 self.reindexMessage = "✅ \(songs.count) songs indexed successfully!"
@@ -975,12 +975,12 @@ struct RemoteSettingsTabView: View {
                     HStack {
                         HStack(spacing: 12) {
                             SoberToggle(isOn: Binding(
-                                get: { NativeRemoteServer.shared.isRunning },
+                                get: { RemoteServer.shared.isRunning },
                                 set: { enable in
                                     if enable {
-                                        NativeRemoteServer.shared.start(port: UInt16(state.remoteServerPort))
+                                        RemoteServer.shared.start(port: UInt16(state.remoteServerPort))
                                     } else {
-                                        NativeRemoteServer.shared.stop()
+                                        RemoteServer.shared.stop()
                                     }
                                 }
                             ))

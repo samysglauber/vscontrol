@@ -85,8 +85,11 @@ struct MIDIMapping: Codable, Equatable, Hashable {
 // 4. RECEPTOR NATIVO DE ENTRADAS COREMIDI
 // ==========================================
 
-final class NativeMIDIReceiver {
-    static let shared = NativeMIDIReceiver()
+typealias NativeMIDIReceiver = MIDIReceiver
+typealias NativeMappingManager = MappingManager
+
+final class MIDIReceiver {
+    static let shared = MIDIReceiver()
     private var client: MIDIClientRef = 0
     private var inPort: MIDIPortRef = 0
     private var connectedSources: Set<MIDIEndpointRef> = []
@@ -152,13 +155,13 @@ final class NativeMIDIReceiver {
                 // Note On com velocidade > 0
                 if msgType == 0x90 && d2 > 0 {
                     DispatchQueue.main.async {
-                        NativeMappingManager.shared.handleMIDITrigger(channel: channel, number: d1, isCC: false)
+                        MappingManager.shared.handleMIDITrigger(channel: channel, number: d1, isCC: false)
                     }
                 }
                 // Control Change (CC) com valor > 0
                 else if msgType == 0xB0 && d2 > 0 {
                     DispatchQueue.main.async {
-                        NativeMappingManager.shared.handleMIDITrigger(channel: channel, number: d1, isCC: true)
+                        MappingManager.shared.handleMIDITrigger(channel: channel, number: d1, isCC: true)
                     }
                 }
             }
@@ -171,8 +174,8 @@ final class NativeMIDIReceiver {
 // 5. GERENCIADOR CENTRAL DE MAPEAMENTO
 // ==========================================
 
-final class NativeMappingManager: ObservableObject {
-    static let shared = NativeMappingManager()
+final class MappingManager: ObservableObject {
+    static let shared = MappingManager()
     
     @Published var mode: MappingMode = .none {
         didSet {
@@ -211,7 +214,7 @@ final class NativeMappingManager: ObservableObject {
     
     private init() {
         loadMappings()
-        _ = NativeMIDIReceiver.shared // Inicializa escuta CoreMIDI nativa
+        _ = MIDIReceiver.shared // Inicializa escuta CoreMIDI nativa
     }
     
     func resetKeyDefaults() {
@@ -379,7 +382,7 @@ final class NativeMappingManager: ObservableObject {
         case .playPause:
             state.playPause()
         case .stop:
-            NativeAudioEngine.shared.stop()
+            AudioEngine.shared.stop()
             state.isPlaying = false
             state.currentSeconds = 0.0
             state.currentCueIdx = 0
@@ -583,7 +586,7 @@ extension View {
 struct MappableControlModifier: ViewModifier {
     let action: MappableAction
     var cornerRadius: CGFloat = 8
-    @ObservedObject var mapping = NativeMappingManager.shared
+    @ObservedObject var mapping = MappingManager.shared
     
     private var isKey: Bool { mapping.mode == .key }
     private var isMidi: Bool { mapping.mode == .midi }
@@ -651,7 +654,7 @@ struct MappableControlModifier: ViewModifier {
 
 struct BottomMappingBar: View {
     @ObservedObject var state: PlaybackState
-    @ObservedObject var mapping = NativeMappingManager.shared
+    @ObservedObject var mapping = MappingManager.shared
     
     var body: some View {
         HStack(spacing: 12) {

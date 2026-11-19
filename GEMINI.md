@@ -71,8 +71,8 @@
 
 ## 4. Regras de Ouro e Diretrizes Críticas de Implementação
 
-### 1. Sincronização Estrita entre UI e `NativeAudioEngine`
-- **Regra Fundamental:** Toda e qualquer alteração de seções (`currentCues`), BPM (`bpm`) ou fórmula de compasso (`timeSignature`) na interface **DEVE ser enviada imediatamente para o `NativeAudioEngine.shared`**.
+### 1. Sincronização Estrita entre UI e `AudioEngine`
+- **Regra Fundamental:** Toda e qualquer alteração de seções (`currentCues`), BPM (`bpm`) ou fórmula de compasso (`timeSignature`) na interface **DEVE ser enviada imediatamente para o `AudioEngine.shared`**.
 - O motor de áudio calcula o bloco ativo (`currentCueIdx`) a cada buffer de áudio. Se a lista `audioEngine.cues` estiver desatualizada em relação a `state.currentCues`, o playhead vermelho e a seleção verde na tela ficarão descolados e dessincronizados.
 
 ### 2. Cálculo de Duração de Compasso (`secPerBar`)
@@ -121,7 +121,7 @@
 ### 7. Padrões de Interface (UI / UX)
 - **Overlay de Análise ("Analyzing..."):** Quando a música estiver sendo processada por IA (ao importar ou clicar em "Reprocess with AI"), a área dos blocos/espectrograma deve exibir um efeito de desfoque escuro (*blur overlay*) com o texto centralizado `"Analyzing..."`. O cabeçalho deve permanecer limpo.
 - **Undo / Redo:** Toda ação de edição de bloco, corte, divisão ou ajuste de compasso deve registrar snapshot na pilha de histórico (`pushUndoSnapshot`).
-- **Zerar Divisões de Seções ("Clear Divisions"):** No modal `SongEditorSheetView` ("Edit Song"), há um card dedicado para gerenciamento de seções com badge dinâmico da contagem de seções e botão `"Clear Divisions"` (com confirmação e suporte total a `Cmd+Z` para desfazer). Ao acionar, redefine as divisões para uma única seção unificada contínua (0:00 até o final da música), persistindo imediatamente em SQLite/`.cues.json`/UserDefaults e sincronizando com o `NativeAudioEngine`.
+- **Zerar Divisões de Seções ("Clear Divisions"):** No modal `SongEditorSheetView` ("Edit Song"), há um card dedicado para gerenciamento de seções com badge dinâmico da contagem de seções e botão `"Clear Divisions"` (com confirmação e suporte total a `Cmd+Z` para desfazer). Ao acionar, redefine as divisões para uma única seção unificada contínua (0:00 até o final da música), persistindo imediatamente em SQLite/`.cues.json`/UserDefaults e sincronizando com o `AudioEngine`.
 - **Aproximação de Zoom Ancorada no Ponteiro Vermelho (Playhead Zoom Centering):** Qualquer operação de zoom (botões Fit / 1x / 2x, gesto de pinça no trackpad ou Option/Command + scrollwheel) DEVE sempre aproximar ou afastar em direção a onde estiver o ponteiro vermelho de reprodução (`currentSeconds`), mantendo o cursor centralizado na viewport. O `TimelineZoomAnimator` interpola frame-a-frame a 60fps com curva ease-out cubic sincronizando escala e `bounds.origin` no mesmo frame, garantindo animação concêntrica 100% fluida sem saltos ou defasagem. Durante a reprodução com zoom, a timeline acompanha o ponteiro para que ele nunca saia da visão.
 
 ---

@@ -6,8 +6,10 @@ import AppKit
 /// Biblioteca de Canções 100% Nativa em Swift.
 /// Varre o diretório de VS, lê e persiste os metadados (.cues.json), calcula formas de onda contínuas
 /// ultra-rápidas usando Accelerate (vDSP) e gerencia capas de álbuns.
-final class NativeSongLibrary {
-    static let shared = NativeSongLibrary()
+typealias NativeSongLibrary = SongLibrary
+
+final class SongLibrary {
+    static let shared = SongLibrary()
     
     private let defaultDir = "/Users/samysglauber/Documents/Vs"
     private var songsCache: [String: SongItem] = [:]
@@ -42,7 +44,7 @@ final class NativeSongLibrary {
     func getAllSongs() -> [SongItem] {
         let dir = getTracksDirectory()
         // Executa migração única automática dos arquivos .cues.json para o banco SQLite e limpa os arquivos soltos
-        _ = NativeDatabase.shared.migrateLegacyFilesIfNeeded(tracksDirectory: dir, deleteLegacy: true)
+        _ = Database.shared.migrateLegacyFilesIfNeeded(tracksDirectory: dir, deleteLegacy: true)
         
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
             return []
@@ -83,7 +85,7 @@ final class NativeSongLibrary {
         
         // Se for metrônomo virtual, busca diretamente no banco SQLite
         if id.starts(with: "metro_") || id.contains(".virtual") || id.starts(with: "virtual://") {
-            if let dbSong = NativeDatabase.shared.getSong(id: id) {
+            if let dbSong = Database.shared.getSong(id: id) {
                 cacheSong(dbSong)
                 return dbSong
             }
@@ -91,7 +93,7 @@ final class NativeSongLibrary {
         
         // Se for um caminho absoluto existente no sistema de arquivos
         if id.starts(with: "/") && FileManager.default.fileExists(atPath: id) {
-            if let dbSong = NativeDatabase.shared.getSong(id: id) {
+            if let dbSong = Database.shared.getSong(id: id) {
                 cacheSong(dbSong)
                 return dbSong
             }
@@ -105,7 +107,7 @@ final class NativeSongLibrary {
             return indexed
         }
         
-        if let dbSong = NativeDatabase.shared.getSong(id: id) {
+        if let dbSong = Database.shared.getSong(id: id) {
             cacheSong(dbSong)
             return dbSong
         }
@@ -135,13 +137,13 @@ final class NativeSongLibrary {
         lock.unlock()
         
         // 1. Tenta carregar diretamente do banco de dados SQLite nativo
-        if let fromDb = NativeDatabase.shared.getSong(id: entry) {
+        if let fromDb = Database.shared.getSong(id: entry) {
             var song = fromDb
             // Autoridade estrita do BPM explícito no nome do arquivo: se o arquivo contiver BPM explícito
             // e o banco estiver com valor discrepante (ex: 125 devido a clique em colcheia em faixa de 62,5bpm), reconcilia imediatamente.
             if let fileBpm = extractBpmFromFilename(entry), song.bpm != fileBpm {
                 song.bpm = fileBpm
-                NativeDatabase.shared.saveSong(item: song)
+                Database.shared.saveSong(item: song)
             }
             lock.lock()
             songsCache[entry] = song
@@ -223,7 +225,7 @@ final class NativeSongLibrary {
         )
         
         // Salva no SQLite
-        NativeDatabase.shared.saveSong(item: item)
+        Database.shared.saveSong(item: item)
         
         lock.lock()
         songsCache[entry] = item
@@ -248,11 +250,11 @@ final class NativeSongLibrary {
         lock.unlock()
         
         // Tenta carregar do SQLite caso já tenha sido importado
-        if let fromDb = NativeDatabase.shared.getSong(id: songId) {
+        if let fromDb = Database.shared.getSong(id: songId) {
             var song = fromDb
             if let fileBpm = extractBpmFromFilename(entry), song.bpm != fileBpm {
                 song.bpm = fileBpm
-                NativeDatabase.shared.saveSong(item: song)
+                Database.shared.saveSong(item: song)
             }
             cacheSong(song)
             return song
@@ -329,7 +331,7 @@ final class NativeSongLibrary {
         )
         
         // Salva no SQLite
-        NativeDatabase.shared.saveSong(item: item)
+        Database.shared.saveSong(item: item)
         cacheSong(item)
         return item
     }
@@ -387,7 +389,7 @@ final class NativeSongLibrary {
         autoAnalysis: String? = nil,
         guideLeadIn: Double? = nil
     ) {
-        NativeDatabase.shared.saveCues(
+        Database.shared.saveCues(
             songId: songId,
             cues: cues,
             bpm: bpm,
@@ -422,7 +424,7 @@ final class NativeSongLibrary {
             if let aa = autoAnalysis { cached.auto_analysis = aa }
             if let gli = guideLeadIn { cached.guide_lead_in = gli }
             songsCache[songId] = cached
-        } else if var item = NativeDatabase.shared.getSong(id: songId) {
+        } else if var item = Database.shared.getSong(id: songId) {
             item.cues = cues
             if let b = bpm { item.bpm = b }
             if let ts = timeSignature { item.time_signature = ts }
@@ -440,7 +442,7 @@ final class NativeSongLibrary {
         if songId.hasPrefix("metro_") || songId.hasPrefix("metronome_") || songId.contains(".virtual") || songId.starts(with: "virtual://") {
             return false
         }
-        if let song = getSong(id: songId) ?? NativeDatabase.shared.getSong(id: songId) {
+        if let song = getSong(id: songId) ?? Database.shared.getSong(id: songId) {
             if song.is_metronome == true { return false }
             if let auto = song.auto_analysis {
                 if auto == "pending" { return true }
@@ -483,7 +485,7 @@ final class NativeSongLibrary {
         let fileBpm = extractBpmFromFilename(songId)
         let bpmHint = fileBpm ?? (bpm >= 30.0 && bpm != 120.0 ? bpm : 0.0)
         
-        NativeCueDetector.shared.analyze(
+        CueDetector.shared.analyze(
             left: left,
             right: right,
             sampleRate: sampleRate,
@@ -660,7 +662,7 @@ final class NativeSongLibrary {
     // MARK: - Gerenciamento e Armazenamento de Capas (Application Support/VSControl/covers)
     
     func getCoverPath(for songId: String) -> String {
-        return NativeDatabase.shared.getCoverFilePath(for: songId)
+        return Database.shared.getCoverFilePath(for: songId)
     }
     
     func hasCover(for songId: String) -> Bool {
@@ -706,7 +708,7 @@ final class NativeSongLibrary {
                 try jpegData.write(to: url)
                 return true
             } catch {
-                print("[NativeSongLibrary] Error writing cover: \(error)")
+                print("[SongLibrary] Error writing cover: \(error)")
                 return false
             }
         }
@@ -714,7 +716,7 @@ final class NativeSongLibrary {
     }
     
     func updateCuesJsonCover(songId: String, hasCover: Bool) {
-        NativeDatabase.shared.setCoverStatus(songId: songId, hasCover: hasCover, noCover: !hasCover)
+        Database.shared.setCoverStatus(songId: songId, hasCover: hasCover, noCover: !hasCover)
     }
     
     func saveCoverFromUrl(songId: String, artworkUrl: String, completion: @escaping (Bool) -> Void) {
@@ -788,7 +790,7 @@ final class NativeSongLibrary {
             return
         }
         
-        if NativeDatabase.shared.isNoCoverRequested(songId: song.id) {
+        if Database.shared.isNoCoverRequested(songId: song.id) {
             completion(false)
             return
         }
@@ -835,7 +837,7 @@ final class NativeSongLibrary {
             
             do {
                 let (left, right, sr) = try loadAudioFileStereo(url: audioUrl)
-                NativeCueDetector.shared.analyze(
+                CueDetector.shared.analyze(
                     left: left,
                     right: right,
                     sampleRate: sr,
@@ -893,7 +895,7 @@ final class NativeSongLibrary {
                     }
                 }
             } catch {
-                print("[NativeSongLibrary] Error decoding audio for cue detection: \(error)")
+                print("[SongLibrary] Error decoding audio for cue detection: \(error)")
                 DispatchQueue.main.async { completion(nil) }
             }
         }

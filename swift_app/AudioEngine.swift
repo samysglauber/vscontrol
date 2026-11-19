@@ -27,8 +27,10 @@ struct GuideLeadInInfo {
 /// Executa CoreAudio através de AVAudioEngine e AVAudioSourceNode com baixa latência (< 5ms),
 /// roteamento de canais L (Click/Guia) e R (VS/Instrumentos), loops, saltos quantizados,
 /// crossfades instantâneos e MIDI Clock embutido.
-final class NativeAudioEngine {
-    static let shared = NativeAudioEngine()
+typealias NativeAudioEngine = AudioEngine
+
+final class AudioEngine {
+    static let shared = AudioEngine()
     
     // CoreAudio & AVFoundation
     private let engine = AVAudioEngine()
@@ -37,8 +39,8 @@ final class NativeAudioEngine {
     private let lock = os_unfair_lock_t.allocate(capacity: 1)
     
     // Sincronizadores
-    let osc = NativeOSCClient()
-    let midiClock = NativeMIDIClock()
+    let osc = OSCClient()
+    let midiClock = MIDIClock()
     
     // Dados de Áudio Carregados
     var currentUrl: URL?
@@ -137,7 +139,7 @@ final class NativeAudioEngine {
     init() {
         lock.initialize(to: os_unfair_lock())
         setupAudioEngine()
-        let (c1, c2) = NativeMetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
+        let (c1, c2) = MetronomeGenerator.shared.getClickSamples(sampleRate: 44100.0)
         self.clickSample1 = c1
         self.clickSample2 = c2
     }
@@ -160,7 +162,7 @@ final class NativeAudioEngine {
         do {
             try engine.start()
         } catch {
-            print("⚠️ [NativeAudioEngine] Falha ao iniciar AVAudioEngine: \(error)")
+            print("⚠️ [AudioEngine] Falha ao iniciar AVAudioEngine: \(error)")
         }
     }
     
@@ -623,7 +625,7 @@ final class NativeAudioEngine {
         var resolvedCues = song.cues ?? []
         let hasGenericSlices = resolvedCues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Count-In" })
         if resolvedCues.isEmpty || hasGenericSlices {
-            resolvedCues = NativeMetronomeGenerator.shared.generateMetronomeCues(
+            resolvedCues = MetronomeGenerator.shared.generateMetronomeCues(
                 durationSec: duration,
                 bpm: self.bpm,
                 timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)"
@@ -631,7 +633,7 @@ final class NativeAudioEngine {
         }
         self.cues = resolvedCues
         
-        let peaks = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : NativeMetronomeGenerator.shared.generateMetronomeWaveform(
+        let peaks = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : MetronomeGenerator.shared.generateMetronomeWaveform(
             durationSec: duration,
             bpm: self.bpm,
             timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
@@ -721,7 +723,7 @@ final class NativeAudioEngine {
         let totSec = sr > 0 ? Double(left.count) / sr : 0.0
         var resolvedCues = cues
         if resolvedCues.isEmpty && totSec > 0 {
-            resolvedCues = NativeSongLibrary.shared.generateDefaultCues(
+            resolvedCues = SongLibrary.shared.generateDefaultCues(
                 totalDuration: totSec,
                 bpm: self.bpm,
                 timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)"
@@ -730,16 +732,16 @@ final class NativeAudioEngine {
         self.cues = resolvedCues
         
         // Computa forma de onda real com Accelerate vDSP em alta resolução (7200 picos)
-        let peaks = NativeSongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 7200)
+        let peaks = SongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 7200)
         self.fullWaveform = peaks
         
         // Salva na biblioteca SQLite para que a música nova fique permanentemente salva
         let filename = url.lastPathComponent
-        let needsAuto = NativeSongLibrary.shared.needsAutoCueAnalysis(songId: filename)
+        let needsAuto = SongLibrary.shared.needsAutoCueAnalysis(songId: filename)
         
-        let existingItem = NativeSongLibrary.shared.getSong(id: filename)
+        let existingItem = SongLibrary.shared.getSong(id: filename)
         if existingItem == nil && !resolvedCues.isEmpty {
-            NativeSongLibrary.shared.saveCues(
+            SongLibrary.shared.saveCues(
                 songId: filename,
                 cues: resolvedCues,
                 bpm: self.bpm,
@@ -748,7 +750,7 @@ final class NativeAudioEngine {
                 autoAnalysis: needsAuto ? "pending" : nil
             )
         } else if let existing = existingItem, (existing.full_waveform?.count ?? 0) < 7000 {
-            NativeSongLibrary.shared.saveCues(
+            SongLibrary.shared.saveCues(
                 songId: filename,
                 cues: existing.cues ?? resolvedCues,
                 bpm: existing.bpm ?? self.bpm,
@@ -763,7 +765,7 @@ final class NativeAudioEngine {
             let num = self.timeSignature.0
             let den = self.timeSignature.1
             let explicitBpm = extractBpmFromFilename(filename)
-            NativeSongLibrary.shared.autoAnalyzeCues(
+            SongLibrary.shared.autoAnalyzeCues(
                 songId: filename,
                 left: left,
                 right: right,
@@ -1297,9 +1299,9 @@ final class NativeAudioEngine {
         if err == noErr {
             self.currentDeviceId = deviceId
             self.currentDeviceName = deviceName
-            print("🔊 [NativeAudioEngine] Dispositivo de saída alterado para: \(deviceName) [ID: \(deviceId)]")
+            print("🔊 [AudioEngine] Dispositivo de saída alterado para: \(deviceName) [ID: \(deviceId)]")
         } else {
-            print("⚠️ [NativeAudioEngine] Erro ao alterar dispositivo CoreAudio: \(err)")
+            print("⚠️ [AudioEngine] Erro ao alterar dispositivo CoreAudio: \(err)")
         }
     }
 }
@@ -1311,14 +1313,14 @@ func loadAudioFileStereo(url: URL) throws -> (left: [Float], right: [Float], sam
     let format = file.processingFormat
     let frameCount = AVAudioFrameCount(file.length)
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-        throw NSError(domain: "NativeAudioEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Falha ao alocar buffer PCM"])
+        throw NSError(domain: "AudioEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Falha ao alocar buffer PCM"])
     }
     try file.read(into: buffer)
     
     let sr = format.sampleRate
     let n = Int(buffer.frameLength)
     guard let channelData = buffer.floatChannelData else {
-        throw NSError(domain: "NativeAudioEngine", code: -2, userInfo: [NSLocalizedDescriptionKey: "Canais Float32 não disponíveis"])
+        throw NSError(domain: "AudioEngine", code: -2, userInfo: [NSLocalizedDescriptionKey: "Canais Float32 não disponíveis"])
     }
     
     var left = [Float](repeating: 0, count: n)

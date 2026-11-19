@@ -342,7 +342,7 @@ class CoverImageCache {
         if let cached = cache.object(forKey: key) {
             return cached
         }
-        let coverPath = NativeSongLibrary.shared.getCoverPath(for: song.id)
+        let coverPath = SongLibrary.shared.getCoverPath(for: song.id)
         if FileManager.default.fileExists(atPath: coverPath),
            let img = NSImage(contentsOfFile: coverPath) {
             cache.setObject(img, forKey: key)
@@ -629,9 +629,9 @@ class PlaybackState: ObservableObject {
             var cues = song.cues ?? fallbackCues ?? []
             let hasGenericSlices = cues.contains(where: { $0.name.hasPrefix("Section ") || $0.name == "Count-In" })
             if cues.isEmpty || hasGenericSlices {
-                cues = NativeMetronomeGenerator.shared.generateMetronomeCues(durationSec: dur, bpm: bpmVal, timeSignature: tsVal)
+                cues = MetronomeGenerator.shared.generateMetronomeCues(durationSec: dur, bpm: bpmVal, timeSignature: tsVal)
             }
-            let wf = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : NativeMetronomeGenerator.shared.generateMetronomeWaveform(
+            let wf = (song.full_waveform?.isEmpty == false) ? song.full_waveform! : MetronomeGenerator.shared.generateMetronomeWaveform(
                 durationSec: dur,
                 bpm: bpmVal,
                 timeSignature: tsVal,
@@ -733,7 +733,7 @@ class PlaybackState: ObservableObject {
         }
         
         // 4. Banco de Dados SQLite local (~1 ms)
-        if let dbSong = NativeSongLibrary.shared.findSong(byId: song.id) ?? NativeSongLibrary.shared.findSong(byId: song.filename),
+        if let dbSong = SongLibrary.shared.findSong(byId: song.id) ?? SongLibrary.shared.findSong(byId: song.filename),
            let dbCues = dbSong.cues, !dbCues.isEmpty {
             let leadInVal = dbSong.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
             let data = CachedSongData(
@@ -797,7 +797,7 @@ class PlaybackState: ObservableObject {
         didSet {
             if !isEditMode {
                 draggedSetlistSong = nil
-                NativeMappingManager.shared.mode = .none
+                MappingManager.shared.mode = .none
             }
         }
     }
@@ -872,19 +872,19 @@ class PlaybackState: ObservableObject {
     @Published var abletonSynced: Bool = false
     @Published var enableAbletonPlaySync: Bool = true {
         didSet {
-            NativeAudioEngine.shared.enableAbletonPlaySync = enableAbletonPlaySync
+            AudioEngine.shared.enableAbletonPlaySync = enableAbletonPlaySync
             UserDefaults.standard.set(enableAbletonPlaySync, forKey: "saved_enable_ableton_play_sync")
         }
     }
     @Published var enableAbletonSceneSync: Bool = true {
         didSet {
-            NativeAudioEngine.shared.enableAbletonSceneSync = enableAbletonSceneSync
+            AudioEngine.shared.enableAbletonSceneSync = enableAbletonSceneSync
             UserDefaults.standard.set(enableAbletonSceneSync, forKey: "saved_enable_ableton_scene_sync")
         }
     }
     @Published var abletonTriggerOffsetMs: Double = 0.0 {
         didSet {
-            NativeAudioEngine.shared.abletonTriggerOffsetMs = abletonTriggerOffsetMs
+            AudioEngine.shared.abletonTriggerOffsetMs = abletonTriggerOffsetMs
             UserDefaults.standard.set(abletonTriggerOffsetMs, forKey: "saved_ableton_trigger_offset_ms")
         }
     }
@@ -899,9 +899,9 @@ class PlaybackState: ObservableObject {
     
     func updateCurrentSetlistIndex() {
         if let current = currentSong, let idx = setlist.firstIndex(where: { $0.song.id == current.id }) {
-            NativeAudioEngine.shared.currentSetlistIndex = idx
+            AudioEngine.shared.currentSetlistIndex = idx
         } else {
-            NativeAudioEngine.shared.currentSetlistIndex = 0
+            AudioEngine.shared.currentSetlistIndex = 0
         }
     }
     
@@ -917,7 +917,7 @@ class PlaybackState: ObservableObject {
         
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let client = NativeAudioEngine.shared.osc
+            let client = AudioEngine.shared.osc
             
             let existingCount = client.queryNumScenes(timeoutSeconds: 0.4)
             if existingCount == nil {
@@ -1083,37 +1083,37 @@ class PlaybackState: ObservableObject {
     // MIDI & DAW Sync
     @Published var triggerAtBeat1: Bool = true {
         didSet {
-            NativeAudioEngine.shared.triggerAtBeat1 = triggerAtBeat1
+            AudioEngine.shared.triggerAtBeat1 = triggerAtBeat1
             UserDefaults.standard.set(triggerAtBeat1, forKey: "saved_trigger_at_beat_1")
         }
     }
     @Published var syncTempoToDaw: Bool = true {
         didSet {
-            NativeAudioEngine.shared.syncTempoToDaw = syncTempoToDaw
+            AudioEngine.shared.syncTempoToDaw = syncTempoToDaw
             UserDefaults.standard.set(syncTempoToDaw, forKey: "saved_sync_tempo_to_daw")
         }
     }
     @Published var oscHost: String = "127.0.0.1" {
         didSet {
             UserDefaults.standard.set(oscHost, forKey: "saved_osc_host")
-            NativeAudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
+            AudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
         }
     }
     @Published var oscPort: Int = 11000 {
         didSet {
             UserDefaults.standard.set(oscPort, forKey: "saved_osc_port")
-            NativeAudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
+            AudioEngine.shared.updateOscConfig(host: oscHost, port: UInt16(oscPort))
         }
     }
     @Published var enableMidiClock: Bool = true {
         didSet {
-            NativeAudioEngine.shared.enableMidiClock = enableMidiClock
+            AudioEngine.shared.enableMidiClock = enableMidiClock
             UserDefaults.standard.set(enableMidiClock, forKey: "saved_enable_midi_clock")
         }
     }
     @Published var midiClockOffsetMs: Double = 0.0 {
         didSet {
-            NativeAudioEngine.shared.midiClockOffsetMs = midiClockOffsetMs
+            AudioEngine.shared.midiClockOffsetMs = midiClockOffsetMs
             UserDefaults.standard.set(midiClockOffsetMs, forKey: "saved_midi_clock_offset_ms")
         }
     }
@@ -1126,7 +1126,7 @@ class PlaybackState: ObservableObject {
     }
     @Published var remoteReadOnlyMode: Bool = false {
         didSet {
-            NativeRemoteServer.shared.isReadOnlyMode = remoteReadOnlyMode
+            RemoteServer.shared.isReadOnlyMode = remoteReadOnlyMode
             UserDefaults.standard.set(remoteReadOnlyMode, forKey: "saved_remote_read_only_mode")
         }
     }
@@ -1137,24 +1137,24 @@ class PlaybackState: ObservableObject {
         URLCache.shared.removeAllCachedResponses()
         if let savedSync = UserDefaults.standard.object(forKey: "saved_enable_ableton_play_sync") as? Bool {
             self.enableAbletonPlaySync = savedSync
-            NativeAudioEngine.shared.enableAbletonPlaySync = savedSync
+            AudioEngine.shared.enableAbletonPlaySync = savedSync
         } else {
             self.enableAbletonPlaySync = true
-            NativeAudioEngine.shared.enableAbletonPlaySync = true
+            AudioEngine.shared.enableAbletonPlaySync = true
         }
         if let savedSceneSync = UserDefaults.standard.object(forKey: "saved_enable_ableton_scene_sync") as? Bool {
             self.enableAbletonSceneSync = savedSceneSync
-            NativeAudioEngine.shared.enableAbletonSceneSync = savedSceneSync
+            AudioEngine.shared.enableAbletonSceneSync = savedSceneSync
         } else {
             self.enableAbletonSceneSync = true
-            NativeAudioEngine.shared.enableAbletonSceneSync = true
+            AudioEngine.shared.enableAbletonSceneSync = true
         }
         if let savedTriggerOffset = UserDefaults.standard.object(forKey: "saved_ableton_trigger_offset_ms") as? Double {
             self.abletonTriggerOffsetMs = savedTriggerOffset
-            NativeAudioEngine.shared.abletonTriggerOffsetMs = savedTriggerOffset
+            AudioEngine.shared.abletonTriggerOffsetMs = savedTriggerOffset
         } else {
             self.abletonTriggerOffsetMs = 0.0
-            NativeAudioEngine.shared.abletonTriggerOffsetMs = 0.0
+            AudioEngine.shared.abletonTriggerOffsetMs = 0.0
         }
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
@@ -1198,11 +1198,11 @@ class PlaybackState: ObservableObject {
         }
         if let savedBeat1 = UserDefaults.standard.object(forKey: "saved_trigger_at_beat_1") as? Bool {
             self.triggerAtBeat1 = savedBeat1
-            NativeAudioEngine.shared.triggerAtBeat1 = savedBeat1
+            AudioEngine.shared.triggerAtBeat1 = savedBeat1
         }
         if let savedSyncTempo = UserDefaults.standard.object(forKey: "saved_sync_tempo_to_daw") as? Bool {
             self.syncTempoToDaw = savedSyncTempo
-            NativeAudioEngine.shared.syncTempoToDaw = savedSyncTempo
+            AudioEngine.shared.syncTempoToDaw = savedSyncTempo
         }
         if let savedHost = UserDefaults.standard.string(forKey: "saved_osc_host") {
             self.oscHost = savedHost
@@ -1210,22 +1210,22 @@ class PlaybackState: ObservableObject {
         if let savedPort = UserDefaults.standard.object(forKey: "saved_osc_port") as? Int {
             self.oscPort = savedPort
         }
-        NativeAudioEngine.shared.updateOscConfig(host: self.oscHost, port: UInt16(self.oscPort))
+        AudioEngine.shared.updateOscConfig(host: self.oscHost, port: UInt16(self.oscPort))
         
         if let savedMidiClk = UserDefaults.standard.object(forKey: "saved_enable_midi_clock") as? Bool {
             self.enableMidiClock = savedMidiClk
-            NativeAudioEngine.shared.enableMidiClock = savedMidiClk
+            AudioEngine.shared.enableMidiClock = savedMidiClk
         }
         if let savedOffset = UserDefaults.standard.object(forKey: "saved_midi_clock_offset_ms") as? Double {
             self.midiClockOffsetMs = savedOffset
-            NativeAudioEngine.shared.midiClockOffsetMs = savedOffset
+            AudioEngine.shared.midiClockOffsetMs = savedOffset
         }
         if let savedRPort = UserDefaults.standard.object(forKey: "saved_remote_server_port") as? Int {
             self.remoteServerPort = savedRPort
         }
         if let savedRO = UserDefaults.standard.object(forKey: "saved_remote_read_only_mode") as? Bool {
             self.remoteReadOnlyMode = savedRO
-            NativeRemoteServer.shared.isReadOnlyMode = savedRO
+            RemoteServer.shared.isReadOnlyMode = savedRO
         }
         
         // NOTE: Do NOT restore numeric device ID from UserDefaults here.
@@ -1235,10 +1235,10 @@ class PlaybackState: ObservableObject {
         self.selectedDeviceId = -1
         
         // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta configurada
-        NativeRemoteServer.shared.start(port: UInt16(self.remoteServerPort))
+        RemoteServer.shared.start(port: UInt16(self.remoteServerPort))
         
         // Callbacks de eventos do motor de áudio nativo (Fim de música e Salto quantizado)
-        NativeAudioEngine.shared.onSongEnded = { [weak self] in
+        AudioEngine.shared.onSongEnded = { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if self.hasTriggeredCrossfade { return }
@@ -1249,7 +1249,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeAudioEngine.shared.onCueJumped = { [weak self] jumpedIdx in
+        AudioEngine.shared.onCueJumped = { [weak self] jumpedIdx in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.currentCueIdx = jumpedIdx
@@ -1257,7 +1257,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeAudioEngine.shared.onAbletonSynced = { [weak self] in
+        AudioEngine.shared.onAbletonSynced = { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.abletonSynced = true
@@ -1267,7 +1267,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoAnalysisStarted = { [weak self] songId in
+        SongLibrary.shared.onAutoAnalysisStarted = { [weak self] songId in
             DispatchQueue.main.async {
                 guard let self = self, self.currentSong?.id == songId else { return }
                 self.isAutoAnalyzing = true
@@ -1275,7 +1275,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoAnalysisFailed = { [weak self] songId in
+        SongLibrary.shared.onAutoAnalysisFailed = { [weak self] songId in
             DispatchQueue.main.async {
                 guard let self = self, self.currentSong?.id == songId else { return }
                 self.isAutoAnalyzing = false
@@ -1283,7 +1283,7 @@ class PlaybackState: ObservableObject {
             }
         }
         
-        NativeSongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs, detectedBpm in
+        SongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs, detectedBpm in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if self.currentSong?.id == songId {
@@ -1298,18 +1298,18 @@ class PlaybackState: ObservableObject {
                     self.saveSetlistState(writeToDisk: true)
                 }
                 if self.currentSong?.id == songId {
-                    NativeAudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
+                    AudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
                     self.currentCues = cues
                     self.currentSong?.cues = cues
                     if let ts = detectedTs {
                         self.timeSignature = ts
                         self.editorTimeSignature = ts
-                        NativeAudioEngine.shared.setTimeSignature(ts)
+                        AudioEngine.shared.setTimeSignature(ts)
                     }
                     if let b = detectedBpm {
                         self.bpm = b
                         self.editorBpm = b
-                        NativeAudioEngine.shared.setBpm(b)
+                        AudioEngine.shared.setBpm(b)
                     }
                     if !self.isSongEditorPresented { self.editorCues = cues }
                     let bpmStr = detectedBpm != nil ? "\(formatBpm(detectedBpm!)) BPM, " : ""
@@ -1322,7 +1322,7 @@ class PlaybackState: ObservableObject {
         restoreInitialSetlistFromCache()
         
         // Sincronização direta com o motor nativo (0ms de latência)
-        startNativeEngineTimer()
+        startEngineTimer()
         
         // 2. Busca e atualiza apenas as músicas da Setlist no backend
         fetchSetlistSongs()
@@ -1391,11 +1391,11 @@ class PlaybackState: ObservableObject {
     
     private var nativeEngineTimer: Timer?
     
-    private func startNativeEngineTimer() {
+    private func startEngineTimer() {
         nativeEngineTimer?.invalidate()
         nativeEngineTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            let engine = NativeAudioEngine.shared
+            let engine = AudioEngine.shared
             if engine.isPlaying != self.isPlaying {
                 let wasPlaying = self.isPlaying
                 self.isPlaying = engine.isPlaying
@@ -1948,7 +1948,7 @@ class PlaybackState: ObservableObject {
             var songToUse: SongItem
             if let found = librarySongs.first(where: { $0.id == it.song.id }) {
                 songToUse = found
-            } else if let found = NativeSongLibrary.shared.findSong(byId: it.song.id) {
+            } else if let found = SongLibrary.shared.findSong(byId: it.song.id) {
                 songToUse = found
             } else {
                 songToUse = it.song
@@ -2073,7 +2073,7 @@ class PlaybackState: ObservableObject {
         let ids = setlist.map { $0.song.id }
         guard !ids.isEmpty else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let songs = NativeSongLibrary.shared.loadSetlistSongs(ids: ids)
+            let songs = SongLibrary.shared.loadSetlistSongs(ids: ids)
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.songs = songs
@@ -2122,7 +2122,7 @@ class PlaybackState: ObservableObject {
         guard !isLoadingLibrary else { return }
         isLoadingLibrary = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let songs = NativeSongLibrary.shared.getAllSongs()
+            let songs = SongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
                 self?.isLoadingLibrary = false
                 self?.librarySongs = songs
@@ -2132,7 +2132,7 @@ class PlaybackState: ObservableObject {
     }
     
     func fetchTracksFolder() {
-        let dir = NativeSongLibrary.shared.getTracksDirectory().path
+        let dir = SongLibrary.shared.getTracksDirectory().path
         self.tracksFolderPath = dir
         UserDefaults.standard.set(dir, forKey: "saved_tracks_folder_path")
     }
@@ -2158,7 +2158,7 @@ class PlaybackState: ObservableObject {
         if panel.runModal() == .OK {
             var addedAny = false
             for url in panel.urls {
-                if let song = NativeSongLibrary.shared.importExternalFile(url: url) {
+                if let song = SongLibrary.shared.importExternalFile(url: url) {
                     if !self.librarySongs.contains(where: { $0.id == song.id }) {
                         self.librarySongs.append(song)
                     }
@@ -2197,7 +2197,7 @@ class PlaybackState: ObservableObject {
     func addSongFromURL(_ url: URL) {
         let supported = ["wav", "mp3", "m4a", "aif", "aiff"]
         guard supported.contains(url.pathExtension.lowercased()) else { return }
-        if let song = NativeSongLibrary.shared.importExternalFile(url: url) {
+        if let song = SongLibrary.shared.importExternalFile(url: url) {
             if !self.librarySongs.contains(where: { $0.id == song.id }) {
                 self.librarySongs.append(song)
             }
@@ -2351,7 +2351,7 @@ class PlaybackState: ObservableObject {
     func generateMetronome(name: String, bpm: Double, timeSignature: String, subdivision: String = "1/4", completion: @escaping (Result<SongItem, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let song = try NativeMetronomeGenerator.shared.generateMetronome(
+                let song = try MetronomeGenerator.shared.generateMetronome(
                     name: name,
                     bpm: bpm,
                     timeSignature: timeSignature,
@@ -2396,7 +2396,7 @@ class PlaybackState: ObservableObject {
     func updateMetronome(item: SetlistSong, name: String, bpm: Double, timeSignature: String, subdivision: String = "1/4", completion: @escaping (Result<SongItem, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let updatedSong = try NativeMetronomeGenerator.shared.updateMetronome(
+                let updatedSong = try MetronomeGenerator.shared.updateMetronome(
                     existingItem: item.song,
                     name: name,
                     bpm: bpm,
@@ -2447,20 +2447,20 @@ class PlaybackState: ObservableObject {
     }
     
     func syncAbleton(bpm: Double? = nil, timeSignature: String? = nil) {
-        guard isPlaying && NativeAudioEngine.shared.abletonPlayTriggered else { return }
+        guard isPlaying && AudioEngine.shared.abletonPlayTriggered else { return }
         if let b = bpm {
-            NativeAudioEngine.shared.osc.sendTempo(b)
+            AudioEngine.shared.osc.sendTempo(b)
         }
         if let ts = timeSignature {
             let parts = ts.split(separator: "/")
             if parts.count >= 2, let n = Int(parts[0]), let d = Int(parts[1]) {
-                NativeAudioEngine.shared.osc.sendTimeSignature(numerator: n, denominator: d)
+                AudioEngine.shared.osc.sendTimeSignature(numerator: n, denominator: d)
             }
         }
     }
     
     func fetchDevices(retryCount: Int = 0) {
-        let rawDevs = NativeAudioEngine.shared.getOutputDevices()
+        let rawDevs = AudioEngine.shared.getOutputDevices()
         let devs = rawDevs.map { dev in
             AudioDeviceItem(
                 id: Int(dev.id),
@@ -2476,19 +2476,19 @@ class PlaybackState: ObservableObject {
         if let savedName = savedName, let match = devs.first(where: { $0.name == savedName }) {
             self.selectedDeviceId = match.id
             self.selectedDeviceName = match.name
-            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(match.id), deviceName: match.name)
+            AudioEngine.shared.setOutputDevice(deviceId: UInt32(match.id), deviceName: match.name)
         } else if let blackhole = devs.first(where: { $0.is_blackhole }) {
             self.selectedDeviceId = blackhole.id
             self.selectedDeviceName = blackhole.name
-            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(blackhole.id), deviceName: blackhole.name)
+            AudioEngine.shared.setOutputDevice(deviceId: UInt32(blackhole.id), deviceName: blackhole.name)
         } else if let def = devs.first(where: { $0.is_default }) {
             self.selectedDeviceId = def.id
             self.selectedDeviceName = def.name
-            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(def.id), deviceName: def.name)
+            AudioEngine.shared.setOutputDevice(deviceId: UInt32(def.id), deviceName: def.name)
         } else if let first = devs.first {
             self.selectedDeviceId = first.id
             self.selectedDeviceName = first.name
-            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(first.id), deviceName: first.name)
+            AudioEngine.shared.setOutputDevice(deviceId: UInt32(first.id), deviceName: first.name)
         }
     }
     
@@ -2498,7 +2498,7 @@ class PlaybackState: ObservableObject {
         if let d = devices.first(where: { $0.id == id }) {
             self.selectedDeviceName = d.name
             devName = d.name
-            NativeAudioEngine.shared.setOutputDevice(deviceId: UInt32(id), deviceName: d.name)
+            AudioEngine.shared.setOutputDevice(deviceId: UInt32(id), deviceName: d.name)
             if save {
                 UserDefaults.standard.set(d.name, forKey: "saved_audio_device_name")
                 UserDefaults.standard.set(id, forKey: "saved_audio_device_id")
@@ -2508,8 +2508,8 @@ class PlaybackState: ObservableObject {
     }
     
     func fetchNetworkInfo() {
-        let ip = NativeRemoteServer.shared.getLocalIPAddress()
-        let port = NativeRemoteServer.shared.port
+        let ip = RemoteServer.shared.getLocalIPAddress()
+        let port = RemoteServer.shared.port
         self.serverUrl = "http://\(ip):\(port)"
     }
     
@@ -2556,7 +2556,7 @@ class PlaybackState: ObservableObject {
             songToLoad.full_waveform = d.waveform
             songToLoad.guide_lead_in = leadInVal
         } else {
-            if let libSong = NativeSongLibrary.shared.findSong(byId: song.id) {
+            if let libSong = SongLibrary.shared.findSong(byId: song.id) {
                 if songToLoad.bpm == nil { songToLoad.bpm = libSong.bpm }
                 if songToLoad.time_signature == nil { songToLoad.time_signature = libSong.time_signature }
                 if songToLoad.total_duration == nil || songToLoad.total_duration == 0 { songToLoad.total_duration = libSong.total_duration }
@@ -2579,7 +2579,7 @@ class PlaybackState: ObservableObject {
         }
         self.currentSong = songToLoad
         self.updateCurrentSetlistIndex()
-        NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
+        AudioEngine.shared.guideLeadInBars = self.guideLeadInBars
         
         // Atualiza cache em memória permanente
         self.songCache[song.id] = CachedSongData(
@@ -2594,12 +2594,12 @@ class PlaybackState: ObservableObject {
         self.triggerScrollToStart()
         UserDefaults.standard.set(song.id, forKey: "saved_last_loaded_song_id")
         
-        NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
+        AudioEngine.shared.guideLeadInBars = self.guideLeadInBars
         
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
-            NativeAudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
-            let engine = NativeAudioEngine.shared
+            AudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
+            let engine = AudioEngine.shared
             let engineCues = engine.cues
             let engineTot = engine.totalDuration
             let engineWaveform = engine.fullWaveform
@@ -2628,7 +2628,7 @@ class PlaybackState: ObservableObject {
                     )
                 }
                 if autoPlay {
-                    NativeAudioEngine.shared.play()
+                    AudioEngine.shared.play()
                     self.isPlaying = true
                 }
             }
@@ -2659,7 +2659,7 @@ class PlaybackState: ObservableObject {
         self.isSearchingCovers = true
         self.coverPickerError = nil
         
-        NativeSongLibrary.shared.searchCovers(query: trimmed) { [weak self] results in
+        SongLibrary.shared.searchCovers(query: trimmed) { [weak self] results in
             DispatchQueue.main.async {
                 self?.isSearchingCovers = false
                 self?.coverSearchResults = results
@@ -2672,7 +2672,7 @@ class PlaybackState: ObservableObject {
     
     func selectCover(song: SongItem, artworkUrl: String) {
         self.isSavingCover = true
-        NativeSongLibrary.shared.saveCoverFromUrl(songId: song.id, artworkUrl: artworkUrl) { [weak self] success in
+        SongLibrary.shared.saveCoverFromUrl(songId: song.id, artworkUrl: artworkUrl) { [weak self] success in
             guard let self = self else { return }
             self.isSavingCover = false
             if success {
@@ -2697,7 +2697,7 @@ class PlaybackState: ObservableObject {
         
         if panel.runModal() == .OK, let fileUrl = panel.url {
             self.isSavingCover = true
-            NativeSongLibrary.shared.saveCoverFromFile(songId: song.id, filePath: fileUrl.path) { [weak self] success in
+            SongLibrary.shared.saveCoverFromFile(songId: song.id, filePath: fileUrl.path) { [weak self] success in
                 guard let self = self else { return }
                 self.isSavingCover = false
                 if success {
@@ -2713,7 +2713,7 @@ class PlaybackState: ObservableObject {
     }
     
     func removeCover(for song: SongItem) {
-        NativeSongLibrary.shared.removeCover(songId: song.id)
+        SongLibrary.shared.removeCover(songId: song.id)
         CoverImageCache.shared.remove(for: song.id)
         self.updateSongCoverState(songId: song.id, hasCover: false)
         self.coverRefreshTrigger += 1
@@ -2732,7 +2732,7 @@ class PlaybackState: ObservableObject {
         guard !attemptedCoverAutoFetchSongIds.contains(song.id) else { return }
         attemptedCoverAutoFetchSongIds.insert(song.id)
         
-        NativeSongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
+        SongLibrary.shared.autoFetchCover(song: song) { [weak self] success in
             if success {
                 CoverImageCache.shared.remove(for: song.id)
                 self?.updateSongCoverState(songId: song.id, hasCover: true)
@@ -2802,7 +2802,7 @@ class PlaybackState: ObservableObject {
         self.syncAbleton(bpm: bpm, timeSignature: timeSignature)
         self.isSongEditorPresented = false
         self.saveCurrentCues(guideLeadIn: guideLeadIn)
-        if let updated = NativeSongLibrary.shared.findSong(byId: song.id) {
+        if let updated = SongLibrary.shared.findSong(byId: song.id) {
             self.currentSong = updated
             if let newCues = updated.cues {
                 self.currentCues = newCues
@@ -2836,7 +2836,7 @@ class PlaybackState: ObservableObject {
         self.queuedCueIdx = nil
         
         self.saveCurrentCues()
-        if let updated = NativeSongLibrary.shared.findSong(byId: song.id) {
+        if let updated = SongLibrary.shared.findSong(byId: song.id) {
             self.currentSong = updated
         }
         self.syncAbleton(bpm: effectiveBpm, timeSignature: effectiveTs)
@@ -2848,7 +2848,7 @@ class PlaybackState: ObservableObject {
         pushUndoSnapshot(description: "AI Re-analysis")
         self.isReprocessing = true
         
-        NativeSongLibrary.shared.reprocessWithAI(
+        SongLibrary.shared.reprocessWithAI(
             songId: song.id,
             bpm: editorBpm,
             timeSignature: editorTimeSignature
@@ -2875,15 +2875,15 @@ class PlaybackState: ObservableObject {
             }
             if let wf = updated.full_waveform, !wf.isEmpty {
                 self.fullWaveform = wf
-            } else if !NativeAudioEngine.shared.fullWaveform.isEmpty {
-                self.fullWaveform = NativeAudioEngine.shared.fullWaveform
+            } else if !AudioEngine.shared.fullWaveform.isEmpty {
+                self.fullWaveform = AudioEngine.shared.fullWaveform
             }
             var updatedWithLeadIn = updated
             let leadInVal = updated.guide_lead_in ?? song.guide_lead_in ?? self.guideLeadInBars
             updatedWithLeadIn.guide_lead_in = leadInVal
             self.currentSong = updatedWithLeadIn
             self.guideLeadInBars = leadInVal
-            NativeAudioEngine.shared.guideLeadInBars = leadInVal
+            AudioEngine.shared.guideLeadInBars = leadInVal
             let cachedData = CachedSongData(
                 bpm: self.bpm,
                 timeSignature: self.timeSignature,
@@ -2912,7 +2912,7 @@ class PlaybackState: ObservableObject {
                 }
             }
             self.saveSetlistState(writeToDisk: true)
-            NativeAudioEngine.shared.loadSong(updated, crossfade: false)
+            AudioEngine.shared.loadSong(updated, crossfade: false)
             self.syncAudioEngineState()
             self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
         }
@@ -3087,7 +3087,7 @@ class PlaybackState: ObservableObject {
     }
     
     func cancelQueuedJump() {
-        NativeAudioEngine.shared.cancelQueuedJump()
+        AudioEngine.shared.cancelQueuedJump()
         queuedCueIdx = nil
         focusedCueIdx = nil
     }
@@ -3109,7 +3109,7 @@ class PlaybackState: ObservableObject {
     }
     
     func sendVolumes() {
-        NativeAudioEngine.shared.setVolumes(
+        AudioEngine.shared.setVolumes(
             click: Float(clickVol),
             vs: Float(vsVol),
             clickMute: clickMute,
@@ -3150,9 +3150,9 @@ class PlaybackState: ObservableObject {
     }
     
     func syncAudioEngineState() {
-        NativeAudioEngine.shared.updateCues(self.currentCues)
-        NativeAudioEngine.shared.setBpm(self.bpm)
-        NativeAudioEngine.shared.setTimeSignature(self.timeSignature)
+        AudioEngine.shared.updateCues(self.currentCues)
+        AudioEngine.shared.setBpm(self.bpm)
+        AudioEngine.shared.setTimeSignature(self.timeSignature)
     }
     
     func adjustSectionDuration(at index: Int, deltaBars: Double) {
@@ -3350,8 +3350,8 @@ class PlaybackState: ObservableObject {
         }
         UserDefaults.standard.synchronize()
         
-        // 6. Persiste diretamente no SQLite e no arquivo .cues.json via NativeSongLibrary
-        NativeSongLibrary.shared.saveCues(
+        // 6. Persiste diretamente no SQLite e no arquivo .cues.json via SongLibrary
+        SongLibrary.shared.saveCues(
             songId: song.id,
             cues: self.currentCues,
             bpm: self.bpm,
@@ -3360,7 +3360,7 @@ class PlaybackState: ObservableObject {
             guideLeadIn: effectiveLeadIn
         )
         if !song.filename.isEmpty && song.filename != song.id {
-            NativeSongLibrary.shared.saveCues(
+            SongLibrary.shared.saveCues(
                 songId: song.filename,
                 cues: self.currentCues,
                 bpm: self.bpm,
@@ -3371,7 +3371,7 @@ class PlaybackState: ObservableObject {
         }
         
         // 7. Sincroniza em tempo real com o motor de áudio
-        NativeAudioEngine.shared.guideLeadInBars = effectiveLeadIn
+        AudioEngine.shared.guideLeadInBars = effectiveLeadIn
         syncAudioEngineState()
     }
     
@@ -3461,7 +3461,7 @@ class PlaybackState: ObservableObject {
     }
     
     private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
-        let engine = NativeAudioEngine.shared
+        let engine = AudioEngine.shared
         switch endpoint {
         case "play":
             engine.play()
@@ -3654,7 +3654,7 @@ struct PlaybackAppView: View {
                 }
                 
                 // Mapeamento de Teclado (Modo de Aprendizado KEY MAP ou Execução de Atalhos Mapeados)
-                if NativeMappingManager.shared.handleKeyDown(event: event) {
+                if MappingManager.shared.handleKeyDown(event: event) {
                     return nil
                 }
                 if event.keyCode == 49 { // 49 = Barra de Espaço
@@ -3753,7 +3753,7 @@ struct PlaybackAppView: View {
                 }
                 
                 // Fallback legado de atalhos (apenas se nenhum mapeamento estiver configurado)
-                if NativeMappingManager.shared.keyMappings.isEmpty && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                if MappingManager.shared.keyMappings.isEmpty && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
                     let char = event.charactersIgnoringModifiers ?? ""
                     
                     // Tecla L: Alterna o modo Loop 1x da seção focada ou da seção atual
@@ -4177,7 +4177,7 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(!state.isPlaying && !isFadeActive && NativeMappingManager.shared.mode == .none)
+                    .disabled(!state.isPlaying && !isFadeActive && MappingManager.shared.mode == .none)
                     .mappableControl(.fadeTracks, cornerRadius: 8)
                     .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
                     

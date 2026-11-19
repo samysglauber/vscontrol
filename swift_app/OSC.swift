@@ -10,7 +10,9 @@ enum OSCArg {
 
 /// Cliente OSC nativo em Swift via socket UDP POSIX (porta 11000)
 /// Comunica diretamente com o script remoto AbletonOSC no Ableton Live.
-final class NativeOSCClient {
+typealias NativeOSCClient = OSCClient
+
+final class OSCClient {
     private var sockfd: Int32 = -1
     private var addr = sockaddr_in()
     private(set) var host: String = "127.0.0.1"
