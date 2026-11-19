@@ -12,6 +12,7 @@ echo "=========================================="
 swiftc -O \
     swift_app/NativeOSC.swift \
     swift_app/NativeMIDI.swift \
+    swift_app/NativeMapping.swift \
     swift_app/NativePadGenerator.swift \
     swift_app/NativeAudioEngine.swift \
     swift_app/NativeDatabase.swift \

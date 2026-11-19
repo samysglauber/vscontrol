@@ -797,6 +797,7 @@ class PlaybackState: ObservableObject {
         didSet {
             if !isEditMode {
                 draggedSetlistSong = nil
+                NativeMappingManager.shared.mode = .none
             }
         }
     }
@@ -3597,7 +3598,11 @@ struct PlaybackAppView: View {
             
             Divider().background(Color.white.opacity(0.08))
             
-            // 4. Mixer Dock com Seletor de Saída de Áudio Dinâmico
+            // 4. Barra de Mapeamento no Modo EDIT e Mixer Dock
+            if state.isEditMode {
+                BottomMappingBar(state: state)
+                Divider().background(Color.white.opacity(0.08))
+            }
             BottomMixerDock(state: state)
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
@@ -3654,6 +3659,11 @@ struct PlaybackAppView: View {
                         }
                         return nil
                     }
+                }
+                
+                // Mapeamento de Teclado (Modo de Aprendizado KEY MAP ou Execução de Atalhos Mapeados)
+                if NativeMappingManager.shared.handleKeyDown(event: event) {
+                    return nil
                 }
                 
                 // Se algum modal ou popover estiver aberto, não processa atalhos globais de playback
@@ -4118,6 +4128,7 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .mappableControl(.toggleInfinite, cornerRadius: 8)
                     .help("Loop Infinito da seção atual [Atalho: I]")
                     
                     // 2. Botão Retroceder / Restart (Branco)
@@ -4134,6 +4145,7 @@ struct TopBarView: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 1))
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .mappableControl(.restart, cornerRadius: 8)
                     .help("Restart song from beginning")
                     
                     // 3. Botão Play / Pause
@@ -4153,6 +4165,7 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .mappableControl(.playPause, cornerRadius: 8)
                     .keyboardShortcut(.space, modifiers: [])
                     .help("Play / Pause [Space]")
                     
@@ -4177,6 +4190,7 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .mappableControl(.fadeTracks, cornerRadius: 8)
                     .disabled(!state.isPlaying && !isFadeActive)
                     .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
                     
@@ -4199,6 +4213,7 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .mappableControl(.toggleLoop, cornerRadius: 8)
                     .help("Repetir seção atual uma vez [Atalho: L]")
                 }
             }
@@ -4333,6 +4348,19 @@ struct SetlistCarouselView: View {
                             let isSelected = state.currentSong?.id == item.song.id
                             let isCountingIn = isSelected && state.isCurrentSongCountingIn
                             let isBeingDragged = state.isEditMode && (state.draggedSetlistSong?.id == item.id)
+                            let songMappableAction: MappableAction? = {
+                                switch index {
+                                case 0: return .song1
+                                case 1: return .song2
+                                case 2: return .song3
+                                case 3: return .song4
+                                case 4: return .song5
+                                case 5: return .song6
+                                case 6: return .song7
+                                case 7: return .song8
+                                default: return nil
+                                }
+                            }()
                             
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack(alignment: .topTrailing) {
@@ -4501,6 +4529,7 @@ struct SetlistCarouselView: View {
                                     }
                                 }
                                 .frame(width: 160, height: 88)
+                                .mappableControl(songMappableAction, cornerRadius: 10)
                                 
                                 // Info da Música Embaixo (Apenas o Nome da Música)
                                 HStack(alignment: .center, spacing: 4) {
@@ -6458,6 +6487,7 @@ struct PlaybackFaderView: View {
     let accentColor: Color
     @Binding var volume: Double     // 0.0 ... 1.5
     @Binding var isMuted: Bool
+    var mappableAction: MappableAction? = nil
     let onMuteToggle: () -> Void
     let onVolumeChange: () -> Void
     
@@ -6489,7 +6519,12 @@ struct PlaybackFaderView: View {
         HStack(spacing: 12) {
             ChannelHeaderView(title: title, subtitle: subtitle, icon: icon, accentColor: accentColor)
             
-            MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
+            if let act = mappableAction {
+                MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
+                    .mappableControl(act, cornerRadius: 4)
+            } else {
+                MuteButtonView(isMuted: isMuted, onToggle: onMuteToggle)
+            }
             
             // Fenda e Knob com tracking anti-arraste de janela
             ZStack(alignment: .leading) {
@@ -6542,6 +6577,7 @@ struct BottomMixerDock: View {
                 accentColor: Color.cyan,
                 volume: $state.clickVol,
                 isMuted: $state.clickMute,
+                mappableAction: .muteClick,
                 onMuteToggle: { state.toggleClickMute() },
                 onVolumeChange: { state.sendVolumes() }
             )
@@ -6559,6 +6595,7 @@ struct BottomMixerDock: View {
                 accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
                 volume: $state.vsVol,
                 isMuted: $state.vsMute,
+                mappableAction: .muteTracks,
                 onMuteToggle: { state.toggleVsMute() },
                 onVolumeChange: { state.sendVolumes() }
             )
