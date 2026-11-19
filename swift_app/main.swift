@@ -1418,7 +1418,11 @@ class PlaybackState: ObservableObject {
                 self.currentCueIdx = engine.currentCueIdx
             }
             if self.queuedCueIdx != engine.queuedCueIdx {
+                let hadQueued = (self.queuedCueIdx != nil)
                 self.queuedCueIdx = engine.queuedCueIdx
+                if hadQueued && engine.queuedCueIdx == nil {
+                    self.focusedCueIdx = nil
+                }
             }
             if self.loopActive != engine.loopActive {
                 self.loopActive = engine.loopActive
@@ -2968,6 +2972,12 @@ class PlaybackState: ObservableObject {
         sendAction("trigger_cue", body: ["cue_idx": idx, "quantize": quantize])
     }
     
+    func cancelQueuedJump() {
+        NativeAudioEngine.shared.cancelQueuedJump()
+        queuedCueIdx = nil
+        focusedCueIdx = nil
+    }
+    
     func toggleLoop(cueIdx: Int? = nil) {
         var body: [String: Any] = ["mode": "once", "infinite": false]
         if let idx = cueIdx {
@@ -3607,14 +3617,18 @@ struct PlaybackAppView: View {
                     }
                 }
                 
-                // Tecla Escape: Cancela a pré-visualização de foco ou desfaz a fila
+                // Tecla Escape: Cancela a pré-visualização de foco e/ou desfaz a fila
                 if event.keyCode == 53 { // 53 = Escape
+                    var handled = false
                     if state.focusedCueIdx != nil {
                         state.focusedCueIdx = nil
-                        return nil
+                        handled = true
                     }
                     if state.queuedCueIdx != nil {
-                        state.queuedCueIdx = nil
+                        state.cancelQueuedJump()
+                        handled = true
+                    }
+                    if handled {
                         return nil
                     }
                 }
@@ -4754,7 +4768,7 @@ class WaveformScrollController {
     }
     
     /// Centraliza a visualização da timeline rigorosamente no ponteiro vermelho (playhead) durante o zoom, em perfeita sincronia frame-a-frame
-    func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat) {
+    func scrollToPlayhead(currentSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat, animated: Bool = false) {
         guard let sv = getScrollView() else { return }
         
         let clip = sv.contentView
@@ -4788,10 +4802,63 @@ class WaveformScrollController {
         let targetX = max(0, min(maxOffsetX, playheadDocX - (viewportWidth / 2.0)))
         
         if abs(clip.bounds.origin.x - targetX) > 0.1 {
-            var origin = clip.bounds.origin
-            origin.x = targetX
-            clip.scroll(to: origin)
-            sv.reflectScrolledClipView(clip)
+            if animated {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.28
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    clip.animator().setBoundsOrigin(NSPoint(x: targetX, y: clip.bounds.origin.y))
+                    sv.reflectScrolledClipView(clip)
+                }
+            } else {
+                var origin = clip.bounds.origin
+                origin.x = targetX
+                clip.scroll(to: origin)
+                sv.reflectScrolledClipView(clip)
+            }
+        }
+    }
+    
+    /// Centraliza suavemente a visualização em um bloco de seção específico quando navegado por setas
+    func scrollToCue(index: Int, cues: [CueSection], totalSeconds: Double, scale: CGFloat, totalTrackWidth: CGFloat, animated: Bool = true) {
+        guard index >= 0, index < cues.count else { return }
+        guard let sv = getScrollView() else { return }
+        
+        let clip = sv.contentView
+        let viewportWidth = clip.bounds.width
+        guard viewportWidth > 0 else { return }
+        
+        let docWidth = max(viewportWidth, totalTrackWidth + 40.0)
+        if let docView = sv.documentView {
+            if abs(docView.frame.width - docWidth) > 0.5 {
+                var f = docView.frame
+                f.size.width = docWidth
+                docView.frame = f
+            }
+        }
+        
+        let maxOffsetX = max(0, docWidth - viewportWidth)
+        guard maxOffsetX > 0 else { return }
+        
+        let curTime = cues[index].time
+        let nextTime = (index + 1 < cues.count) ? cues[index + 1].time : totalSeconds
+        let midTime = (curTime + nextTime) / 2.0
+        let cueDocX = 20.0 + (CGFloat(midTime) * scale)
+        let targetX = max(0, min(maxOffsetX, cueDocX - (viewportWidth / 2.0)))
+        
+        if abs(clip.bounds.origin.x - targetX) > 0.5 {
+            if animated {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    clip.animator().setBoundsOrigin(NSPoint(x: targetX, y: clip.bounds.origin.y))
+                    sv.reflectScrolledClipView(clip)
+                }
+            } else {
+                var origin = clip.bounds.origin
+                origin.x = targetX
+                clip.scroll(to: origin)
+                sv.reflectScrolledClipView(clip)
+            }
         }
     }
     
@@ -5124,7 +5191,8 @@ struct SpectrogramWaveformView: View {
                     }
                 }
                 .onChange(of: state.currentCueIdx) { _, targetIdx in
-                    // Se o usuário rolou recentemente para inspecionar, não interrompe a visão dele
+                    // Se o usuário estiver navegando por outros blocos (bloco branco), não interrompe a visão dele
+                    guard state.focusedCueIdx == nil else { return }
                     if Date().timeIntervalSince(lastUserScrollTime) > 3.5 {
                         withAnimation(.easeInOut(duration: 0.35)) {
                             proxy.scrollTo(targetIdx, anchor: .center)
@@ -5136,26 +5204,73 @@ struct SpectrogramWaveformView: View {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             proxy.scrollTo(idx, anchor: .center)
                         }
+                    } else if state.focusedCueIdx == nil {
+                        // Se a fila foi cancelada (ex: via ESC) e não há bloco focado, retorna a focar no trecho em reprodução
+                        if state.isPlaying && state.zoomLevel > 0.05 {
+                            WaveformScrollController.shared.scrollToPlayhead(
+                                currentSeconds: state.currentSeconds,
+                                scale: scale,
+                                totalTrackWidth: totalTrackWidth,
+                                animated: true
+                            )
+                        }
                     }
                 }
                 .onChange(of: state.focusedCueIdx) { _, targetIdx in
                     if let idx = targetIdx {
-                        lastUserScrollTime = .distantPast
+                        // Usuário navegando com as setas para um bloco mais adiante ou anterior (bloco branco)
+                        lastUserScrollTime = Date()
+                        WaveformScrollController.shared.scrollToCue(
+                            index: idx,
+                            cues: state.currentCues,
+                            totalSeconds: state.totalSeconds,
+                            scale: scale,
+                            totalTrackWidth: totalTrackWidth,
+                            animated: true
+                        )
                         withAnimation(.easeInOut(duration: 0.22)) {
                             proxy.scrollTo(idx, anchor: .center)
+                        }
+                    } else {
+                        // Usuário desistiu e apertou ESC: volta imediatamente para mostrar o trecho que está sendo reproduzido!
+                        lastUserScrollTime = .distantPast
+                        if state.isPlaying && state.zoomLevel > 0.05 {
+                            WaveformScrollController.shared.scrollToPlayhead(
+                                currentSeconds: state.currentSeconds,
+                                scale: scale,
+                                totalTrackWidth: totalTrackWidth,
+                                animated: true
+                            )
+                        } else if !state.currentCues.isEmpty {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                proxy.scrollTo(state.currentCueIdx, anchor: .center)
+                            }
                         }
                     }
                 }
                 .onChange(of: state.zoomLevel) { _, _ in
                     let newScale = calculateScale(totalAvailableWidth: totalAvailableWidth)
                     let newTotalTrackWidth = max(totalAvailableWidth, CGFloat(max(1.0, state.totalSeconds)) * newScale)
-                    WaveformScrollController.shared.scrollToPlayhead(
-                        currentSeconds: state.currentSeconds,
-                        scale: newScale,
-                        totalTrackWidth: newTotalTrackWidth
-                    )
+                    if let focused = state.focusedCueIdx {
+                        WaveformScrollController.shared.scrollToCue(
+                            index: focused,
+                            cues: state.currentCues,
+                            totalSeconds: state.totalSeconds,
+                            scale: newScale,
+                            totalTrackWidth: newTotalTrackWidth,
+                            animated: false
+                        )
+                    } else {
+                        WaveformScrollController.shared.scrollToPlayhead(
+                            currentSeconds: state.currentSeconds,
+                            scale: newScale,
+                            totalTrackWidth: newTotalTrackWidth
+                        )
+                    }
                 }
                 .onChange(of: state.currentSeconds) { _, curSec in
+                    // Enquanto o usuário estiver navegando por um bloco (branco), suspende o auto-follow do ponteiro
+                    guard state.focusedCueIdx == nil else { return }
                     guard state.isPlaying && state.zoomLevel > 0.05 else { return }
                     guard Date().timeIntervalSince(lastUserScrollTime) > 3.0 else { return }
                     

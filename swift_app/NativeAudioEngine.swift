@@ -1114,6 +1114,14 @@ final class NativeAudioEngine {
         )
     }
     
+    func cancelQueuedJump() {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        queuedCueIdx = nil
+        queuedJump = nil
+        guideLeadIn = nil
+    }
+    
     func toggleLoop(cueIdx: Int? = nil, infinite: Bool = false) {
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
