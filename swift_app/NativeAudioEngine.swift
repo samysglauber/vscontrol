@@ -72,6 +72,8 @@ final class NativeAudioEngine {
     
     // Sincronização de Disparo de Play/Stop no Ableton Live via OSC
     var enableAbletonPlaySync: Bool = true
+    var enableAbletonSceneSync: Bool = true
+    var currentSetlistIndex: Int = 0
     var syncTempoToDaw: Bool = true
     var triggerAtBeat1: Bool = true
     var enableMidiClock: Bool {
@@ -213,7 +215,7 @@ final class NativeAudioEngine {
             queuedCueIdx = nil
             abletonPlayTriggered = false
             midiClock.sendStop()
-            if enableAbletonPlaySync {
+            if enableAbletonPlaySync || enableAbletonSceneSync {
                 osc.sendStopPlaying()
             }
             DispatchQueue.main.async { [weak self] in
@@ -497,7 +499,9 @@ final class NativeAudioEngine {
                 }
                 midiClock.sendContinue()
                 midiClock.resetTick(currentFrame: triggerAtBeat1 ? firstDownbeatFrame : 0, sampleRate: sampleRate, bpm: bpm)
-                if enableAbletonPlaySync {
+                if enableAbletonSceneSync {
+                    osc.fireScene(index: currentSetlistIndex)
+                } else if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
                 }
                 DispatchQueue.main.async { [weak self] in
@@ -687,7 +691,9 @@ final class NativeAudioEngine {
                 osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
             }
             midiClock.sendContinue()
-            if enableAbletonPlaySync {
+            if enableAbletonSceneSync {
+                osc.fireScene(index: currentSetlistIndex)
+            } else if enableAbletonPlaySync {
                 osc.sendContinuePlaying()
             }
             DispatchQueue.main.async { [weak self] in
@@ -822,7 +828,9 @@ final class NativeAudioEngine {
                     osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
                 }
                 midiClock.sendContinue()
-                if enableAbletonPlaySync {
+                if enableAbletonSceneSync {
+                    osc.fireScene(index: currentSetlistIndex)
+                } else if enableAbletonPlaySync {
                     osc.sendContinuePlaying()
                 }
                 DispatchQueue.main.async { [weak self] in
@@ -851,7 +859,9 @@ final class NativeAudioEngine {
                 osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
             }
             midiClock.sendContinue()
-            if enableAbletonPlaySync {
+            if enableAbletonSceneSync {
+                osc.fireScene(index: currentSetlistIndex)
+            } else if enableAbletonPlaySync {
                 osc.sendContinuePlaying()
             }
             DispatchQueue.main.async { [weak self] in
@@ -878,7 +888,7 @@ final class NativeAudioEngine {
         
         if abletonPlayTriggered {
             midiClock.sendStop()
-            if enableAbletonPlaySync {
+            if enableAbletonPlaySync || enableAbletonSceneSync {
                 osc.sendStopPlaying()
             }
         }
@@ -908,7 +918,7 @@ final class NativeAudioEngine {
         
         midiClock.sendStop()
         midiClock.resetTick(currentFrame: 0, sampleRate: sampleRate, bpm: bpm)
-        if enableAbletonPlaySync {
+        if enableAbletonPlaySync || enableAbletonSceneSync {
             osc.sendStopPlaying()
         }
         

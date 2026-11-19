@@ -522,6 +522,59 @@ struct MidiSyncSettingsTabView: View {
                     }
                     .padding(.vertical, 5)
                     
+                    // Trigger Ableton Scene on Beat 1 (Toggle on LEFT)
+                    HStack {
+                        HStack(spacing: 12) {
+                            SoberToggle(isOn: $state.enableAbletonSceneSync)
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                Text("Trigger Ableton Scene on Beat 1")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("Fire corresponding Ableton Live session scene when song reaches beat 1")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.40))
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 5)
+                    
+                    // Sync Setlist Scenes to Ableton
+                    HStack {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(Color.white.opacity(0.20))
+                                .frame(width: 6, height: 6)
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                Text("Ableton Live Scenes")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("Create and populate session scenes with setlist song names, tempo and meter")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.40))
+                            }
+                        }
+                        Spacer()
+                        Button(action: {
+                            state.syncScenesToAbleton()
+                        }) {
+                            HStack(spacing: 6) {
+                                if state.isSyncingAbleton {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.6)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                Text(state.isSyncingAbleton ? "Syncing..." : "Sync Scenes Now")
+                            }
+                        }
+                        .buttonStyle(SoberPillButtonStyle())
+                        .disabled(state.isSyncingAbleton)
+                    }
+                    .padding(.vertical, 5)
+                    
                     // OSC Host & Port
                     HStack {
                         HStack(spacing: 12) {

@@ -788,6 +788,7 @@ class PlaybackState: ObservableObject {
     @Published var setlist: [SetlistSong] = [] {
         didSet {
             saveSetlistState()
+            updateCurrentSetlistIndex()
         }
     }
     @Published var draggedSetlistSong: SetlistSong? = nil
@@ -869,11 +870,90 @@ class PlaybackState: ObservableObject {
             UserDefaults.standard.set(enableAbletonPlaySync, forKey: "saved_enable_ableton_play_sync")
         }
     }
+    @Published var enableAbletonSceneSync: Bool = true {
+        didSet {
+            NativeAudioEngine.shared.enableAbletonSceneSync = enableAbletonSceneSync
+            UserDefaults.standard.set(enableAbletonSceneSync, forKey: "saved_enable_ableton_scene_sync")
+        }
+    }
+    @Published var isSyncingAbleton: Bool = false
     @Published var scrollToStartTrigger: Int = 0
     private var hasTriggeredCrossfade: Bool = false
     @Published var zoomLevel: Double = 0.3 {
         didSet {
             UserDefaults.standard.set(zoomLevel, forKey: "saved_timeline_zoom_level")
+        }
+    }
+    
+    func updateCurrentSetlistIndex() {
+        if let current = currentSong, let idx = setlist.firstIndex(where: { $0.song.id == current.id }) {
+            NativeAudioEngine.shared.currentSetlistIndex = idx
+        } else {
+            NativeAudioEngine.shared.currentSetlistIndex = 0
+        }
+    }
+    
+    func syncScenesToAbleton() {
+        guard !isSyncingAbleton else { return }
+        let songsToSync = self.setlist
+        guard !songsToSync.isEmpty else {
+            showUndoFeedback("⚠️ Setlist is empty")
+            return
+        }
+        
+        self.isSyncingAbleton = true
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let client = NativeAudioEngine.shared.osc
+            
+            let existingCount = client.queryNumScenes(timeoutSeconds: 0.4)
+            if existingCount == nil {
+                DispatchQueue.main.async {
+                    self.isSyncingAbleton = false
+                    self.showUndoFeedback("⚠️ AbletonOSC not responding on port 11000")
+                }
+                return
+            }
+            
+            let currentScenes = existingCount ?? 0
+            let targetCount = songsToSync.count
+            
+            // Se houver menos cenas no Live do que músicas na setlist, cria as cenas que faltam
+            if currentScenes < targetCount {
+                let missing = targetCount - currentScenes
+                for _ in 0..<missing {
+                    client.createScene(at: -1)
+                    usleep(15_000)
+                }
+            }
+            
+            // Atualiza cada cena com os dados da música correspondente
+            for (idx, item) in songsToSync.enumerated() {
+                let s = item.song
+                let name = s.name
+                let bpm = s.bpm ?? 120.0
+                
+                var num = 4
+                var den = 4
+                if let ts = s.time_signature {
+                    let parts = ts.split(separator: "/")
+                    if parts.count >= 2, let n = Int(parts[0]), let d = Int(parts[1]), n > 0, d > 0 {
+                        num = n
+                        den = d
+                    }
+                }
+                
+                client.setSceneName(index: idx, name: name)
+                client.setSceneTempo(index: idx, bpm: bpm)
+                client.setSceneTimeSignature(index: idx, numerator: num, denominator: den)
+                usleep(10_000)
+            }
+            
+            DispatchQueue.main.async {
+                self.isSyncingAbleton = false
+                self.showUndoFeedback("✓ \(targetCount) scenes synced to Ableton Live!")
+            }
         }
     }
     
@@ -1049,6 +1129,13 @@ class PlaybackState: ObservableObject {
         } else {
             self.enableAbletonPlaySync = true
             NativeAudioEngine.shared.enableAbletonPlaySync = true
+        }
+        if let savedSceneSync = UserDefaults.standard.object(forKey: "saved_enable_ableton_scene_sync") as? Bool {
+            self.enableAbletonSceneSync = savedSceneSync
+            NativeAudioEngine.shared.enableAbletonSceneSync = savedSceneSync
+        } else {
+            self.enableAbletonSceneSync = true
+            NativeAudioEngine.shared.enableAbletonSceneSync = true
         }
         if UserDefaults.standard.object(forKey: "saved_auto_advance") != nil {
             self.autoAdvance = UserDefaults.standard.bool(forKey: "saved_auto_advance")
@@ -2360,6 +2447,7 @@ class PlaybackState: ObservableObject {
             songToLoad.guide_lead_in = leadInVal
         }
         self.currentSong = songToLoad
+        self.updateCurrentSetlistIndex()
         NativeAudioEngine.shared.guideLeadInBars = self.guideLeadInBars
         
         // Atualiza cache em memória permanente
@@ -3727,6 +3815,12 @@ struct TopBarView: View {
                     Button(action: { state.saveSetlistAs() }) {
                         Label("Save Setlist As...", systemImage: "square.and.arrow.down.on.square")
                     }
+                    
+                    Divider()
+                    
+                    Button(action: { state.syncScenesToAbleton() }) {
+                        Label("Sync Scenes to Ableton Live", systemImage: "arrow.triangle.2.circlepath")
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "music.note.list")
@@ -3783,8 +3877,33 @@ struct TopBarView: View {
                     
                     Spacer()
                     
-                    // Área Direita: Botão EDIT / DONE ao lado do Botão Remote Celular (QR)
-                    HStack(spacing: 10) {
+                    // Área Direita: Botão Ableton Sync, Botão EDIT / DONE e Botão Remote Celular (QR)
+                    HStack(spacing: 8) {
+                        // Botão Sincronizar Cenas com Ableton Live (Session View)
+                        Button(action: { state.syncScenesToAbleton() }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(state.isSyncingAbleton ? Color.emeraldOrGreen.opacity(0.22) : Color.white.opacity(0.06))
+                                    .frame(width: 36, height: 36)
+                                if state.isSyncingAbleton {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .emeraldOrGreen))
+                                        .scaleEffect(0.65)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(Color.white.opacity(0.75))
+                                }
+                            }
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(state.isSyncingAbleton ? Color.emeraldOrGreen.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Sync Setlist Scenes to Ableton Live (Session View)")
+                        
                         // Botão EDIT / DONE (ao lado do remote)
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.2)) {
