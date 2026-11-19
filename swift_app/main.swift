@@ -3584,11 +3584,17 @@ struct PlaybackAppView: View {
             ZStack(alignment: .bottom) {
                 SpectrogramWaveformView(state: state)
                 
-                // Cápsula Flutuante Minimalista (Modo EDIT - Emerge de trás do rodapé)
+                // Cápsula Flutuante Minimalista (Modo EDIT - Emerge e desce por trás do rodapé)
                 if state.isEditMode {
                     FloatingMappingHUD(state: state)
                         .padding(.bottom, 14)
-                        .transition(.move(edge: .bottom))
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .bottom),
+                                removal: .move(edge: .bottom)
+                            )
+                        )
+                        .zIndex(10)
                 }
             }
             .clipped()

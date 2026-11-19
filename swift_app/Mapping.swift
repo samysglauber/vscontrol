@@ -677,12 +677,13 @@ struct FloatingMappingHUD: View {
                 .padding(.vertical, 5.5)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.22) : Color.clear)
+                        .fill(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.24) : Color.white.opacity(0.001))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.50) : Color.clear, lineWidth: 1)
+                        .stroke(mapping.mode == .key ? Color(red: 1.0, green: 0.65, blue: 0.15).opacity(0.55) : Color.clear, lineWidth: 1)
                 )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(PlainButtonStyle())
             .help("Toggle Key Mapping mode")
@@ -704,12 +705,13 @@ struct FloatingMappingHUD: View {
                 .padding(.vertical, 5.5)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.22) : Color.clear)
+                        .fill(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.24) : Color.white.opacity(0.001))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.50) : Color.clear, lineWidth: 1)
+                        .stroke(mapping.mode == .midi ? Color(red: 0.60, green: 0.45, blue: 1.0).opacity(0.55) : Color.clear, lineWidth: 1)
                 )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(PlainButtonStyle())
             .help("Toggle MIDI Mapping mode")
@@ -718,13 +720,13 @@ struct FloatingMappingHUD: View {
         .background(
             ZStack {
                 VisualEffectBlur(material: .hudWindow, blendingMode: .withinWindow)
-                Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.72)
+                Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.45)
             }
         )
         .cornerRadius(9)
         .overlay(
             RoundedRectangle(cornerRadius: 9)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 4)
         .fixedSize(horizontal: true, vertical: true)
