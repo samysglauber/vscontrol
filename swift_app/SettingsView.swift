@@ -576,13 +576,21 @@ struct MidiSyncSettingsTabView: View {
                                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(state.abletonTriggerOffsetMs == 0 ? .white.opacity(0.40) : .white)
                                 .frame(width: 54, alignment: .trailing)
-                            if state.abletonTriggerOffsetMs != 0 {
-                                Button("Reset") {
-                                    state.abletonTriggerOffsetMs = 0
-                                }
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white.opacity(0.70))
+                            Button("Reset") {
+                                state.abletonTriggerOffsetMs = 0
                             }
+                            .font(.system(size: 10.5, weight: .medium))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(state.abletonTriggerOffsetMs == 0 ? 0.03 : 0.07))
+                            .foregroundColor(state.abletonTriggerOffsetMs == 0 ? .white.opacity(0.25) : .white.opacity(0.85))
+                            .cornerRadius(5)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.white.opacity(state.abletonTriggerOffsetMs == 0 ? 0.04 : 0.09), lineWidth: 1)
+                            )
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(state.abletonTriggerOffsetMs == 0)
                         }
                     }
                     .padding(.vertical, 8)
@@ -752,13 +760,21 @@ struct MidiSyncSettingsTabView: View {
                                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(state.midiClockOffsetMs == 0 ? .white.opacity(0.40) : .white)
                                 .frame(width: 54, alignment: .trailing)
-                            if state.midiClockOffsetMs != 0 {
-                                Button("Reset") {
-                                    state.midiClockOffsetMs = 0
-                                }
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white.opacity(0.70))
+                            Button("Reset") {
+                                state.midiClockOffsetMs = 0
                             }
+                            .font(.system(size: 10.5, weight: .medium))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(state.midiClockOffsetMs == 0 ? 0.03 : 0.07))
+                            .foregroundColor(state.midiClockOffsetMs == 0 ? .white.opacity(0.25) : .white.opacity(0.85))
+                            .cornerRadius(5)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.white.opacity(state.midiClockOffsetMs == 0 ? 0.04 : 0.09), lineWidth: 1)
+                            )
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(state.midiClockOffsetMs == 0)
                         }
                     }
                     .padding(.vertical, 8)
