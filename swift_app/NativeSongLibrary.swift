@@ -89,6 +89,17 @@ final class NativeSongLibrary {
             }
         }
         
+        // Se for um caminho absoluto existente no sistema de arquivos
+        if id.starts(with: "/") && FileManager.default.fileExists(atPath: id) {
+            if let dbSong = NativeDatabase.shared.getSong(id: id) {
+                cacheSong(dbSong)
+                return dbSong
+            }
+            if let imported = importExternalFile(url: URL(fileURLWithPath: id)) {
+                return imported
+            }
+        }
+        
         let dir = getTracksDirectory()
         if let indexed = indexFile(id, directory: dir) {
             return indexed
@@ -215,6 +226,107 @@ final class NativeSongLibrary {
         lock.lock()
         songsCache[entry] = item
         lock.unlock()
+        return item
+    }
+    
+    // MARK: - Importação de Arquivo Externo Avulso (Fora da Pasta Principal)
+    
+    func importExternalFile(url: URL) -> SongItem? {
+        let filePath = url.path
+        guard FileManager.default.fileExists(atPath: filePath) else { return nil }
+        
+        let entry = url.lastPathComponent
+        let songId = filePath
+        
+        lock.lock()
+        if let cached = songsCache[songId] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        
+        // Tenta carregar do SQLite caso já tenha sido importado
+        if let fromDb = NativeDatabase.shared.getSong(id: songId) {
+            var song = fromDb
+            if let fileBpm = extractBpmFromFilename(entry), song.bpm != fileBpm {
+                song.bpm = fileBpm
+                NativeDatabase.shared.saveSong(item: song)
+            }
+            cacheSong(song)
+            return song
+        }
+        
+        var cleanName = (entry as NSString).deletingPathExtension
+        var bpm: Double = 120.0
+        var timeSignature = "4/4"
+        var defaultKey = "D"
+        var totalDuration: Double? = nil
+        var cues: [CueSection]? = nil
+        var fullWaveform: [Double]? = nil
+        let hasCover = hasCover(for: entry) || hasCover(for: songId)
+        let isMetronome = false
+        let subdivide = false
+        let subdivision = "1/4"
+        
+        // 1. Extração de BPM e Tonalidade do nome do arquivo
+        if let bpmMatch = extractBpmFromFilename(entry) {
+            bpm = bpmMatch
+        }
+        if let keyMatch = extractKeyFromFilename(entry) {
+            defaultKey = keyMatch
+        }
+        if let tsMatch = extractTimeSignatureFromFilename(entry) {
+            timeSignature = tsMatch
+        }
+        
+        // 2. Lê a duração diretamente do cabeçalho do arquivo de áudio
+        if let af = try? AVAudioFile(forReading: url) {
+            let sr = af.processingFormat.sampleRate
+            if sr > 0 {
+                totalDuration = Double(af.length) / sr
+            }
+        }
+        
+        // 3. Seções padrão imediatas
+        if let dur = totalDuration, dur > 0 {
+            cues = generateDefaultCues(totalDuration: dur, bpm: bpm, timeSignature: timeSignature)
+        }
+        
+        fullWaveform = [Double](repeating: 0.15, count: 400)
+        cleanName = resolveSongDisplayName(name: cleanName, timeSignature: timeSignature, isMetronome: isMetronome)
+        
+        var guideLeadIn: Double? = nil
+        let cuesPath = filePath + ".cues.json"
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: cuesPath)),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let gli = json["guide_lead_in"] as? Double {
+            guideLeadIn = gli
+        }
+        
+        let item = SongItem(
+            id: songId,
+            name: cleanName,
+            filename: entry,
+            path: filePath,
+            bpm: bpm,
+            time_signature: timeSignature,
+            default_key: defaultKey,
+            full_waveform: fullWaveform,
+            has_cover: hasCover,
+            cover_url: hasCover ? "/covers/\(entry)" : nil,
+            search_query: cleanSongTitleForSearch(cleanName),
+            total_duration: totalDuration,
+            cues: cues,
+            is_metronome: isMetronome,
+            subdivide: subdivide,
+            subdivision: subdivision,
+            auto_analysis: "pending",
+            guide_lead_in: guideLeadIn
+        )
+        
+        // Salva no SQLite
+        NativeDatabase.shared.saveSong(item: item)
+        cacheSong(item)
         return item
     }
     

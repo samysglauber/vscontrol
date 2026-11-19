@@ -2138,6 +2138,115 @@ class PlaybackState: ObservableObject {
         UserDefaults.standard.set(dir, forKey: "saved_tracks_folder_path")
     }
     
+    // MARK: - Adicionar Arquivos de Áudio Avulsos ("Por Fora")
+    
+    func importExternalAudioFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Audio Tracks"
+        panel.message = "Choose audio files (.wav, .mp3, .m4a, .aif, .aiff) to add to setlist"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [
+            .audio,
+            .mp3,
+            .wav,
+            .aiff,
+            UTType(filenameExtension: "m4a") ?? .audio
+        ]
+        panel.prompt = "Add to Setlist"
+        
+        if panel.runModal() == .OK {
+            var addedAny = false
+            for url in panel.urls {
+                if let song = NativeSongLibrary.shared.importExternalFile(url: url) {
+                    if !self.librarySongs.contains(where: { $0.id == song.id }) {
+                        self.librarySongs.append(song)
+                    }
+                    if !self.songs.contains(where: { $0.id == song.id }) {
+                        self.songs.append(song)
+                    }
+                    
+                    let setlistSong = SetlistSong(
+                        song: song,
+                        cues: song.cues,
+                        totalDuration: song.total_duration,
+                        waveform: song.full_waveform
+                    )
+                    self.setlist.append(setlistSong)
+                    
+                    if let dur = song.total_duration, let cs = song.cues {
+                        self.songCache[song.id] = CachedSongData(
+                            bpm: song.bpm ?? 120.0,
+                            timeSignature: song.time_signature ?? "4/4",
+                            totalSeconds: dur,
+                            cues: cs,
+                            waveform: song.full_waveform ?? []
+                        )
+                    }
+                    self.autoFetchCover(for: song)
+                    addedAny = true
+                }
+            }
+            if addedAny {
+                self.saveSetlistState()
+                self.isAddSongSheetPresented = false
+            }
+        }
+    }
+    
+    func addSongFromURL(_ url: URL) {
+        let supported = ["wav", "mp3", "m4a", "aif", "aiff"]
+        guard supported.contains(url.pathExtension.lowercased()) else { return }
+        if let song = NativeSongLibrary.shared.importExternalFile(url: url) {
+            if !self.librarySongs.contains(where: { $0.id == song.id }) {
+                self.librarySongs.append(song)
+            }
+            if !self.songs.contains(where: { $0.id == song.id }) {
+                self.songs.append(song)
+            }
+            let setlistSong = SetlistSong(
+                song: song,
+                cues: song.cues,
+                totalDuration: song.total_duration,
+                waveform: song.full_waveform
+            )
+            self.setlist.append(setlistSong)
+            if let dur = song.total_duration, let cs = song.cues {
+                self.songCache[song.id] = CachedSongData(
+                    bpm: song.bpm ?? 120.0,
+                    timeSignature: song.time_signature ?? "4/4",
+                    totalSeconds: dur,
+                    cues: cs,
+                    waveform: song.full_waveform ?? []
+                )
+            }
+            self.autoFetchCover(for: song)
+            self.saveSetlistState()
+        }
+    }
+    
+    func handleAudioFileDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (item, error) in
+                if let data = item as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    DispatchQueue.main.async {
+                        self.addSongFromURL(url)
+                    }
+                    handled = true
+                } else if let url = item as? URL {
+                    DispatchQueue.main.async {
+                        self.addSongFromURL(url)
+                    }
+                    handled = true
+                }
+            }
+        }
+        return handled
+    }
+
     func selectTracksFolder() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -4462,6 +4571,9 @@ struct SetlistCarouselView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .animation(.spring(response: 0.38, dampingFraction: 0.82), value: state.setlist.map { $0.id })
+                }
+                .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+                    state.handleAudioFileDrop(providers: providers)
                 }
                 .onChange(of: state.isEditMode) { _, isEdit in
                     if isEdit {
@@ -7183,6 +7295,23 @@ struct AddSongSheetView: View {
                         .buttonStyle(PlainButtonStyle())
                         .help(state.tracksFolderPath.isEmpty ? "Select Tracks Folder" : "Folder: \(state.tracksFolderPath)")
                         
+                        // Botão com ícone "+" ao lado da pasta para adicionar arquivo avulso por fora da pasta
+                        Button(action: { state.importExternalAudioFiles() }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white.opacity(0.80))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.06))
+                                .cornerRadius(5)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Add individual audio file from computer (outside folder)")
+                        
                         Spacer()
                         
                         // Botão Refresh discreto
@@ -7245,7 +7374,7 @@ struct AddSongSheetView: View {
                                 Image(systemName: "metronome")
                                     .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundColor(.white.opacity(0.85))
-                                Text("+ Click")
+                                Text("Click")
                                     .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundColor(.white)
                             }
