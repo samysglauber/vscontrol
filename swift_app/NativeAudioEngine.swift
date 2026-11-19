@@ -859,7 +859,7 @@ final class NativeAudioEngine {
         tracksFadeFramesLeft = 0
         isPlaying = true
         
-        if !triggerAtBeat1 || posFrame >= effectiveDownbeatFrame {
+        if !abletonPlayTriggered && (!triggerAtBeat1 || posFrame >= effectiveDownbeatFrame) {
             abletonPlayTriggered = true
             if syncTempoToDaw {
                 osc.sendTempo(self.bpm)
@@ -874,7 +874,7 @@ final class NativeAudioEngine {
             DispatchQueue.main.async { [weak self] in
                 self?.onAbletonSynced?()
             }
-        } else {
+        } else if !abletonPlayTriggered {
             // Aguarda atingir o Tempo 1 (com compensação de offset) no callback do CoreAudio
             abletonPlayTriggered = false
         }
