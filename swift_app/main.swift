@@ -4265,8 +4265,8 @@ struct SetlistCarouselView: View {
                                                         refreshId: state.coverRefreshTrigger
                                                     )
                                                     .saturation(0)
-                                                    .blur(radius: 6)
-                                                    .opacity(0.18)
+                                                    .blur(radius: 3)
+                                                    .opacity(0.40)
                                                     
                                                     // 2. Fundo escuro fosco translúcido
                                                     RoundedRectangle(cornerRadius: 10)
@@ -4419,37 +4419,45 @@ struct SetlistCarouselView: View {
                             }
                         }
                         
-                        // Card "Add a Song" no mesmo formato e tamanho das músicas (adicionando ao lado)
-                        Button(action: { state.isAddSongSheetPresented = true }) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.85))
-                                        .frame(width: 160, height: 88)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .stroke(Color.white.opacity(0.20), lineWidth: 1.2)
-                                        )
-                                    
-                                    VStack(spacing: 6) {
-                                        Image(systemName: "plus")
-                                            .font(.system(size: 22, weight: .light))
-                                            .foregroundColor(.white)
-                                        Text("Add a Song")
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundColor(.white)
+                        // Card "Add a Song" no mesmo formato e tamanho das músicas (visível apenas em Modo EDIT)
+                        if state.isEditMode {
+                            Button(action: { state.isAddSongSheetPresented = true }) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.85))
+                                            .frame(width: 160, height: 88)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(Color.white.opacity(0.20), lineWidth: 1.2)
+                                            )
+                                        
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "plus")
+                                                .font(.system(size: 22, weight: .light))
+                                                .foregroundColor(.white)
+                                            Text("Add a Song")
+                                                .font(.system(size: 12, weight: .bold))
+                                                .foregroundColor(.white)
+                                        }
                                     }
+                                    .frame(width: 160, height: 88)
+                                    
+                                    Text("")
+                                        .font(.system(size: 11))
+                                        .frame(width: 160, height: 16)
                                 }
-                                .frame(width: 160, height: 88)
-                                
-                                Text("")
-                                    .font(.system(size: 11))
-                                    .frame(width: 160, height: 16)
                             }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Add a song to setlist")
+                            .id("setlist_add_song_card")
+                            .transition(.scale(scale: 0.88).combined(with: .opacity))
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .help("Add a song to setlist")
-                        .id("setlist_add_song_card")
+                        
+                        // Âncora invisível de respiro no final do carrossel (garante 24pt de margem à direita)
+                        Color.clear
+                            .frame(width: 24, height: 1)
+                            .id("setlist_trailing_anchor")
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
@@ -4457,8 +4465,10 @@ struct SetlistCarouselView: View {
                 }
                 .onChange(of: state.isEditMode) { _, isEdit in
                     if isEdit {
-                        withAnimation(.easeInOut(duration: 0.45)) {
-                            proxy.scrollTo("setlist_add_song_card", anchor: .trailing)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            withAnimation(.easeInOut(duration: 0.45)) {
+                                proxy.scrollTo("setlist_trailing_anchor", anchor: .trailing)
+                            }
                         }
                     } else {
                         if let cur = state.currentSong,
