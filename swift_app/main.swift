@@ -2627,7 +2627,7 @@ class PlaybackState: ObservableObject {
                         guideLeadIn: self.guideLeadInBars
                     )
                 }
-                if autoPlay {
+                if autoPlay && MappingManager.shared.mode == .none {
                     AudioEngine.shared.play()
                     self.isPlaying = true
                 }
@@ -2919,6 +2919,7 @@ class PlaybackState: ObservableObject {
     }
     
     func playPause() {
+        guard MappingManager.shared.mode == .none else { return }
         if isFadingOut {
             isFadingOut = false
         }
@@ -2980,6 +2981,7 @@ class PlaybackState: ObservableObject {
 
     // Troca de música imediata com Crossfade no Canal R e Contagem na hora no Canal L
     func switchSetlistSongWithCrossfade(to targetItem: SetlistSong) {
+        guard MappingManager.shared.mode == .none else { return }
         guard !hasTriggeredCrossfade else { return }
         
         if currentSong?.id == targetItem.song.id {
@@ -2997,6 +2999,7 @@ class PlaybackState: ObservableObject {
 
     // Inicia a música correspondente do Setlist pelo índice (teclas 1 a 8)
     func playSetlistSong(at index: Int) {
+        guard MappingManager.shared.mode == .none else { return }
         guard index >= 0 && index < setlist.count else { return }
         let targetItem = setlist[index]
         let target = targetItem.song
@@ -3670,7 +3673,9 @@ struct PlaybackAppView: View {
                     return nil
                 }
                 if event.keyCode == 49 { // 49 = Barra de Espaço
-                    state.playPause()
+                    if MappingManager.shared.mode == .none {
+                        state.playPause()
+                    }
                     return nil
                 }
                 
@@ -4070,16 +4075,16 @@ struct TopBarView: View {
                         }) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(state.isEditMode ? Color.yellow.opacity(0.22) : Color.white.opacity(0.06))
+                                    .fill(state.isEditMode ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
                                     .frame(width: 36, height: 36)
                                 Text(state.isEditMode ? "DONE" : "EDIT")
                                     .font(.system(size: 9, weight: .black, design: .monospaced))
-                                    .foregroundColor(state.isEditMode ? Color.yellow : Color.white.opacity(0.75))
+                                    .foregroundColor(state.isEditMode ? Color.white : Color.white.opacity(0.75))
                             }
                             .frame(width: 36, height: 36)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(state.isEditMode ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1)
+                                    .stroke(state.isEditMode ? Color.white.opacity(0.60) : Color.white.opacity(0.12), lineWidth: 1)
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -4365,7 +4370,7 @@ struct SetlistCarouselView: View {
                                 ZStack(alignment: .topTrailing) {
                                     // Card da Música com Capa do Álbum ou Efeito Raio-X durante Arraste
                                     Button(action: {
-                                        if !state.isEditMode {
+                                        if !state.isEditMode && MappingManager.shared.mode == .none {
                                             let now = Date()
                                             let isDoubleClick = (lastClickedSongId == item.song.id && now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval)
                                             lastClickedSongId = item.song.id
@@ -4583,7 +4588,7 @@ struct SetlistCarouselView: View {
                                     
                                     Text("")
                                         .font(.system(size: 11))
-                                        .frame(width: 160, height: 16)
+                                        .frame(width: 160, height: 14)
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -4630,6 +4635,7 @@ struct SetlistCarouselView: View {
                 }
             }
         }
+        .frame(height: 128)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .sheet(isPresented: $state.isCoverPickerPresented) {
             CoverPickerSheetView(state: state)

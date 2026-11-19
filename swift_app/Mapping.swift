@@ -657,6 +657,7 @@ typealias BottomMappingBar = FloatingMappingHUD
 struct FloatingMappingHUD: View {
     @ObservedObject var state: PlaybackState
     @ObservedObject var mapping = MappingManager.shared
+    @State private var showingClearConfirmation: Bool = false
     
     var body: some View {
         HStack(spacing: 3) {
@@ -715,6 +716,37 @@ struct FloatingMappingHUD: View {
             }
             .buttonStyle(PlainButtonStyle())
             .help("Toggle MIDI Mapping mode")
+            
+            // Botão Limpar Mapeamento (visível quando algum modo de mapeamento estiver ativo)
+            if mapping.mode != .none {
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 1, height: 16)
+                    .padding(.horizontal, 2)
+                
+                Button(action: {
+                    showingClearConfirmation = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10.5))
+                        Text(mapping.mode == .key ? "Clear Keys" : "Clear MIDI")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(Color.red.opacity(0.85))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(Color.red.opacity(0.14))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.red.opacity(0.35), lineWidth: 1)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(mapping.mode == .key ? "Clear all keyboard mappings" : "Clear all MIDI mappings")
+            }
         }
         .padding(3)
         .background(
@@ -730,5 +762,15 @@ struct FloatingMappingHUD: View {
         )
         .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 4)
         .fixedSize(horizontal: true, vertical: true)
+        .alert(isPresented: $showingClearConfirmation) {
+            Alert(
+                title: Text(mapping.mode == .key ? "Limpar Mapeamento de Teclado?" : "Limpar Mapeamento MIDI?"),
+                message: Text(mapping.mode == .key ? "Tem certeza de que deseja apagar todos os atalhos de teclado mapeados?" : "Tem certeza de que deseja apagar todos os mapeamentos de comandos e notas MIDI?"),
+                primaryButton: .destructive(Text("Limpar Tudo")) {
+                    mapping.clearAllCurrentMode()
+                },
+                secondaryButton: .cancel(Text("Cancelar"))
+            )
+        }
     }
 }
