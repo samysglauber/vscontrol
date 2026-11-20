@@ -1,166 +1,112 @@
 <div align="center">
 
-<img src="docs/app-icon-256.png" alt="Ícone do VS Control" width="112" height="112">
+<img src="docs/app-icon-256.png" alt="VS Control" width="96" height="96">
 
 # VS Control
 
-**Playback de VSs split (L/R) para o palco • Nativo para macOS**
+**Playback de Multitracks Split (L/R) para Palco e Apresentações ao Vivo**
 
-Leve, rápido e confiável. Sem multitracks pesadas, sem complicação.
-
-![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white)
-![Swift](https://img.shields.io/badge/Swift-F05138?style=flat-square&logo=swift&logoColor=white)
-![WebSocket](https://img.shields.io/badge/Remote-WebSocket-00B894?style=flat-square)
+Uma estação de áudio nativa para macOS focada em estabilidade, resposta imediata e controle em tempo real.<br>
+Sem DAWs pesadas, sem multitracks complexas e sem complicação no palco.
 
 <br>
 
-<img src="docs/screenshot.png" alt="Tela principal do VS Control" width="900">
+[![macOS](https://img.shields.io/badge/macOS-12.0+-000000?style=flat&logo=apple&logoColor=white)](https://apple.com)
+[![Swift](https://img.shields.io/badge/Swift-Native-F05138?style=flat&logo=swift&logoColor=white)](https://swift.org)
+[![Audio](https://img.shields.io/badge/Audio-CoreAudio%20%2F%20Metal-4A90E2?style=flat)](https://developer.apple.com/documentation/coreaudio)
+[![License](https://img.shields.io/badge/License-Proprietary-gray?style=flat)](LICENSE)
+
+<br><br>
+
+<img src="docs/screenshot.png" alt="Interface Principal do VS Control" width="900">
 
 </div>
 
 <br>
 
-## 🎚️ Conceito Split (L/R)
+## O Conceito Split (L / R)
 
-Feito sob medida para arquivos de áudio **split de dois canais**, o VS Control elimina a lentidão e o consumo excessivo de memória de softwares pesados, entregando carregamento imediato de faixas, troca instantânea de repertório e estabilidade absoluta ao vivo.
+Desenvolvido sob medida para arquivos estéreo divididos (*split stereo*), o VS Control elimina o alto consumo de CPU e memória de softwares convencionais, garantindo carregamento instantâneo de faixas e estabilidade absoluta durante o show.
 
-| Canal | Conteúdo | Destino | Função |
-|:---:|:---|:---|:---|
-| 🔈 **L** | **Click + Voz Guia** | Fones / In-Ear | Metrônomo e contagens de seção (*"Intro 2, 3, 4"*, *"Verso"*, *"Refrão"*…) |
-| 🔊 **R** | **Mix do VS** | Mesa de som / P.A. | Instrumental completo pré-mixado (pads, synths, guitarras, backing vocals) |
-
-<br>
-
-## ✨ Recursos em Destaque
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 🎛️ Timeline & Mapeamento de Seções
-Forma de onda contínua com blocos coloridos para cada parte da música (*Intro, Verso, Refrão, Ponte, Ending*...).
-
-- **Detecção inteligente:** Mapeamento visual das seções ao longo do espectrograma.
-- **Edição em compassos:** Ajuste fino de compassos inteiros e meios compassos (`-1`, `-½`, `+½`, `+1`).
-- **Menu de contexto:** Clique com botão direito em qualquer trecho para renomear, dividir ou alterar cores.
-
-</td>
-<td width="50%" valign="top">
-
-### ⏱️ Salto Quantizado no Tempo 1
-Liberdade para alterar a estrutura do arranjo ao vivo sem sair do tempo com o baterista.
-
-- **Zero quebra de ritmo:** O salto sempre aguarda o tempo 1 do próximo compasso.
-- **Repetição fluida:** Repita um refrão, estenda uma ponte ou pule direto para o final.
-- **Loop dedicado:** Tecla `L` para manter qualquer trecho em repetição contínua.
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 📋 Setlists Dinâmicas (`.vset`)
-Gerenciamento de repertório completo pronto para apresentações e cultos.
-
-- **Menu na barra de título:** Troca instantânea e salvamento de setlists em 1 clique.
-- **Transição inteligente:** Escolha entre `AUTO` (emenda na próxima faixa) ou `STOP` (aguarda disparo).
-- **Foco no palco:** Opacidade de 100% na música ativa e 70% nas demais para leitura rápida no escuro.
-- **Drag & Drop:** Reorganize a ordem das faixas arrastando os cards na barra inferior.
-
-</td>
-<td width="50%" valign="top">
-
-### 🌅 Fade Inteligente (P.A. vs Fone)
-Controle de volume suave para falas, transições ou ministrações espontâneas.
-
-- **Fade Out em 3 segundos:** Reduz gradualmente o volume do instrumental no P.A.
-- **Click e Guia ativos:** O metrônomo continua tocando nos fones dos músicos.
-- **Fade In reverso:** Um segundo clique no botão reverte o efeito, trazendo o volume de volta.
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 📱 Controle Remoto sem Fio
-Controle o playback de qualquer lugar do palco direto do seu smartphone ou tablet.
-
-- **Conexão instantânea via QR Code:** Basta apontar a câmera do celular na tela.
-- **Interface móvel tátil:** Botões grandes para disparo rápido perto do seu instrumento.
-- **Comunicação WebSocket:** Latência zero e feedback em tempo real na mesma rede Wi-Fi.
-
-</td>
-<td width="50%" valign="top">
-
-### 🔒 Modo de Edição & Desfazer Total
-Máxima estabilidade e segurança para apresentações ao vivo.
-
-- **Trava de segurança (Edit Mode):** Evita exclusões ou alterações acidentais durante o show.
-- **Histórico completo (Undo/Redo):** Atalhos `⌘ Z` e `⇧ ⌘ Z` para até 50 passos com persistência no disco.
-- **Feedback visual imediato:** Notificações discretas na tela a cada ajuste realizado.
-
-</td>
-</tr>
-</table>
+| Canal | Conteúdo | Destino Principal | Função |
+| :---: | :--- | :--- | :--- |
+| **L** | **Click + Voz Guia** | Fones / In-Ear dos músicos | Metrônomo sincronizado e contagens de seção (*Intro*, *Verso*, *Refrão*…) |
+| **R** | **Master Tracks** | Mesa de Som / P.A. | Mix instrumental da banda (pads, sintetizadores, guitarras, backing vocals) |
 
 <br>
 
-## ⌨️ Atalhos de Teclado
+## Veja em Ação
 
-| Tecla | Ação |
-|:-----:|------|
-| `Espaço` | Iniciar / Pausar reprodução |
-| `←` / `→` | Navegar pelas seções da música |
-| `Enter` | Disparar salto quantizado para a seção selecionada |
-| `Esc` | Cancelar foco / seleção de seção |
-| `L` | Ativar / desativar loop da seção |
-| `0` | Disparar Fade Out / Fade In das faixas (3s) |
-| `1` a `8` | Disparar diretamente as músicas 1 a 8 da setlist |
-| `⌘ Z` | Desfazer edição de seções (até 50 passos) |
-| `⇧ ⌘ Z` | Refazer edição de seções |
-| `⌘ N` | Criar novo setlist |
-| `⌘ O` | Abrir arquivo de setlist (`.vset`) |
-| `⌘ S` | Salvar setlist atual |
-| `⇧ ⌘ S` | Salvar setlist como... |
+### Salto Quantizado no Tempo 1
+Liberdade para alterar a estrutura do arranjo ao vivo. O disparo aguarda com precisão matemática o **tempo 1 (downbeat)** do próximo compasso, emitindo a voz guia antecipada no canal L para avisar a banda sem interromper o som do P.A.
+
+<div align="center">
+  <img src="docs/jump.gif" alt="Salto Quantizado no Tempo 1" width="860">
+</div>
 
 <br>
 
-## 🚀 Instalação e Execução
+### Loop de Seção
+Mantenha qualquer parte da música (*Refrão, Ponte ou Instrumental*) em repetição contínua instantânea com a tecla `L` ou botão dedicado, permitindo ministrações e solos espontâneos sem perder a sincronia do clique.
 
-### Abrir o aplicativo pronto
-1. Dê dois cliques em **`VS Control.app`** na raiz do projeto.
-2. *(Opcional)* Arraste para a pasta **/Applications** ou adicione ao **Dock**.
-
-### Compilar a partir do código-fonte
-```bash
-swiftc swift_app/main.swift -o "VS Control.app/Contents/MacOS/VSControl"
-```
+<div align="center">
+  <img src="docs/loop.gif" alt="Loop de Seção" width="220">
+</div>
 
 <br>
 
-## 🔊 Roteamento de Áudio com BlackHole 2ch
+### Transição Customizada por Faixa
+Configure o comportamento de passagem entre cada música do seu repertório com 1 clique direto no carrossel:
+- **Cue Next Song:** Carrega e aguarda o disparo da próxima faixa.
+- **Pause:** Pausa automaticamente a reprodução ao final da música atual.
+- **Crossfade:** Transição contínua sem pausas, iniciando a contagem de voz guia imediatamente no canal L enquanto a música anterior finaliza suavemente.
 
-Para rotear o áudio do VS Control para DAWs ou softwares de transmissão:
+<div align="center">
+  <img src="docs/song-transition.png" alt="Menu de Transição entre Músicas" width="460">
+</div>
+
+<br>
+
+## Recursos Principais
+
+- **Timeline Acelerada por Metal:** Forma de onda contínua renderizada via GPU a 60 fps, com blocos coloridos e divisão visual nítida por seções musicais.
+- **Detecção Inteligente de Seções:** Análise nativa de transientes de clique e transcrição fonética local via Whisper.cpp (100% offline, sem dependências externas).
+- **Fade Inteligente de P.A. (`Tecla 0`):** Reduz gradualmente o instrumental no P.A. em 3 segundos, mantendo o metrônomo e as guias ativas nos fones dos músicos.
+- **Setlists Dinâmicas (`.vset`):** Organização de repertório com reordenação por *drag-and-drop*, modo de edição protegido contra cliques acidentais e histórico completo com `⌘ Z`.
+- **Mapeamento Direto (KEY MAP & MIDI MAP):** Mapeamento rápido de teclas do computador e controladores MIDI físicos com visual intuitivo inspirado em DAWs de referência.
+
+<br>
+
+### Capas de Álbum & Personalização Visual
+Identificação imediata das faixas no palco através das artes oficiais. Pesquise capas de álbuns online direto pelo aplicativo ou escolha qualquer imagem personalizada do seu Mac.
+
+<div align="center">
+  <img src="docs/album-cover.png" alt="Busca de Capas de Álbum" width="560">
+</div>
+
+<br>
+
+## Roteamento de Áudio com BlackHole 2ch
+
+Para rotear o áudio do VS Control diretamente para DAWs ou softwares de transmissão (OBS Studio):
 
 ```bash
 ./scripts/install_blackhole.sh
 sudo killall coreaudiod
 ```
 
-O **BlackHole 2ch** aparecerá automaticamente no seletor de saídas do aplicativo.
+O **BlackHole 2ch** aparecerá automaticamente no seletor de saídas de áudio do aplicativo.
 
 <br>
 
-## 📄 Licença / License
+## Licença
 
-Copyright &copy; 2026 **Samys Glauber**. Todos os direitos reservados (*All Rights Reserved*).
+Copyright &copy; 2026 **Samys Glauber**. Todos os direitos reservados.
 
-Este software e seu código-fonte são proprietários. É estritamente proibida qualquer cópia, distribuição, modificação ou uso comercial sem a autorização prévia por escrito do autor.
+Este software e seu código-fonte são proprietários. É proibida qualquer cópia, distribuição, modificação ou uso comercial sem autorização prévia por escrito do autor.
 
 <br>
 
 <div align="center">
-
-<sub>Feito para quem toca ao vivo.</sub>
-
+  <sub>Feito sob medida para quem toca ao vivo.</sub>
 </div>
