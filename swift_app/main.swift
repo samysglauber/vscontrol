@@ -8333,12 +8333,15 @@ struct SongEditorSheetView: View {
     
     private func updateBarsFromTimes() {
         let secPerBar = calculateSecPerBar()
+        guard secPerBar > 0 else { return }
         for i in 0..<localCues.count {
             if i == 0 {
                 localCues[i].bar = 1.0
                 localCues[i].time = 0.0
             } else {
-                let calculatedBar = Double(Int((localCues[i].time / secPerBar).rounded()) + 1)
+                let rawBars = localCues[i].time / secPerBar
+                let roundedBars = (rawBars * 2.0).rounded() / 2.0
+                let calculatedBar = roundedBars + 1.0
                 localCues[i].bar = max(localCues[i - 1].bar + 0.5, calculatedBar)
             }
         }
