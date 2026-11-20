@@ -1234,8 +1234,8 @@ class PlaybackState: ObservableObject {
         // Use -1 as sentinel to indicate "not yet resolved".
         self.selectedDeviceId = -1
         
-        // Inicia o Servidor Nativo de Controle Remoto e WebSocket na porta configurada
-        RemoteServer.shared.start(port: UInt16(self.remoteServerPort))
+        // Servidor Nativo de Controle Remoto desativado temporariamente para reformulação
+        // RemoteServer.shared.start(port: UInt16(self.remoteServerPort))
         
         // Callbacks de eventos do motor de áudio nativo (Fim de música e Salto quantizado)
         AudioEngine.shared.onSongEnded = { [weak self] in
@@ -4090,7 +4090,7 @@ struct TopBarView: View {
                         .buttonStyle(PlainButtonStyle())
                         .help(state.isEditMode ? "Finish editing setlist" : "Reorder and remove songs from setlist")
                         
-                        // Botão Remote Celular (QR) sóbrio com mesmo padrão dos botões centrais
+                        // Botão Mobile Remote (Coming Soon)
                         Button(action: { state.isQrModalPresented = true }) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 8)
@@ -4107,7 +4107,7 @@ struct TopBarView: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help("Connect smartphone remote control via QR Code")
+                        .help("Mobile Remote Control (Coming Soon)")
                     }
                 }
                 
@@ -7513,64 +7513,64 @@ struct AddSongSheetView: View {
 }
 
 // ==========================================
-// 10. MODAL QR CODE NATIVO (COREIMAGE)
+// 10. MODAL MOBILE REMOTE CONTROL (COMING SOON)
 // ==========================================
 struct QrCodeSheetView: View {
     @ObservedObject var state: PlaybackState
     @Environment(\.presentationMode) var presentationMode
     
     var body: some View {
-        VStack(spacing: 16) {
-            Text("📱 Mobile Remote Control")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            Text("Scan with your mobile camera to control playback:")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-            
-            if let qrImage = generateQRCodeImage(from: state.serverUrl) {
-                Image(nsImage: qrImage)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 190, height: 190)
-                    .padding(10)
-                    .background(Color.white)
-                    .cornerRadius(12)
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 58, height: 58)
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundColor(.white.opacity(0.80))
             }
             
-            Text(state.serverUrl)
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
-                .foregroundColor(.green)
-                .padding(6)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("Mobile Remote Control")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Text("COMING SOON")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(Color.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.14))
+                        .cornerRadius(4)
+                }
+                
+                Text("We are currently redesigning the remote control experience to deliver ultra-low latency, rock-solid stage synchronization, and dedicated live performance views.\n\nStay tuned for the upcoming update!")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.50))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 16)
+            }
             
-            Text("💡 Ensure your smartphone is connected to the same Wi-Fi network as this Mac.")
-                .font(.caption)
-                .foregroundColor(.gray)
-            
-            Button("Done") {
+            Button("Got it") {
                 presentationMode.wrappedValue.dismiss()
             }
-            .buttonStyle(BorderedProminentButtonStyle())
+            .buttonStyle(PlainButtonStyle())
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6.5)
+            .background(Color.white.opacity(0.10))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            )
         }
-        .padding(24)
-        .frame(width: 390, height: 440)
+        .padding(26)
+        .frame(width: 380, height: 260)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
-    }
-    
-    private func generateQRCodeImage(from string: String) -> NSImage? {
-        guard let data = string.data(using: .utf8),
-              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
-        guard let ciImage = filter.outputImage else { return nil }
-        
-        let transform = CGAffineTransform(scaleX: 10, y: 10)
-        let scaled = ciImage.transformed(by: transform)
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 }
 

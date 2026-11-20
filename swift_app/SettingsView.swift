@@ -126,6 +126,15 @@ struct SettingsView: View {
                                     .font(.system(size: 10.5, weight: .medium))
                                 Text(tab.rawValue)
                                     .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .regular))
+                                if tab == .remote {
+                                    Text("SOON")
+                                        .font(.system(size: 7.5, weight: .bold))
+                                        .foregroundColor(selectedTab == tab ? .white.opacity(0.9) : .white.opacity(0.40))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Color.white.opacity(0.08))
+                                        .cornerRadius(3)
+                                }
                             }
                             .foregroundColor(selectedTab == tab ? .white : .white.opacity(0.45))
                             .padding(.horizontal, 9)
@@ -962,169 +971,54 @@ struct FilesLibrarySettingsTabView: View {
 
 struct RemoteSettingsTabView: View {
     @ObservedObject var state: PlaybackState
-    @State private var copied: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            // Remote Server
-            VStack(alignment: .leading, spacing: 9) {
-                SoberSectionHeader(title: "REMOTE CONTROL SERVER")
-                
-                VStack(spacing: 6) {
-                    // Server Toggle (Toggle on LEFT)
-                    HStack {
-                        HStack(spacing: 12) {
-                            SoberToggle(isOn: Binding(
-                                get: { RemoteServer.shared.isRunning },
-                                set: { enable in
-                                    if enable {
-                                        RemoteServer.shared.start(port: UInt16(state.remoteServerPort))
-                                    } else {
-                                        RemoteServer.shared.stop()
-                                    }
-                                }
-                            ))
-                            VStack(alignment: .leading, spacing: 2.5) {
-                                Text("Remote Control Server")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundColor(.white)
-                                Text("Enable transport and setlist control via web browser on tablet/mobile")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.40))
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
-                    
-                    // Server Port
-                    HStack {
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(Color.white.opacity(0.20))
-                                .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2.5) {
-                                Text("Server Port")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundColor(.white)
-                                Text("TCP port used for HTTP and WebSocket connections")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.40))
-                            }
-                        }
-                        Spacer()
-                        TextField("Port", value: $state.remoteServerPort, formatter: NumberFormatter())
-                            .textFieldStyle(PlainTextFieldStyle())
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(5.5)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5.5)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                            )
-                            .frame(width: 75)
-                    }
-                    .padding(.vertical, 8)
-                }
-            }
+            SoberSectionHeader(title: "REMOTE CONTROL")
             
-            // Device Connection & QR Code
-            VStack(alignment: .leading, spacing: 9) {
-                SoberSectionHeader(title: "DEVICE CONNECTION")
+            VStack(alignment: .center, spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.05))
+                        .frame(width: 56, height: 56)
+                    Image(systemName: "iphone.radiowaves.left.and.right")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundColor(.white.opacity(0.75))
+                }
                 
-                HStack(spacing: 16) {
-                    let urlStr = state.serverUrl
-                    if let qrImg = generateQRCodeImage(from: urlStr) {
-                        Image(nsImage: qrImg)
-                            .interpolation(.none)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 85, height: 85)
-                            .padding(5)
-                            .background(Color.white)
-                            .cornerRadius(7)
-                    } else {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.05))
-                            .frame(width: 85, height: 85)
-                            .cornerRadius(7)
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("Mobile Remote Control")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                        
+                        Text("COMING SOON")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(Color.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.12))
+                            .cornerRadius(4)
                     }
                     
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Scan QR code with any mobile device connected to the same Wi-Fi network:")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(.white.opacity(0.50))
-                            .lineLimit(2)
-                        
-                        Text(state.serverUrl)
-                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.90))
-                            .textSelection(.enabled)
-                        
-                        Button(action: {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(state.serverUrl, forType: .string)
-                            copied = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                copied = false
-                            }
-                        }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                    .font(.system(size: 10.5))
-                                Text(copied ? "Copied!" : "Copy Link")
-                            }
-                        }
-                        .buttonStyle(SoberPillButtonStyle())
-                    }
-                    Spacer()
+                    Text("The remote control architecture is currently being redesigned to provide an ultra-low latency, reliable stage experience for smartphones, tablets, and companion web interfaces.")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                        .frame(maxWidth: 440)
                 }
-                .padding(.vertical, 8)
             }
-            
-            // Access Permissions
-            VStack(alignment: .leading, spacing: 9) {
-                SoberSectionHeader(title: "ACCESS PERMISSIONS")
-                
-                HStack {
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(Color.white.opacity(0.20))
-                            .frame(width: 6, height: 6)
-                        VStack(alignment: .leading, spacing: 2.5) {
-                            Text("Access Permission")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundColor(.white)
-                            Text("Read-Only disables transport and section jump buttons on mobile")
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.40))
-                        }
-                    }
-                    Spacer()
-                    SoberSegmentedPicker(
-                        items: [("Full Control", false), ("Read-Only", true)],
-                        selection: $state.remoteReadOnlyMode
-                    )
-                }
-                .padding(.vertical, 8)
-            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 36)
+            .padding(.horizontal, 24)
+            .background(Color.white.opacity(0.025))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            )
         }
-    }
-    
-    private func generateQRCodeImage(from string: String) -> NSImage? {
-        guard let data = string.data(using: .utf8),
-              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
-        guard let ciImage = filter.outputImage else { return nil }
-        
-        let transform = CGAffineTransform(scaleX: 10, y: 10)
-        let scaled = ciImage.transformed(by: transform)
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 }
 
