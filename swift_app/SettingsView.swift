@@ -1001,7 +1001,7 @@ struct RemoteSettingsTabView: View {
                             .cornerRadius(4)
                     }
                     
-                    Text("The remote control architecture is currently being redesigned to provide an ultra-low latency, reliable stage experience for smartphones, tablets, and companion web interfaces.")
+                    Text("The remote control experience is being redesigned for live performance.\nStay tuned for upcoming updates!")
                         .font(.system(size: 11.5))
                         .foregroundColor(.white.opacity(0.45))
                         .multilineTextAlignment(.center)

@@ -7545,9 +7545,9 @@ struct QrCodeSheetView: View {
                         .cornerRadius(4)
                 }
                 
-                Text("We are currently redesigning the remote control experience to deliver ultra-low latency, rock-solid stage synchronization, and dedicated live performance views.\n\nStay tuned for the upcoming update!")
+                Text("We're redesigning the remote control experience for live performance.\nStay tuned for upcoming updates!")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.50))
+                    .foregroundColor(.white.opacity(0.55))
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .padding(.horizontal, 16)
@@ -7568,8 +7568,8 @@ struct QrCodeSheetView: View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             )
         }
-        .padding(26)
-        .frame(width: 380, height: 260)
+        .padding(24)
+        .frame(width: 360, height: 236)
         .background(Color(red: 0.11, green: 0.11, blue: 0.12))
     }
 }
