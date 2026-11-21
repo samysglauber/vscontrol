@@ -5460,6 +5460,20 @@ class HorizontalScrollNSView: NSView {
 }
 
 // ==========================================
+// FORMA DE TRIÂNGULO INVERTIDO (PLAYHEAD CURSOR ESTILO DAW)
+// ==========================================
+struct InvertedTriangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// ==========================================
 // 8. ESPECTROGRAMA & SEÇÕES COM SALTO QUANTIZADO (TEMPO 1)
 // ==========================================
 struct SpectrogramWaveformView: View {
@@ -5530,14 +5544,24 @@ struct SpectrogramWaveformView: View {
                             }
                             .frame(width: totalTrackWidth, height: 175)
                             
-                            // 6. PLAYHEAD VERMELHO ALINHADO COM PRECISÃO
+                            // 6. PLAYHEAD VERMELHO ESTILO DAW (COM TRIÂNGULO INVERTIDO NO TOPO E MARGEM VERTICAL)
                             if state.totalSeconds > 0 {
-                                Rectangle()
-                                    .fill(Color.red)
-                                    .frame(width: 2.5, height: 175)
-                                    .shadow(color: Color.red.opacity(0.85), radius: 6)
-                                    .offset(x: playheadX)
-                                    .animation(nil, value: playheadX)
+                                ZStack(alignment: .top) {
+                                    // Linha vertical vermelha que ultrapassa os blocos acima e abaixo (175 + 14 = 189)
+                                    Rectangle()
+                                        .fill(Color.red)
+                                        .frame(width: 2.5, height: 189)
+                                        .shadow(color: Color.red.opacity(0.85), radius: 5)
+                                    
+                                    // Triângulo Invertido no topo (cabeça do cursor apontando para baixo)
+                                    InvertedTriangle()
+                                        .fill(Color.red)
+                                        .frame(width: 13, height: 9)
+                                        .shadow(color: Color.red.opacity(0.85), radius: 4, y: 1)
+                                }
+                                .frame(width: 13, height: 189)
+                                .offset(x: playheadX - (13.0 - 2.5) / 2.0)
+                                .animation(nil, value: playheadX)
                             }
                         }
                     }
