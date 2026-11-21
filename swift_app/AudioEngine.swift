@@ -209,11 +209,11 @@ final class AudioEngine {
             guideLeadIn = nil
             queuedJump = nil
             queuedCueIdx = nil
-            abletonPlayTriggered = false
-            midiClock.sendStop()
-            if enableAbletonPlaySync || enableAbletonSceneSync {
+            midiClock.sendStop(sendTransport: enableAbletonPlaySync && abletonPlayTriggered)
+            if abletonPlayTriggered && enableAbletonPlaySync {
                 osc.sendStopPlaying()
             }
+            abletonPlayTriggered = false
             DispatchQueue.main.async { [weak self] in
                 self?.onPlayStateChanged?(false)
                 self?.onSongEnded?()
@@ -486,7 +486,7 @@ final class AudioEngine {
                     osc.sendTempo(self.bpm)
                     osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
                 }
-                midiClock.sendContinue()
+                midiClock.sendContinue(sendTransport: enableAbletonPlaySync)
                 midiClock.resetTick(currentFrame: triggerAtBeat1 ? firstDownbeatFrame : 0, sampleRate: sampleRate, bpm: bpm)
                 if enableAbletonSceneSync {
                     osc.fireScene(index: currentSetlistIndex)
@@ -665,7 +665,7 @@ final class AudioEngine {
                 osc.sendTempo(self.bpm)
                 osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
             }
-            midiClock.sendContinue()
+            midiClock.sendContinue(sendTransport: enableAbletonPlaySync)
             if enableAbletonSceneSync {
                 osc.fireScene(index: currentSetlistIndex)
             } else if enableAbletonPlaySync {
@@ -801,7 +801,7 @@ final class AudioEngine {
                     osc.sendTempo(self.bpm)
                     osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
                 }
-                midiClock.sendContinue()
+                midiClock.sendContinue(sendTransport: enableAbletonPlaySync)
                 if enableAbletonSceneSync {
                     osc.fireScene(index: currentSetlistIndex)
                 } else if enableAbletonPlaySync {
@@ -832,7 +832,7 @@ final class AudioEngine {
                 osc.sendTempo(self.bpm)
                 osc.sendTimeSignature(numerator: self.timeSignature.0, denominator: self.timeSignature.1)
             }
-            midiClock.sendContinue()
+            midiClock.sendContinue(sendTransport: enableAbletonPlaySync)
             if enableAbletonSceneSync {
                 osc.fireScene(index: currentSetlistIndex)
             } else if enableAbletonPlaySync {
@@ -861,8 +861,8 @@ final class AudioEngine {
         guideLeadIn = nil
         
         if abletonPlayTriggered {
-            midiClock.sendStop()
-            if enableAbletonPlaySync || enableAbletonSceneSync {
+            midiClock.sendStop(sendTransport: enableAbletonPlaySync)
+            if enableAbletonPlaySync {
                 osc.sendStopPlaying()
             }
         }
@@ -888,13 +888,13 @@ final class AudioEngine {
         loopActive = false
         loopInfinite = false
         loopCueIdx = nil
-        abletonPlayTriggered = false
         
-        midiClock.sendStop()
+        midiClock.sendStop(sendTransport: enableAbletonPlaySync && abletonPlayTriggered)
         midiClock.resetTick(currentFrame: 0, sampleRate: sampleRate, bpm: bpm)
-        if enableAbletonPlaySync || enableAbletonSceneSync {
+        if abletonPlayTriggered && enableAbletonPlaySync {
             osc.sendStopPlaying()
         }
+        abletonPlayTriggered = false
         
         DispatchQueue.main.async { [weak self] in
             self?.onPlayStateChanged?(false)

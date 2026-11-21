@@ -48,16 +48,20 @@ final class MIDIClock {
         }
     }
     
-    func sendContinue() {
+    func sendContinue(sendTransport: Bool = true) {
         lastTick = -1
         isPlaying = true
-        sendBytes([0xFB])
+        if sendTransport {
+            sendBytes([0xFB])
+        }
         sendBytes([0xF8])
     }
     
-    func sendStop() {
+    func sendStop(sendTransport: Bool = true) {
         isPlaying = false
-        sendBytes([0xFC])
+        if sendTransport {
+            sendBytes([0xFC])
+        }
     }
     
     func resetTick(currentFrame: Int64, sampleRate: Double, bpm: Double) {
