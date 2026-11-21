@@ -7903,6 +7903,7 @@ struct SongEditorSheetView: View {
     @State private var localCues: [CueSection] = []
     @State private var localGuideLeadIn: Double = 1.0
     @State private var showResetConfirmation: Bool = false
+    @State private var keyMonitor: Any? = nil
     
     let timeSignatureOptions = ["4/4", "2/4", "3/4", "6/8"]
     
@@ -8020,27 +8021,48 @@ struct SongEditorSheetView: View {
                         Text("TEMPO (BPM)")
                             .font(.system(size: 10, weight: .bold, design: .monospaced))
                             .foregroundColor(.gray)
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
+                            // Botão Dividir por 2 (÷2 / Half Tempo)
                             Button(action: {
-                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 30 {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val / 2.0 >= 20 {
+                                    let next = val / 2.0
+                                    localBpmText = formatBpm(next)
+                                    updateCueGrid()
+                                }
+                            }) {
+                                Text("÷2")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundColor(.cyan)
+                                    .frame(width: 25, height: 28)
+                                    .background(Color.cyan.opacity(0.12))
+                                    .cornerRadius(6)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.cyan.opacity(0.25), lineWidth: 1))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Dividir BPM pela metade (÷2)")
+
+                            // Botão -1 BPM
+                            Button(action: {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val > 20 {
                                     let next = val - 1.0
                                     localBpmText = formatBpm(next)
                                     updateCueGrid()
                                 }
                             }) {
                                 Image(systemName: "minus")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .frame(width: 28, height: 28)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .frame(width: 23, height: 28)
                                     .background(Color.white.opacity(0.08))
                                     .cornerRadius(6)
                             }
                             .buttonStyle(PlainButtonStyle())
                             
+                            // Campo de Texto de BPM
                             TextField("BPM", text: $localBpmText)
                                 .textFieldStyle(PlainTextFieldStyle())
-                                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                .font(.system(size: 15, weight: .bold, design: .monospaced))
                                 .foregroundColor(.white)
-                                .frame(width: 65, height: 28)
+                                .frame(width: 56, height: 28)
                                 .multilineTextAlignment(.center)
                                 .background(Color.black.opacity(0.3))
                                 .cornerRadius(6)
@@ -8048,21 +8070,44 @@ struct SongEditorSheetView: View {
                                 .onChange(of: localBpmText) { _, _ in
                                     updateCueGrid()
                                 }
+                                .onSubmit {
+                                    saveAndDismiss()
+                                }
                             
+                            // Botão +1 BPM
                             Button(action: {
-                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 280 {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val < 300 {
                                     let next = val + 1.0
                                     localBpmText = formatBpm(next)
                                     updateCueGrid()
                                 }
                             }) {
                                 Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .frame(width: 28, height: 28)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .frame(width: 23, height: 28)
                                     .background(Color.white.opacity(0.08))
                                     .cornerRadius(6)
                             }
                             .buttonStyle(PlainButtonStyle())
+
+                            // Botão Duplicar por 2 (×2 / Double Tempo)
+                            Button(action: {
+                                if let val = Double(localBpmText.replacingOccurrences(of: ",", with: ".")), val * 2.0 <= 320 {
+                                    let next = val * 2.0
+                                    localBpmText = formatBpm(next)
+                                    updateCueGrid()
+                                }
+                            }) {
+                                Text("×2")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundColor(.cyan)
+                                    .frame(width: 25, height: 28)
+                                    .background(Color.cyan.opacity(0.12))
+                                    .cornerRadius(6)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.cyan.opacity(0.25), lineWidth: 1))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Duplicar BPM por 2 (×2)")
                         }
                     }
                     .padding(12)
@@ -8252,14 +8297,12 @@ struct SongEditorSheetView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .foregroundColor(.gray)
+                .keyboardShortcut(.cancelAction)
                 
                 Spacer()
                 
                 Button(action: {
-                    if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
-                        state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues, guideLeadIn: localGuideLeadIn)
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                    saveAndDismiss()
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark")
@@ -8273,6 +8316,7 @@ struct SongEditorSheetView: View {
                     .cornerRadius(8)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
@@ -8299,6 +8343,27 @@ struct SongEditorSheetView: View {
             localTimeSignature = state.timeSignature
             localCues = state.currentCues
             localGuideLeadIn = state.currentSong?.guide_lead_in ?? state.guideLeadInBars
+            
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard !showResetConfirmation && !state.isCoverPickerPresented else { return event }
+                // KeyCode 36 = Return, KeyCode 76 = Keypad Enter
+                if event.keyCode == 36 || event.keyCode == 76 {
+                    saveAndDismiss()
+                    return nil
+                }
+                // KeyCode 53 = Escape
+                if event.keyCode == 53 {
+                    presentationMode.wrappedValue.dismiss()
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let km = keyMonitor {
+                NSEvent.removeMonitor(km)
+                keyMonitor = nil
+            }
         }
         .onChange(of: state.bpm) { _, newBpm in
             localBpmText = formatBpm(newBpm)
@@ -8313,6 +8378,15 @@ struct SongEditorSheetView: View {
             if let newLeadIn = newLeadIn {
                 localGuideLeadIn = newLeadIn
             }
+        }
+    }
+    
+    private func saveAndDismiss() {
+        guard !showResetConfirmation && !state.isCoverPickerPresented else { return }
+        let cleanBpm = localBpmText.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
+        if let bpmVal = Double(cleanBpm), bpmVal >= 20 {
+            state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues, guideLeadIn: localGuideLeadIn)
+            presentationMode.wrappedValue.dismiss()
         }
     }
     
