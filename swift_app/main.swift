@@ -655,12 +655,6 @@ class PlaybackState: ObservableObject {
 
         // 1. Memória RAM (0.00 ms)
         if let c = songCache[song.id], !c.cues.isEmpty, !c.waveform.isEmpty, c.totalSeconds > 0 {
-            if let fb = fileBpm, c.bpm != fb {
-                var updated = c
-                updated.bpm = fb
-                songCache[song.id] = updated
-                return updated
-            }
             return c
         }
         
@@ -673,7 +667,7 @@ class PlaybackState: ObservableObject {
             if !isGeneric, let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
                 let leadIn = match.song.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
                 let data = CachedSongData(
-                    bpm: fileBpm ?? match.song.bpm ?? 120.0,
+                    bpm: match.song.bpm ?? fileBpm ?? 120.0,
                     timeSignature: match.song.time_signature ?? "4/4",
                     totalSeconds: d,
                     cues: cs,
@@ -696,7 +690,7 @@ class PlaybackState: ObservableObject {
                let fileData = try? Data(contentsOf: URL(fileURLWithPath: path)),
                let json = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] {
                 
-                let bpmVal = fileBpm ?? parseBpm(json["bpm"]) ?? (song.bpm ?? 120.0)
+                let bpmVal = parseBpm(json["bpm"]) ?? song.bpm ?? fileBpm ?? 120.0
                 let tsVal = (json["time_signature"] as? String) ?? (song.time_signature ?? "4/4")
                 let wf = (json["full_waveform"] as? [Double]) ?? (song.full_waveform ?? [])
                 
@@ -737,7 +731,7 @@ class PlaybackState: ObservableObject {
            let dbCues = dbSong.cues, !dbCues.isEmpty {
             let leadInVal = dbSong.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
             let data = CachedSongData(
-                bpm: fileBpm ?? dbSong.bpm ?? song.bpm ?? 120.0,
+                bpm: dbSong.bpm ?? song.bpm ?? fileBpm ?? 120.0,
                 timeSignature: dbSong.time_signature ?? song.time_signature ?? "4/4",
                 totalSeconds: (dbSong.total_duration ?? 0) > 0 ? dbSong.total_duration! : 180.0,
                 cues: dbCues,
@@ -767,10 +761,12 @@ class PlaybackState: ObservableObject {
         let localDur = UserDefaults.standard.double(forKey: "saved_duration_\(song.id)")
         let dur = localDur > 0 ? localDur : (song.total_duration ?? (localCues.last.map { $0.time + 15.0 } ?? 180.0))
         let localLeadIn = (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.filename)") as? Double) ?? song.guide_lead_in ?? 1.0
+        let savedBpm = (UserDefaults.standard.object(forKey: "saved_bpm_\(song.id)") as? Double) ?? (UserDefaults.standard.object(forKey: "saved_bpm_\(song.filename)") as? Double)
+        let savedTs = UserDefaults.standard.string(forKey: "saved_ts_\(song.id)") ?? UserDefaults.standard.string(forKey: "saved_ts_\(song.filename)")
         
         let data = CachedSongData(
-            bpm: fileBpm ?? song.bpm ?? 120.0,
-            timeSignature: song.time_signature ?? "4/4",
+            bpm: song.bpm ?? savedBpm ?? fileBpm ?? 120.0,
+            timeSignature: song.time_signature ?? savedTs ?? "4/4",
             totalSeconds: dur,
             cues: localCues,
             waveform: localWf,
@@ -1821,6 +1817,15 @@ class PlaybackState: ObservableObject {
                 }
             }
             var songToSave = item.song
+            if item.song.id == currentSong?.id {
+                songToSave.bpm = self.bpm
+                songToSave.time_signature = self.timeSignature
+                songToSave.guide_lead_in = self.guideLeadInBars
+            } else if let ram = songCache[item.song.id] {
+                songToSave.bpm = ram.bpm
+                songToSave.time_signature = ram.timeSignature
+                if let gli = ram.guideLeadIn { songToSave.guide_lead_in = gli }
+            }
             if let ram = songCache[item.song.id] {
                 if songToSave.total_duration == nil || songToSave.total_duration == 0 {
                     songToSave.total_duration = ram.totalSeconds
@@ -1962,6 +1967,19 @@ class PlaybackState: ObservableObject {
                     songToUse.name = songToUse.name.replacingOccurrences(of: tsUnderscore, with: ts)
                 }
             }
+            // Metadados explícitos salvos no setlist pelo usuário têm autoridade absoluta
+            if let setlistBpm = it.song.bpm, setlistBpm > 0 {
+                songToUse.bpm = setlistBpm
+            }
+            if let setlistTs = it.song.time_signature, !setlistTs.isEmpty {
+                songToUse.time_signature = setlistTs
+            }
+            if let setlistLeadIn = it.song.guide_lead_in {
+                songToUse.guide_lead_in = setlistLeadIn
+            }
+            if let setlistCues = it.cues, !setlistCues.isEmpty {
+                songToUse.cues = setlistCues
+            }
             if songToUse.full_waveform == nil && it.song.full_waveform != nil {
                 songToUse.full_waveform = it.song.full_waveform
             }
@@ -1972,7 +1990,7 @@ class PlaybackState: ObservableObject {
                 songToUse.cues = it.cues
             }
             
-            let songCues = (songToUse.cues != nil && !songToUse.cues!.isEmpty) ? songToUse.cues : it.cues
+            let songCues = (it.cues != nil && !it.cues!.isEmpty) ? it.cues : songToUse.cues
             let songWf = (songToUse.full_waveform != nil && !songToUse.full_waveform!.isEmpty) ? songToUse.full_waveform : it.song.full_waveform
             let songDur = (songToUse.total_duration != nil && songToUse.total_duration! > 0) ? songToUse.total_duration : it.song.total_duration
             
@@ -2790,7 +2808,7 @@ class PlaybackState: ObservableObject {
     }
     
     func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection], guideLeadIn: Double? = nil) {
-        guard let song = currentSong else { return }
+        guard currentSong != nil else { return }
         pushUndoSnapshot(description: "Song Editor Edit")
         self.bpm = bpm
         self.timeSignature = timeSignature
@@ -2802,13 +2820,7 @@ class PlaybackState: ObservableObject {
         self.syncAbleton(bpm: bpm, timeSignature: timeSignature)
         self.isSongEditorPresented = false
         self.saveCurrentCues(guideLeadIn: guideLeadIn)
-        if let updated = SongLibrary.shared.findSong(byId: song.id) {
-            self.currentSong = updated
-            if let newCues = updated.cues {
-                self.currentCues = newCues
-                self.editorCues = newCues
-            }
-        }
+        self.editorCues = self.currentCues
     }
     
     func resetSongSections(bpm: Double? = nil, timeSignature: String? = nil) {
@@ -3293,6 +3305,9 @@ class PlaybackState: ObservableObject {
         song.guide_lead_in = effectiveLeadIn
         self.currentSong = song
         
+        // Atualiza a SongLibrary diretamente
+        SongLibrary.shared.cacheSong(song)
+        
         // 2. Atualiza o cache de ultra-alta velocidade em memória RAM
         let cachedData = CachedSongData(
             bpm: self.bpm,
@@ -3346,6 +3361,14 @@ class PlaybackState: ObservableObject {
             if !song.filename.isEmpty {
                 UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.filename)")
             }
+        }
+        UserDefaults.standard.set(self.bpm, forKey: "saved_bpm_\(song.id)")
+        if !song.filename.isEmpty {
+            UserDefaults.standard.set(self.bpm, forKey: "saved_bpm_\(song.filename)")
+        }
+        UserDefaults.standard.set(self.timeSignature, forKey: "saved_ts_\(song.id)")
+        if !song.filename.isEmpty {
+            UserDefaults.standard.set(self.timeSignature, forKey: "saved_ts_\(song.filename)")
         }
         UserDefaults.standard.set(effectiveLeadIn, forKey: "saved_guide_lead_in_\(song.id)")
         if !song.filename.isEmpty {
@@ -3461,6 +3484,7 @@ class PlaybackState: ObservableObject {
         _ = withAnimation(.easeInOut(duration: 0.2)) {
             setlist.remove(at: index)
         }
+        saveSetlistState(writeToDisk: true)
     }
     
     private func sendAction(_ endpoint: String, body: [String: Any]? = nil) {
@@ -8460,6 +8484,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
     
     func windowWillClose(_ notification: Notification) {
+        PlaybackState.shared.saveSetlistState(writeToDisk: true)
         NSApp.terminate(nil)
     }
     

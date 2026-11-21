@@ -139,11 +139,12 @@ final class SongLibrary {
         // 1. Tenta carregar diretamente do banco de dados SQLite nativo
         if let fromDb = Database.shared.getSong(id: entry) {
             var song = fromDb
-            // Autoridade estrita do BPM explícito no nome do arquivo: se o arquivo contiver BPM explícito
-            // e o banco estiver com valor discrepante (ex: 125 devido a clique em colcheia em faixa de 62,5bpm), reconcilia imediatamente.
-            if let fileBpm = extractBpmFromFilename(entry), song.bpm != fileBpm {
-                song.bpm = fileBpm
-                Database.shared.saveSong(item: song)
+            // Se o registro no banco não possuir BPM definido e o arquivo trouxer BPM no nome, usa como valor inicial
+            if song.bpm == nil || song.bpm == 0 {
+                if let fileBpm = extractBpmFromFilename(entry) {
+                    song.bpm = fileBpm
+                    Database.shared.saveSong(item: song)
+                }
             }
             lock.lock()
             songsCache[entry] = song

@@ -311,6 +311,7 @@ final class Database {
             if timeSignature != nil { updates.append("time_signature = ?") }
             if autoAnalysis != nil { updates.append("auto_analysis = ?") }
             if guideLeadIn != nil { updates.append("guide_lead_in = ?") }
+            updates.append("user_edited = 1")
             updates.append("updated_at = ?")
             
             let sql = "UPDATE songs SET \(updates.joined(separator: ", ")) WHERE id = ?;"
