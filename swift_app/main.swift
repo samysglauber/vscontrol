@@ -858,10 +858,30 @@ class PlaybackState: ObservableObject {
         return true
     }
     
-    @Published var clickVol: Double = 1.0
-    @Published var vsVol: Double = 1.0
-    @Published var clickMute: Bool = false
-    @Published var vsMute: Bool = false
+    @Published var clickVol: Double = 1.0 {
+        didSet {
+            UserDefaults.standard.set(clickVol, forKey: "saved_click_vol")
+            sendVolumes()
+        }
+    }
+    @Published var vsVol: Double = 1.0 {
+        didSet {
+            UserDefaults.standard.set(vsVol, forKey: "saved_vs_vol")
+            sendVolumes()
+        }
+    }
+    @Published var clickMute: Bool = false {
+        didSet {
+            UserDefaults.standard.set(clickMute, forKey: "saved_click_mute")
+            sendVolumes()
+        }
+    }
+    @Published var vsMute: Bool = false {
+        didSet {
+            UserDefaults.standard.set(vsMute, forKey: "saved_vs_mute")
+            sendVolumes()
+        }
+    }
     @Published var isFadingOut: Bool = false
     @Published var isFadedOut: Bool = false
     @Published var isFadingIn: Bool = false
@@ -1180,6 +1200,23 @@ class PlaybackState: ObservableObject {
         if let savedFader = UserDefaults.standard.object(forKey: "saved_fader_default_level") as? Double {
             self.faderDefaultLevel = savedFader
         }
+        if let savedClickVol = UserDefaults.standard.object(forKey: "saved_click_vol") as? Double {
+            self.clickVol = savedClickVol
+        } else if let savedFader = UserDefaults.standard.object(forKey: "saved_fader_default_level") as? Double {
+            self.clickVol = savedFader
+        }
+        if let savedVsVol = UserDefaults.standard.object(forKey: "saved_vs_vol") as? Double {
+            self.vsVol = savedVsVol
+        } else if let savedFader = UserDefaults.standard.object(forKey: "saved_fader_default_level") as? Double {
+            self.vsVol = savedFader
+        }
+        if let savedClickMute = UserDefaults.standard.object(forKey: "saved_click_mute") as? Bool {
+            self.clickMute = savedClickMute
+        }
+        if let savedVsMute = UserDefaults.standard.object(forKey: "saved_vs_mute") as? Bool {
+            self.vsMute = savedVsMute
+        }
+        self.sendVolumes()
         if let savedFadeDur = UserDefaults.standard.object(forKey: "saved_default_fade_duration") as? Double {
             self.defaultFadeDuration = savedFadeDur
         }
@@ -8511,8 +8548,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
     
     func windowWillClose(_ notification: Notification) {
+        saveWindowFrame()
         PlaybackState.shared.saveSetlistState(writeToDisk: true)
         NSApp.terminate(nil)
+    }
+    
+    func windowDidResize(_ notification: Notification) {
+        saveWindowFrame()
+    }
+    
+    func windowDidMove(_ notification: Notification) {
+        saveWindowFrame()
+    }
+    
+    private func saveWindowFrame() {
+        guard let win = window else { return }
+        win.saveFrame(usingName: "VSControlMainWindow")
+        let frame = win.frame
+        UserDefaults.standard.set(NSStringFromRect(frame), forKey: "saved_window_frame_string")
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -8523,6 +8576,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
     
     func applicationWillTerminate(_ notification: Notification) {
+        saveWindowFrame()
         PlaybackState.shared.saveSetlistState()
         let semaphore = DispatchSemaphore(value: 0)
         if let url = URL(string: "http://127.0.0.1:8080/api/quit") {
@@ -8546,8 +8600,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         
         let contentView = PlaybackAppView()
         
+        let defaultWidth: CGFloat = 1240
+        let defaultHeight: CGFloat = 500
+        var initialRect = NSRect(x: 0, y: 0, width: defaultWidth, height: defaultHeight)
+        var hasValidSavedFrame = false
+        
+        if let frameStr = UserDefaults.standard.string(forKey: "saved_window_frame_string") {
+            let savedRect = NSRectFromString(frameStr)
+            if savedRect.width >= 900 && savedRect.height >= 440 {
+                let isVisible = NSScreen.screens.contains { screen in
+                    screen.visibleFrame.intersects(savedRect)
+                }
+                if isVisible {
+                    initialRect = savedRect
+                    hasValidSavedFrame = true
+                } else if let mainScreen = NSScreen.main {
+                    let w = min(savedRect.width, mainScreen.visibleFrame.width)
+                    let h = min(savedRect.height, mainScreen.visibleFrame.height)
+                    initialRect = NSRect(
+                        x: mainScreen.visibleFrame.midX - w / 2,
+                        y: mainScreen.visibleFrame.midY - h / 2,
+                        width: w,
+                        height: h
+                    )
+                    hasValidSavedFrame = true
+                }
+            }
+        }
+        
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 500),
+            contentRect: initialRect,
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -8555,7 +8637,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         window.delegate = self
         window.minSize = NSSize(width: 900, height: 440)
         
-        window.center()
+        let didAutosave = window.setFrameAutosaveName("VSControlMainWindow")
+        if !didAutosave && !hasValidSavedFrame {
+            window.center()
+        } else if hasValidSavedFrame && !didAutosave {
+            window.setFrame(initialRect, display: true)
+        }
         window.title = PlaybackState.shared.currentSetlistName.isEmpty ? "VS Control" : PlaybackState.shared.currentSetlistName
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
