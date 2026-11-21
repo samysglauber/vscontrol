@@ -77,7 +77,7 @@ final class AudioEngine {
     var currentSetlistIndex: Int = 0
     var abletonTriggerOffsetMs: Double = 0.0
     var syncTempoToDaw: Bool = true
-    var triggerAtBeat1: Bool = true
+    var triggerAtBeat1: Bool = false
     
     var effectiveDownbeatFrame: Int64 {
         let offsetFrames = Int64(round((abletonTriggerOffsetMs / 1000.0) * sampleRate))
@@ -478,9 +478,9 @@ final class AudioEngine {
         
         posFrame = curPos
         
-        // Disparo com Alinhamento no Tempo 1 (Primeiro clique da contagem / downbeat com compensação de offset)
+        // Disparo com Alinhamento no Início ou no Tempo 1 (com compensação de offset)
         if !abletonPlayTriggered && isPlaying {
-            if !triggerAtBeat1 || curPos >= effectiveDownbeatFrame {
+            if curPos >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
                 if syncTempoToDaw {
                     osc.sendTempo(self.bpm)
@@ -795,7 +795,7 @@ final class AudioEngine {
         
         if crossfade {
             self.isPlaying = true
-            if !triggerAtBeat1 || posFrame >= effectiveDownbeatFrame {
+            if posFrame >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
                 if syncTempoToDaw {
                     osc.sendTempo(self.bpm)
@@ -826,7 +826,7 @@ final class AudioEngine {
         tracksFadeFramesLeft = 0
         isPlaying = true
         
-        if !abletonPlayTriggered && (!triggerAtBeat1 || posFrame >= effectiveDownbeatFrame) {
+        if !abletonPlayTriggered && posFrame >= effectiveDownbeatFrame {
             abletonPlayTriggered = true
             if syncTempoToDaw {
                 osc.sendTempo(self.bpm)
@@ -986,7 +986,7 @@ final class AudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
-            if posFrame >= firstDownbeatFrame {
+            if posFrame >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
             }
             midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)
@@ -1050,7 +1050,7 @@ final class AudioEngine {
             queuedCueIdx = nil
             queuedJump = nil
             guideLeadIn = nil
-            if posFrame >= firstDownbeatFrame {
+            if posFrame >= effectiveDownbeatFrame {
                 abletonPlayTriggered = true
             }
             midiClock.resetTick(currentFrame: posFrame, sampleRate: sampleRate, bpm: bpm)

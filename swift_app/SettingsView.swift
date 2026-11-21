@@ -511,54 +511,43 @@ struct MidiSyncSettingsTabView: View {
                     }
                     .padding(.vertical, 8)
                     
-                    // Trigger at Beat 1 (Toggle on LEFT)
-                    HStack {
-                        HStack(spacing: 12) {
-                            SoberToggle(isOn: $state.triggerAtBeat1)
-                            VStack(alignment: .leading, spacing: 2.5) {
-                                Text("Trigger at Beat 1 (Downbeat)")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundColor(.white)
-                                Text("Wait for first audible click/downbeat before triggering DAW")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.40))
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
-                    
-                    // Sync Tempo (Toggle on LEFT)
-                    HStack {
-                        HStack(spacing: 12) {
-                            SoberToggle(isOn: $state.syncTempoToDaw)
-                            VStack(alignment: .leading, spacing: 2.5) {
-                                Text("Sync Tempo & Time Signature")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundColor(.white)
-                                Text("Send song tempo and time signature to DAW upon playback start")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.40))
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
-                    
-                    // Trigger Ableton Scene on Beat 1 (Toggle on LEFT)
+                    // DAW Scene Trigger (Toggle on LEFT)
                     HStack {
                         HStack(spacing: 12) {
                             SoberToggle(isOn: $state.enableAbletonSceneSync)
                             VStack(alignment: .leading, spacing: 2.5) {
-                                Text("Trigger Ableton Scene on Beat 1")
+                                Text("DAW Scene Trigger")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
-                                Text("Fire corresponding Ableton Live session scene when song reaches beat 1")
+                                Text("Fire corresponding Ableton Live session scene upon playback start")
                                     .font(.system(size: 11))
                                     .foregroundColor(.white.opacity(0.40))
                             }
                         }
                         Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    
+                    // DAW Trigger Alignment (Segmented Picker)
+                    HStack {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(Color.white.opacity(0.20))
+                                .frame(width: 6, height: 6)
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                Text("DAW Trigger Alignment")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("Trigger DAW at track start or wait for the first audible beat")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.40))
+                            }
+                        }
+                        Spacer()
+                        SoberSegmentedPicker(
+                            items: [("Track Start", false), ("Beat 1 (Downbeat)", true)],
+                            selection: $state.triggerAtBeat1
+                        )
                     }
                     .padding(.vertical, 8)
                     
@@ -572,7 +561,7 @@ struct MidiSyncSettingsTabView: View {
                                 Text("Trigger Offset Compensation")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
-                                Text("Fine millisecond offset to eliminate flam between click and DAW")
+                                Text("Fine millisecond offset to eliminate latency or silence (e.g. +50 ms for MP3)")
                                     .font(.system(size: 11))
                                     .foregroundColor(.white.opacity(0.40))
                             }
@@ -601,6 +590,23 @@ struct MidiSyncSettingsTabView: View {
                             .buttonStyle(PlainButtonStyle())
                             .disabled(state.abletonTriggerOffsetMs == 0)
                         }
+                    }
+                    .padding(.vertical, 8)
+                    
+                    // Sync Tempo (Toggle on LEFT)
+                    HStack {
+                        HStack(spacing: 12) {
+                            SoberToggle(isOn: $state.syncTempoToDaw)
+                            VStack(alignment: .leading, spacing: 2.5) {
+                                Text("Sync Tempo & Time Signature")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("Send song tempo and time signature to DAW upon playback start")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.40))
+                            }
+                        }
+                        Spacer()
                     }
                     .padding(.vertical, 8)
                     

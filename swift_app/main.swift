@@ -1077,7 +1077,7 @@ class PlaybackState: ObservableObject {
     }
     
     // MIDI & DAW Sync
-    @Published var triggerAtBeat1: Bool = true {
+    @Published var triggerAtBeat1: Bool = false {
         didSet {
             AudioEngine.shared.triggerAtBeat1 = triggerAtBeat1
             UserDefaults.standard.set(triggerAtBeat1, forKey: "saved_trigger_at_beat_1")
@@ -1195,6 +1195,9 @@ class PlaybackState: ObservableObject {
         if let savedBeat1 = UserDefaults.standard.object(forKey: "saved_trigger_at_beat_1") as? Bool {
             self.triggerAtBeat1 = savedBeat1
             AudioEngine.shared.triggerAtBeat1 = savedBeat1
+        } else {
+            self.triggerAtBeat1 = false
+            AudioEngine.shared.triggerAtBeat1 = false
         }
         if let savedSyncTempo = UserDefaults.standard.object(forKey: "saved_sync_tempo_to_daw") as? Bool {
             self.syncTempoToDaw = savedSyncTempo
