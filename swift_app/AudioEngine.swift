@@ -32,10 +32,8 @@ typealias NativeAudioEngine = AudioEngine
 final class AudioEngine {
     static let shared = AudioEngine()
     
-    // CoreAudio & AVFoundation
-    private let engine = AVAudioEngine()
-    private var sourceNode: AVAudioSourceNode?
-    private let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 44100.0, channels: 2)!
+    // CoreAudio HAL Output Unit (AUHAL 100% Nativo de Baixa Latência)
+    private var outputAudioUnit: AudioComponentInstance?
     private let lock = os_unfair_lock_t.allocate(capacity: 1)
     
     // Sincronizadores
@@ -145,24 +143,117 @@ final class AudioEngine {
     }
     
     deinit {
+        stopAndDisposeAudioUnit()
         lock.deallocate()
     }
     
-    // MARK: - Configuração CoreAudio
-    
-    private func setupAudioEngine() {
-        let node = AVAudioSourceNode(format: outputFormat) { [weak self] _, _, frameCount, outputData -> OSStatus in
-            guard let self = self else { return noErr }
-            return self.renderAudio(frameCount: Int(frameCount), outputData: outputData)
+    private func stopAndDisposeAudioUnit() {
+        if let au = outputAudioUnit {
+            AudioOutputUnitStop(au)
+            AudioUnitUninitialize(au)
+            AudioComponentInstanceDispose(au)
+            outputAudioUnit = nil
         }
-        self.sourceNode = node
-        engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: outputFormat)
+    }
+    
+    // MARK: - Configuração CoreAudio (AUHAL 100% Nativo de Baixa Latência)
+    
+    func getDefaultOutputDeviceId() -> AudioDeviceID {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var defaultId: AudioDeviceID = 0
+        var sz = UInt32(MemoryLayout<AudioDeviceID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &sz, &defaultId)
+        return defaultId
+    }
+    
+    private func setupAudioEngine(targetDevice: AudioDeviceID? = nil) {
+        var desc = AudioComponentDescription(
+            componentType: kAudioUnitType_Output,
+            componentSubType: kAudioUnitSubType_HALOutput,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        guard let comp = AudioComponentFindNext(nil, &desc) else {
+            print("⚠️ [AudioEngine] HALOutput não encontrado")
+            return
+        }
+        var au: AudioComponentInstance?
+        let newErr = AudioComponentInstanceNew(comp, &au)
+        guard newErr == noErr, let auInstance = au else {
+            print("⚠️ [AudioEngine] Falha ao criar AudioComponentInstance: \(newErr)")
+            return
+        }
+        self.outputAudioUnit = auInstance
         
-        do {
-            try engine.start()
-        } catch {
-            print("⚠️ [AudioEngine] Falha ao iniciar AVAudioEngine: \(error)")
+        let devId = (targetDevice != nil && targetDevice != 0) ? targetDevice! : getDefaultOutputDeviceId()
+        if devId != 0 {
+            var dId = devId
+            AudioUnitSetProperty(
+                auInstance,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &dId,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+            self.currentDeviceId = devId
+        }
+        
+        var streamFormat = AudioStreamBasicDescription(
+            mSampleRate: self.sampleRate > 0 ? self.sampleRate : 44100.0,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        AudioUnitSetProperty(
+            auInstance,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Input,
+            0,
+            &streamFormat,
+            UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        )
+        
+        let renderCallback: AURenderCallback = { inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, ioData -> OSStatus in
+            guard let ioData = ioData else { return noErr }
+            let engine = Unmanaged<AudioEngine>.fromOpaque(inRefCon).takeUnretainedValue()
+            return engine.renderAudio(frameCount: Int(inNumberFrames), outputData: ioData)
+        }
+        
+        var callbackStruct = AURenderCallbackStruct(
+            inputProc: renderCallback,
+            inputProcRefCon: Unmanaged.passUnretained(self).toOpaque()
+        )
+        AudioUnitSetProperty(
+            auInstance,
+            kAudioUnitProperty_SetRenderCallback,
+            kAudioUnitScope_Input,
+            0,
+            &callbackStruct,
+            UInt32(MemoryLayout<AURenderCallbackStruct>.size)
+        )
+        
+        let initErr = AudioUnitInitialize(auInstance)
+        if initErr != noErr {
+            print("⚠️ [AudioEngine] Falha ao inicializar AudioUnit: \(initErr)")
+            return
+        }
+        
+        let startErr = AudioOutputUnitStart(auInstance)
+        if startErr != noErr {
+            print("⚠️ [AudioEngine] Falha ao iniciar AudioOutputUnit: \(startErr)")
+        } else {
+            print("🔊 [AudioEngine] CoreAudio AUHAL ativo com sucesso no dispositivo [ID: \(devId)]")
         }
     }
     
@@ -707,6 +798,7 @@ final class AudioEngine {
         
         self.currentUrl = url
         self.sampleRate = sr
+        updateSampleRateIfNeeded(sr)
         self.audioLeft = left
         self.audioRight = right
         self.totalFrames = Int64(left.count)
@@ -1194,7 +1286,8 @@ final class AudioEngine {
     }
     
     func getOutputDevices() -> [(id: AudioDeviceID, name: String, isDefault: Bool)] {
-        return getAvailableOutputDevices().map { ($0.id, $0.name, $0.id == currentDeviceId) }
+        let activeId = (currentDeviceId != 0) ? currentDeviceId : getDefaultOutputDeviceId()
+        return getAvailableOutputDevices().map { ($0.id, $0.name, $0.id == activeId) }
     }
     
     @discardableResult
@@ -1285,24 +1378,97 @@ final class AudioEngine {
         ]
     }
     
+    func updateSampleRateIfNeeded(_ newSr: Double) {
+        guard let au = outputAudioUnit, newSr > 0 else { return }
+        var curFmt = AudioStreamBasicDescription()
+        var sz = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        if AudioUnitGetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &curFmt, &sz) == noErr {
+            if abs(curFmt.mSampleRate - newSr) > 1.0 {
+                AudioOutputUnitStop(au)
+                AudioUnitUninitialize(au)
+                var streamFormat = AudioStreamBasicDescription(
+                    mSampleRate: newSr,
+                    mFormatID: kAudioFormatLinearPCM,
+                    mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+                    mBytesPerPacket: 4,
+                    mFramesPerPacket: 1,
+                    mBytesPerFrame: 4,
+                    mChannelsPerFrame: 2,
+                    mBitsPerChannel: 32,
+                    mReserved: 0
+                )
+                AudioUnitSetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &streamFormat, sz)
+                AudioUnitInitialize(au)
+                AudioOutputUnitStart(au)
+            }
+        }
+    }
+    
     func setOutputDevice(deviceId: AudioDeviceID, deviceName: String = "") {
-        guard let audioUnit = engine.outputNode.audioUnit else { return }
+        guard let au = self.outputAudioUnit else {
+            recreateAudioUnit(for: deviceId, name: deviceName)
+            return
+        }
+        
+        if self.currentDeviceId == deviceId && deviceId != 0 {
+            if !deviceName.isEmpty { self.currentDeviceName = deviceName }
+            return
+        }
+        
+        // 1. Para temporariamente o AudioUnit antes da troca de hardware
+        AudioOutputUnitStop(au)
+        AudioUnitUninitialize(au)
+        
         var dId = deviceId
-        let err = AudioUnitSetProperty(
-            audioUnit,
+        let setErr = AudioUnitSetProperty(
+            au,
             kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global,
             0,
             &dId,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
-        if err == noErr {
+        
+        // 2. Reaplica o formato de entrada Float32 não-intercalado (L/R)
+        var streamFormat = AudioStreamBasicDescription(
+            mSampleRate: self.sampleRate > 0 ? self.sampleRate : 44100.0,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        AudioUnitSetProperty(
+            au,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Input,
+            0,
+            &streamFormat,
+            UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        )
+        
+        let initErr = AudioUnitInitialize(au)
+        let startErr = AudioOutputUnitStart(au)
+        
+        if setErr == noErr && initErr == noErr && startErr == noErr {
             self.currentDeviceId = deviceId
             self.currentDeviceName = deviceName
             print("🔊 [AudioEngine] Dispositivo de saída alterado para: \(deviceName) [ID: \(deviceId)]")
         } else {
-            print("⚠️ [AudioEngine] Erro ao alterar dispositivo CoreAudio: \(err)")
+            print("⚠️ [AudioEngine] Aviso ao alternar no AU existente (err=\(setErr), init=\(initErr), start=\(startErr)). Recriando AUHAL...")
+            recreateAudioUnit(for: deviceId, name: deviceName)
         }
+    }
+    
+    private func recreateAudioUnit(for deviceId: AudioDeviceID, name: String) {
+        stopAndDisposeAudioUnit()
+        setupAudioEngine(targetDevice: deviceId)
+        self.currentDeviceId = deviceId
+        if !name.isEmpty { self.currentDeviceName = name }
+        print("🔊 [AudioEngine] AUHAL recriado e ativo para: \(name) [ID: \(deviceId)]")
     }
 }
 
