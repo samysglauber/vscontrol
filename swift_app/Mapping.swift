@@ -429,7 +429,7 @@ final class MappingManager: ObservableObject {
         case .muteTracks:
             state.toggleVsMute()
         case .fadeTracks:
-            state.toggleFadeTracks(duration: 3.0)
+            state.toggleFadeTracks()
         case .song1: state.playSetlistSong(at: 0)
         case .song2: state.playSetlistSong(at: 1)
         case .song3: state.playSetlistSong(at: 2)

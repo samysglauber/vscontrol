@@ -68,6 +68,7 @@ final class AudioEngine {
     var queuedJump: QueuedJumpInfo? = nil
     var guideLeadIn: GuideLeadInInfo? = nil
     var guideLeadInBars: Double = 1.0
+    var autoPanStereo: Bool = true
     
     // Sincronização de Disparo de Play/Stop no Ableton Live via OSC
     var enableAbletonPlaySync: Bool = true
@@ -556,8 +557,16 @@ final class AudioEngine {
             let effL = clickMute ? 0.0 : (sampleL * clickVol)
             let effR = vsMute ? 0.0 : (sampleR * vsVol * tracksFadeGain)
             
-            let outL = effL
-            let outR = max(-1.0, min(1.0, effR))
+            let outL: Float
+            let outR: Float
+            if autoPanStereo {
+                outL = effL
+                outR = max(-1.0, min(1.0, effR))
+            } else {
+                let combined = max(-1.0, min(1.0, effL + effR))
+                outL = combined
+                outR = combined
+            }
             if isDeinterleaved {
                 ptrL[i] = outL
                 ptrR[i] = outR

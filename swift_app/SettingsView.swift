@@ -795,23 +795,6 @@ struct MidiSyncSettingsTabView: View {
                     .padding(.vertical, 8)
                 }
             }
-            
-            // Keyboard Shortcuts
-            VStack(alignment: .leading, spacing: 9) {
-                SoberSectionHeader(title: "KEYBOARD SHORTCUTS")
-                
-                VStack(spacing: 6) {
-                    SoberShortcutRow(key: "Space", action: "Play / Pause playback")
-                    SoberShortcutRow(key: "R", action: "Restart current song from start (0:00)")
-                    SoberShortcutRow(key: "I", action: "Toggle Infinite Loop on active section")
-                    SoberShortcutRow(key: "F", action: "Smooth Fade Out / Fade In tracks")
-                    SoberShortcutRow(key: "→", action: "Advance to next song in setlist")
-                    SoberShortcutRow(key: "←", action: "Return to previous song in setlist")
-                    SoberShortcutRow(key: "1 .. 9", action: "Jump directly to corresponding section")
-                    SoberShortcutRow(key: "Cmd + ,", action: "Open Settings")
-                    SoberShortcutRow(key: "Cmd + S", action: "Save current setlist to disk")
-                }
-            }
         }
     }
 }
@@ -824,6 +807,8 @@ struct FilesLibrarySettingsTabView: View {
     @ObservedObject var state: PlaybackState
     @State private var isReindexing: Bool = false
     @State private var reindexMessage: String? = nil
+    @State private var tracksPath: String = ""
+    @State private var setlistsPath: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -841,7 +826,7 @@ struct FilesLibrarySettingsTabView: View {
                                 Text("Tracks Directory (VS)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
-                                Text(SongLibrary.shared.getTracksDirectory().path)
+                                Text(tracksPath.isEmpty ? SongLibrary.shared.getTracksDirectory().path : tracksPath)
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.40))
                                     .lineLimit(1)
@@ -865,7 +850,7 @@ struct FilesLibrarySettingsTabView: View {
                                 Text("Setlists Directory (.vset)")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundColor(.white)
-                                Text(getSetlistsFolderPath())
+                                Text(setlistsPath.isEmpty ? getSetlistsFolderPath() : setlistsPath)
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.40))
                                     .lineLimit(1)
@@ -930,6 +915,10 @@ struct FilesLibrarySettingsTabView: View {
                 }
             }
         }
+        .onAppear {
+            tracksPath = SongLibrary.shared.getTracksDirectory().path
+            setlistsPath = getSetlistsFolderPath()
+        }
     }
     
     private func getSetlistsFolderPath() -> String {
@@ -949,8 +938,12 @@ struct FilesLibrarySettingsTabView: View {
         if panel.runModal() == .OK, let url = panel.url {
             if forTracks {
                 _ = SongLibrary.shared.setTracksDirectory(url.path)
+                tracksPath = url.path
+                state.tracksFolderPath = url.path
+                state.fetchAllLibrarySongs()
             } else {
                 UserDefaults.standard.set(url.path, forKey: "saved_setlists_dir")
+                setlistsPath = url.path
             }
         }
     }
@@ -959,10 +952,13 @@ struct FilesLibrarySettingsTabView: View {
         isReindexing = true
         reindexMessage = nil
         DispatchQueue.global(qos: .userInitiated).async {
+            SongLibrary.shared.clearCache()
             let songs = SongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
+                self.state.librarySongs = songs
+                self.state.songs = songs
                 self.isReindexing = false
-                self.reindexMessage = "✅ \(songs.count) songs indexed successfully!"
+                self.reindexMessage = "✅ \(songs.count) songs indexed & cache cleared!"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
                     self.reindexMessage = nil
                 }
@@ -1296,40 +1292,6 @@ struct SoberToggle: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
-    }
-}
-
-struct KeyCapBadge: View {
-    let text: String
-    
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundColor(.white.opacity(0.65))
-            .padding(.horizontal, 5.5)
-            .padding(.vertical, 2)
-            .background(Color.white.opacity(0.06))
-            .cornerRadius(4)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.white.opacity(0.09), lineWidth: 1)
-            )
-    }
-}
-
-struct SoberShortcutRow: View {
-    let key: String
-    let action: String
-    
-    var body: some View {
-        HStack {
-            Text(action)
-                .font(.system(size: 11.5))
-                .foregroundColor(.white.opacity(0.80))
-            Spacer()
-            KeyCapBadge(text: key)
-        }
-        .padding(.vertical, 3.5)
     }
 }
 

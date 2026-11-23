@@ -1044,11 +1044,15 @@ class PlaybackState: ObservableObject {
     @Published var autoPanStereo: Bool = true {
         didSet {
             UserDefaults.standard.set(autoPanStereo, forKey: "saved_auto_pan_stereo")
+            AudioEngine.shared.autoPanStereo = autoPanStereo
         }
     }
     @Published var faderDefaultLevel: Double = 1.0 {
         didSet {
             UserDefaults.standard.set(faderDefaultLevel, forKey: "saved_fader_default_level")
+            self.clickVol = faderDefaultLevel
+            self.vsVol = faderDefaultLevel
+            AudioEngine.shared.setVolumes(click: Float(faderDefaultLevel), vs: Float(faderDefaultLevel), clickMute: self.clickMute, vsMute: self.vsMute)
         }
     }
     
@@ -1093,6 +1097,18 @@ class PlaybackState: ObservableObject {
     @Published var defaultTimelineZoom: String = "fit" {
         didSet {
             UserDefaults.standard.set(defaultTimelineZoom, forKey: "saved_default_timeline_zoom")
+            applyDefaultZoom()
+        }
+    }
+    
+    func applyDefaultZoom() {
+        switch defaultTimelineZoom {
+        case "fit":
+            self.zoomLevel = 0.0
+        case "2x":
+            self.zoomLevel = 0.75
+        default:
+            self.zoomLevel = 0.3
         }
     }
     
@@ -1197,6 +1213,7 @@ class PlaybackState: ObservableObject {
         if let savedPan = UserDefaults.standard.object(forKey: "saved_auto_pan_stereo") as? Bool {
             self.autoPanStereo = savedPan
         }
+        AudioEngine.shared.autoPanStereo = self.autoPanStereo
         if let savedFader = UserDefaults.standard.object(forKey: "saved_fader_default_level") as? Double {
             self.faderDefaultLevel = savedFader
         }
@@ -1690,7 +1707,7 @@ class PlaybackState: ObservableObject {
         if currentSeconds >= triggerTime && totalSeconds > countInDuration {
             self.hasTriggeredCrossfade = true
             let effectiveDuration = totalSeconds - currentSeconds
-            let xfadeDuration = max(1.5, min(countInDuration, max(0.5, effectiveDuration)))
+            let xfadeDuration = max(1.0, min(self.defaultCrossfadeDuration, max(0.5, effectiveDuration)))
             self.loadSong(nextItem.song, cues: nextItem.cues, autoPlay: true, crossfade: true, crossfadeDuration: xfadeDuration)
         }
     }
@@ -2571,13 +2588,15 @@ class PlaybackState: ObservableObject {
         self.serverUrl = "http://\(ip):\(port)"
     }
     
-    func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false, crossfade: Bool = false, crossfadeDuration: Double = 4.0) {
+    func loadSong(_ song: SongItem, cues: [CueSection]? = nil, autoPlay: Bool = false, crossfade: Bool = false, crossfadeDuration: Double? = nil) {
+        let effXfadeDuration = crossfadeDuration ?? self.defaultCrossfadeDuration
         if crossfade {
             self.hasTriggeredCrossfade = true
             self.isPlaying = true
         } else {
             self.hasTriggeredCrossfade = false
         }
+        self.applyDefaultZoom()
         self.undoStack.removeAll()
         self.redoStack.removeAll()
         self.undoNotificationMessage = nil
@@ -2656,7 +2675,7 @@ class PlaybackState: ObservableObject {
         
         // 3. CARREGAMENTO NATIVO IMEDIATO NO MOTOR DE ÁUDIO (EM SEGUNDO PLANO)
         DispatchQueue.global(qos: .userInitiated).async {
-            AudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: crossfadeDuration)
+            AudioEngine.shared.loadSong(songToLoad, crossfade: crossfade, crossfadeDuration: effXfadeDuration)
             let engine = AudioEngine.shared
             let engineCues = engine.cues
             let engineTot = engine.totalDuration
@@ -3041,8 +3060,7 @@ class PlaybackState: ObservableObject {
             return
         }
         
-        let countInDuration = calculateCountInDuration(for: targetItem)
-        let xfadeDuration = max(2.0, min(6.0, countInDuration))
+        let xfadeDuration = max(1.0, self.defaultCrossfadeDuration)
         
         // Carrega a nova música e dispara imediatamente o crossfade:
         // A nova música começa a contagem no Canal L, o click anterior para, e o VS faz crossfade no Canal R
@@ -3100,8 +3118,9 @@ class PlaybackState: ObservableObject {
         }
     }
     
-    func toggleFadeTracks(duration: Double = 3.0) {
+    func toggleFadeTracks(duration: Double? = nil) {
         guard isPlaying else { return }
+        let dur = duration ?? defaultFadeDuration
         let targetDirection = (isFadedOut || isFadingOut) ? "in" : "out"
         if targetDirection == "in" {
             isFadingIn = true
@@ -3112,11 +3131,11 @@ class PlaybackState: ObservableObject {
             isFadingIn = false
             isFadedOut = false
         }
-        sendAction("fade_tracks", body: ["direction": targetDirection, "duration": duration])
+        sendAction("fade_tracks", body: ["direction": targetDirection, "duration": dur])
     }
     
-    func fadeStop(duration: Double = 3.0) {
-        toggleFadeTracks(duration: duration)
+    func fadeStop(duration: Double? = nil) {
+        toggleFadeTracks(duration: duration ?? defaultFadeDuration)
     }
     
     func restart() {
@@ -3569,11 +3588,11 @@ class PlaybackState: ObservableObject {
             self.loopInfinite = engine.loopInfinite
             self.loopCueIdx = engine.loopCueIdx
         case "fade_stop":
-            let dur = (body?["duration"] as? Double) ?? 3.0
+            let dur = (body?["duration"] as? Double) ?? self.defaultFadeDuration
             engine.fadeStop(duration: dur)
         case "fade_tracks":
             let dir = (body?["direction"] as? String) ?? "toggle"
-            let dur = (body?["duration"] as? Double) ?? 3.0
+            let dur = (body?["duration"] as? Double) ?? self.defaultFadeDuration
             engine.fadeTracks(direction: dir, duration: dur)
         case "volumes":
             let cVol = (body?["click_vol"] as? Double) ?? (body?["volume_l"] as? Double) ?? Double(self.clickVol)
@@ -3857,9 +3876,9 @@ struct PlaybackAppView: View {
                         return nil
                     }
                     
-                    // Tecla 0: Dispara o Fade Out / Fade In de 3 segundos nas Tracks
+                    // Tecla 0: Dispara o Fade Out / Fade In configurado nas Tracks
                     if char == "0" || event.keyCode == 29 || event.keyCode == 82 {
-                        state.toggleFadeTracks(duration: 3.0)
+                        state.toggleFadeTracks()
                         return nil
                     }
                     
@@ -4240,7 +4259,7 @@ struct TopBarView: View {
                     // 4. Botão FADE TRACKS com Ícone de Curva DAW (Inverte para Fade In imediatamente no clique)
                     let isFadeActive = state.isFadingOut || state.isFadedOut || state.isFadingIn
                     let isInverted = state.isFadingOut || state.isFadedOut
-                    Button(action: { state.toggleFadeTracks(duration: 3.0) }) {
+                    Button(action: { state.toggleFadeTracks() }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(isFadeActive ? Color.orange.opacity(0.28) : Color.white.opacity(0.06))
@@ -4260,7 +4279,7 @@ struct TopBarView: View {
                     .buttonStyle(PlainButtonStyle())
                     .disabled(!state.isPlaying && !isFadeActive && MappingManager.shared.mode == .none)
                     .mappableControl(.fadeTracks, cornerRadius: 8)
-                    .help(isInverted ? "Fade In Tracks (3s) [Shortcut: Key 0]" : "Fade Out Tracks (3s) [Shortcut: Key 0]")
+                    .help(isInverted ? String(format: "Fade In Tracks (%.1fs) [Shortcut: Key 0]", state.defaultFadeDuration) : String(format: "Fade Out Tracks (%.1fs) [Shortcut: Key 0]", state.defaultFadeDuration))
                     
                     // 5. Botão Loop da Seção Atual (Repete 1 única vez e segue adiante)
                     Button(action: { state.toggleLoop() }) {
@@ -5920,6 +5939,7 @@ struct SpectrogramWaveformView: View {
             width: w,
             timeSignature: state.timeSignature,
             durationBars: state.calculateDurationBars(for: idx),
+            showGrid: state.showWaveformGrid,
             onSelect: {
                 handleCueSelection(index: idx, section: section, proxy: proxy)
             },
@@ -6104,6 +6124,7 @@ struct WaveformSectionBlock: View, Equatable {
     let width: CGFloat
     let timeSignature: String
     let durationBars: Double
+    let showGrid: Bool
     let onSelect: () -> Void
     let onLoopToggle: () -> Void
     
@@ -6118,7 +6139,8 @@ struct WaveformSectionBlock: View, Equatable {
         lhs.isLoopInfinite == rhs.isLoopInfinite &&
         lhs.width == rhs.width &&
         lhs.timeSignature == rhs.timeSignature &&
-        lhs.durationBars == rhs.durationBars
+        lhs.durationBars == rhs.durationBars &&
+        lhs.showGrid == rhs.showGrid
     }
     
     let cueTypes = ["Count-In", "Intro", "Verse", "Verse 1", "Verse 2", "Verse 3", "Pre-Chorus", "Chorus", "Post Chorus", "Instrumental", "Interlude", "Bridge", "Solo", "Tag", "Ending", "Outro"]
@@ -6130,17 +6152,19 @@ struct WaveformSectionBlock: View, Equatable {
                     .fill(blockBgColor)
                     .padding(2)
                 
-                // Divisões verticais dos compassos da seção
-                let total = durationBars
-                if total > 0.5 {
-                    let numLines = Int(floor(total - 0.001))
-                    if numLines >= 1 {
-                        ForEach(1...numLines, id: \.self) { b in
-                            let xPos = (CGFloat(b) / CGFloat(total)) * width
-                            Rectangle()
-                                .fill(Color.white.opacity(0.12))
-                                .frame(width: 1)
-                                .position(x: xPos, y: 175 / 2)
+                // Divisões verticais dos compassos da seção (Waveform Grid)
+                if showGrid {
+                    let total = durationBars
+                    if total > 0.5 {
+                        let numLines = Int(floor(total - 0.001))
+                        if numLines >= 1 {
+                            ForEach(1...numLines, id: \.self) { b in
+                                let xPos = (CGFloat(b) / CGFloat(total)) * width
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.12))
+                                    .frame(width: 1)
+                                    .position(x: xPos, y: 175 / 2)
+                            }
                         }
                     }
                 }

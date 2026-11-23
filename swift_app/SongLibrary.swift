@@ -33,10 +33,14 @@ final class SongLibrary {
     func setTracksDirectory(_ path: String) -> Bool {
         guard FileManager.default.fileExists(atPath: path) else { return false }
         UserDefaults.standard.set(path, forKey: "saved_tracks_dir")
+        clearCache()
+        return true
+    }
+    
+    func clearCache() {
         lock.lock()
         songsCache.removeAll()
         lock.unlock()
-        return true
     }
     
     // MARK: - Varredura e Indexação
