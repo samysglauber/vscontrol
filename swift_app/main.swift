@@ -592,11 +592,24 @@ class PlaybackState: ObservableObject {
     @Published var currentSetlistFilePath: String? = nil
     
     var defaultSetlistsFolder: URL {
-        let preferred = URL(fileURLWithPath: "/Users/samysglauber/Documents/AbletonTracks/Setlists")
-        if FileManager.default.fileExists(atPath: preferred.path) {
-            return preferred
+        if let custom = UserDefaults.standard.string(forKey: "saved_setlists_dir"),
+           !custom.isEmpty && FileManager.default.fileExists(atPath: custom) {
+            return URL(fileURLWithPath: custom)
         }
-        let fallback = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("AbletonTracks/Setlists") ?? preferred
+        let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let candidates = [
+            docDir?.appendingPathComponent("Setlists"),
+            URL(fileURLWithPath: "/Users/samysglauber/Documents/Setlists"),
+            docDir?.appendingPathComponent("AbletonTracks/Setlists"),
+            URL(fileURLWithPath: "/Users/samysglauber/Documents/AbletonTracks/Setlists")
+        ].compactMap { $0 }
+        
+        for cand in candidates {
+            if FileManager.default.fileExists(atPath: cand.path) {
+                return cand
+            }
+        }
+        let fallback = docDir?.appendingPathComponent("AbletonTracks/Setlists") ?? URL(fileURLWithPath: "/Users/samysglauber/Documents/AbletonTracks/Setlists")
         try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
         return fallback
     }
@@ -885,6 +898,7 @@ class PlaybackState: ObservableObject {
     @Published var isFadingOut: Bool = false
     @Published var isFadedOut: Bool = false
     @Published var isFadingIn: Bool = false
+    @Published var tracksFadeGain: Double = 1.0
     @Published var abletonSynced: Bool = false
     @Published var enableAbletonPlaySync: Bool = true {
         didSet {
@@ -1499,6 +1513,14 @@ class PlaybackState: ObservableObject {
             let isFading = (engine.tracksFadeState == "fading_out")
             if self.isFadingOut != isFading {
                 self.isFadingOut = isFading
+            }
+            let isFadingInEngine = (engine.tracksFadeState == "fading_in")
+            if self.isFadingIn != isFadingInEngine {
+                self.isFadingIn = isFadingInEngine
+            }
+            let curFadeGain = Double(engine.tracksFadeGain)
+            if abs(self.tracksFadeGain - curFadeGain) > 0.0005 {
+                self.tracksFadeGain = curFadeGain
             }
             
             let beatSec = engine.bpm > 0 ? (60.0 / engine.bpm) : 0.5
@@ -2131,17 +2153,33 @@ class PlaybackState: ObservableObject {
     }
     
     func getAvailableSetlists() -> [URL] {
-        let folder = defaultSetlistsFolder
-        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else {
-            return []
+        var folders: [URL] = [defaultSetlistsFolder]
+        if let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let alt1 = docDir.appendingPathComponent("Setlists")
+            let alt2 = docDir.appendingPathComponent("AbletonTracks/Setlists")
+            if !folders.contains(alt1) && FileManager.default.fileExists(atPath: alt1.path) { folders.append(alt1) }
+            if !folders.contains(alt2) && FileManager.default.fileExists(atPath: alt2.path) { folders.append(alt2) }
         }
-        return files
-            .filter { $0.pathExtension.lowercased() == "vset" || $0.pathExtension.lowercased() == "json" }
-            .sorted {
-                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
-                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
-                return d1 > d2
+        
+        var allFiles: [URL] = []
+        var seenNames = Set<String>()
+        for folder in folders {
+            if let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) {
+                for file in files where file.pathExtension.lowercased() == "vset" || file.pathExtension.lowercased() == "json" {
+                    let name = file.lastPathComponent
+                    if !seenNames.contains(name) {
+                        seenNames.insert(name)
+                        allFiles.append(file)
+                    }
+                }
             }
+        }
+        
+        return allFiles.sorted {
+            let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+            let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+            return d1 > d2
+        }
     }
     
     func fetchSetlistSongs(retryCount: Int = 0) {
@@ -2607,6 +2645,9 @@ class PlaybackState: ObservableObject {
         self.isFadingOut = false
         self.isFadedOut = false
         self.isFadingIn = false
+        self.tracksFadeGain = 1.0
+        AudioEngine.shared.tracksFadeGain = 1.0
+        AudioEngine.shared.tracksFadeState = "normal"
         
         // 1. OBTÉM DADOS COMPLETOS DA MÚSICA SINCRONIZADAMENTE (0.00s)
         var songToLoad = song
@@ -3139,7 +3180,14 @@ class PlaybackState: ObservableObject {
     }
     
     func restart() {
-        if isFadingOut { isFadingOut = false }
+        if isFadingOut || isFadingIn || isFadedOut {
+            isFadingOut = false
+            isFadingIn = false
+            isFadedOut = false
+            self.tracksFadeGain = 1.0
+            AudioEngine.shared.tracksFadeGain = 1.0
+            AudioEngine.shared.tracksFadeState = "normal"
+        }
         hasTriggeredCrossfade = false
         queuedCueIdx = nil
         focusedCueIdx = nil
@@ -4022,7 +4070,7 @@ struct TopBarView: View {
                 
                 Menu {
                     Section("SAVED SETLISTS") {
-                        let available = state.getAvailableSetlists()
+                        let available = Array(state.getAvailableSetlists().prefix(10))
                         if available.isEmpty {
                             Text("No saved setlists").foregroundColor(.secondary)
                         } else {
@@ -4052,20 +4100,6 @@ struct TopBarView: View {
                     
                     Button(action: { state.openSetlistDialog() }) {
                         Label("Open Setlist...", systemImage: "folder")
-                    }
-                    
-                    Button(action: { state.saveSetlist() }) {
-                        Label("Save Setlist", systemImage: "square.and.arrow.down")
-                    }
-                    
-                    Button(action: { state.saveSetlistAs() }) {
-                        Label("Save Setlist As...", systemImage: "square.and.arrow.down.on.square")
-                    }
-                    
-                    Divider()
-                    
-                    Button(action: { state.syncScenesToAbleton() }) {
-                        Label("Sync Scenes to Ableton Live", systemImage: "arrow.triangle.2.circlepath")
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -6592,7 +6626,9 @@ struct FaderValueBadgeView: View {
         Text(isMuted ? "MUTE" : dbText)
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundColor(isMuted ? Color(red: 0.90, green: 0.30, blue: 0.30) : Color.white.opacity(0.85))
-            .frame(width: 48, alignment: .trailing)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .frame(width: 58, alignment: .trailing)
     }
 }
 
@@ -6604,6 +6640,7 @@ struct PlaybackFaderView: View {
     let accentColor: Color
     @Binding var volume: Double     // 0.0 ... 1.5
     @Binding var isMuted: Bool
+    var displayVolume: Double? = nil
     var mappableAction: MappableAction? = nil
     let onMuteToggle: () -> Void
     let onVolumeChange: () -> Void
@@ -6615,8 +6652,12 @@ struct PlaybackFaderView: View {
         max(1.0, trackWidth - faderCapWidth)
     }
     
+    private var effectiveVolume: Double {
+        displayVolume ?? volume
+    }
+    
     private var capOffset: CGFloat {
-        let progress = CGFloat(max(0.0, min(1.5, volume)) / 1.5)
+        let progress = CGFloat(max(0.0, min(1.5, effectiveVolume)) / 1.5)
         return progress * availableTravel
     }
     
@@ -6626,8 +6667,8 @@ struct PlaybackFaderView: View {
     
     private var dbText: String {
         if isMuted { return "MUTED" }
-        if volume <= 0.001 { return "-∞ dB" }
-        let db = 20.0 * log10(volume)
+        if effectiveVolume <= 0.001 { return "-∞ dB" }
+        let db = 20.0 * log10(effectiveVolume)
         if abs(db) < 0.15 { return "0.0 dB" }
         return String(format: "%+.1f dB", db)
     }
@@ -6673,7 +6714,7 @@ struct PlaybackFaderView: View {
             }
             .frame(width: trackWidth, height: 28)
             
-            FaderValueBadgeView(isMuted: isMuted, volume: volume, dbText: dbText)
+            FaderValueBadgeView(isMuted: isMuted, volume: effectiveVolume, dbText: dbText)
         }
     }
 }
@@ -6704,7 +6745,12 @@ struct BottomMixerDock: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1, height: 22)
             
-            // Canal R: TRACKS
+            // Canal R: TRACKS (Com animação motorizada proporcional de Fade Out / Fade In)
+            let effectiveTracksDisplayVol: Double = {
+                if state.isFadedOut { return 0.0 }
+                return state.vsVol * state.tracksFadeGain
+            }()
+            
             PlaybackFaderView(
                 title: "TRACKS",
                 subtitle: "Audio (R)",
@@ -6712,9 +6758,21 @@ struct BottomMixerDock: View {
                 accentColor: Color(red: 0.35, green: 0.65, blue: 1.0),
                 volume: $state.vsVol,
                 isMuted: $state.vsMute,
+                displayVolume: effectiveTracksDisplayVol,
                 mappableAction: .muteTracks,
                 onMuteToggle: { state.toggleVsMute() },
-                onVolumeChange: { state.sendVolumes() }
+                onVolumeChange: {
+                    if state.isFadingOut || state.isFadingIn || state.isFadedOut {
+                        state.isFadingOut = false
+                        state.isFadingIn = false
+                        state.isFadedOut = false
+                        AudioEngine.shared.tracksFadeGain = 1.0
+                        AudioEngine.shared.tracksFadeState = "normal"
+                        AudioEngine.shared.tracksFadeFramesLeft = 0
+                        state.tracksFadeGain = 1.0
+                    }
+                    state.sendVolumes()
+                }
             )
             
             Spacer(minLength: 16)
