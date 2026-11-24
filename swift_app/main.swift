@@ -3779,18 +3779,7 @@ class PlaybackState: ObservableObject {
     }
     
     func showUndoFeedback(_ message: String) {
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                self.undoNotificationMessage = message
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            if self?.undoNotificationMessage == message {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    self?.undoNotificationMessage = nil
-                }
-            }
-        }
+        // Mensagens flutuantes desativadas (Opção 1: interface 100% limpa)
     }
     
     func removeSetlistSong(at index: Int) {
@@ -5863,15 +5852,36 @@ struct SpectrogramWaveformView: View {
                         )
                         .frame(width: 1, height: 1)
                         
-                        if state.currentCues.isEmpty {
+                        if state.currentSong == nil {
                             VStack(spacing: 8) {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
-                                Text("Loading audio tracks and cue sections...")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.gray)
+                                Image(systemName: "music.note.list")
+                                    .font(.system(size: 26, weight: .light))
+                                    .foregroundColor(.white.opacity(0.35))
+                                Text("Add a song to begin")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.45))
                             }
                             .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
+                        } else if state.currentCues.isEmpty {
+                            if isCurrentSongProcessing {
+                                VStack(spacing: 8) {
+                                    WaveDotsAnimationView()
+                                    Text("Analyzing...")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.5))
+                                }
+                                .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
+                            } else {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "music.note.list")
+                                        .font(.system(size: 26, weight: .light))
+                                        .foregroundColor(.white.opacity(0.35))
+                                Text("Add a song to begin")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.45))
+                            }
+                            .frame(minWidth: totalAvailableWidth, maxHeight: .infinity)
+                            }
                         } else {
                             // 1. Fundo Geral Estático & Onda Contínua Global (Acelerado por GPU Metal via .drawingGroup & Equatable)
                             WaveformStaticBackgroundView(
@@ -6068,32 +6078,6 @@ struct SpectrogramWaveformView: View {
             ZStack {
                 Color(red: 0.07, green: 0.07, blue: 0.08)
                 WaveformMouseTrackingView()
-            }
-        )
-        .overlay(
-            Group {
-                if let msg = state.undoNotificationMessage {
-                    VStack {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.uturn.backward.circle.fill")
-                                .foregroundColor(.cyan)
-                            Text(msg)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.96))
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color.cyan.opacity(0.4), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.7), radius: 10, y: 4)
-                        .padding(.top, 8)
-                        
-                        Spacer()
-                    }
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.95)), removal: .opacity))
-                    .animation(.easeInOut(duration: 0.2), value: state.undoNotificationMessage)
-                }
             }
         )
     }
