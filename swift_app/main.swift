@@ -238,11 +238,12 @@ struct SongItem: Identifiable, Codable, Hashable {
     var subdivision: String?
     var auto_analysis: String?
     var guide_lead_in: Double?
+    var is_inverted: Bool?
     
     enum CodingKeys: String, CodingKey {
         case id, name, filename, path, bpm, time_signature, default_key
         case full_waveform, has_cover, cover_url, search_query
-        case total_duration, cues, is_metronome, subdivide, subdivision, auto_analysis, guide_lead_in
+        case total_duration, cues, is_metronome, subdivide, subdivision, auto_analysis, guide_lead_in, is_inverted
     }
     
     init(
@@ -263,7 +264,8 @@ struct SongItem: Identifiable, Codable, Hashable {
         subdivide: Bool? = nil,
         subdivision: String? = nil,
         auto_analysis: String? = nil,
-        guide_lead_in: Double? = nil
+        guide_lead_in: Double? = nil,
+        is_inverted: Bool? = nil
     ) {
         self.id = id
         self.name = resolveSongDisplayName(name: name, timeSignature: time_signature, isMetronome: is_metronome)
@@ -283,6 +285,7 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.subdivision = subdivision
         self.auto_analysis = auto_analysis
         self.guide_lead_in = guide_lead_in
+        self.is_inverted = is_inverted
     }
     
     init(from decoder: Decoder) throws {
@@ -307,8 +310,13 @@ struct SongItem: Identifiable, Codable, Hashable {
         self.subdivision = try container.decodeIfPresent(String.self, forKey: .subdivision)
         self.auto_analysis = try container.decodeIfPresent(String.self, forKey: .auto_analysis)
         self.guide_lead_in = try container.decodeIfPresent(Double.self, forKey: .guide_lead_in)
+        self.is_inverted = try container.decodeIfPresent(Bool.self, forKey: .is_inverted)
         
         self.name = resolveSongDisplayName(name: rawName, timeSignature: ts, isMetronome: isMetro)
+    }
+    
+    var isInverted: Bool {
+        return is_inverted ?? false
     }
     
     var isMetronomeTrack: Bool {
@@ -537,14 +545,16 @@ struct CachedSongData: Codable {
     var cues: [CueSection]
     var waveform: [Double]
     var guideLeadIn: Double? = 1.0
+    var isInverted: Bool? = false
     
-    init(bpm: Double, timeSignature: String, totalSeconds: Double, cues: [CueSection], waveform: [Double], guideLeadIn: Double? = 1.0) {
+    init(bpm: Double, timeSignature: String, totalSeconds: Double, cues: [CueSection], waveform: [Double], guideLeadIn: Double? = 1.0, isInverted: Bool? = false) {
         self.bpm = bpm
         self.timeSignature = timeSignature
         self.totalSeconds = totalSeconds
         self.cues = cues
         self.waveform = waveform
         self.guideLeadIn = guideLeadIn
+        self.isInverted = isInverted
     }
 }
 
@@ -679,13 +689,15 @@ class PlaybackState: ObservableObject {
             let matchedDur = match.totalDuration ?? match.song.total_duration
             if !isGeneric, let cs = matchedCues, !cs.isEmpty, let wf = matchedWf, !wf.isEmpty, let d = matchedDur, d > 0 {
                 let leadIn = match.song.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
+                let isInv = match.song.is_inverted ?? song.is_inverted ?? false
                 let data = CachedSongData(
                     bpm: match.song.bpm ?? fileBpm ?? 120.0,
                     timeSignature: match.song.time_signature ?? "4/4",
                     totalSeconds: d,
                     cues: cs,
                     waveform: wf,
-                    guideLeadIn: leadIn
+                    guideLeadIn: leadIn,
+                    isInverted: isInv
                 )
                 songCache[song.id] = data
                 return data
@@ -706,6 +718,7 @@ class PlaybackState: ObservableObject {
                 let bpmVal = parseBpm(json["bpm"]) ?? song.bpm ?? fileBpm ?? 120.0
                 let tsVal = (json["time_signature"] as? String) ?? (song.time_signature ?? "4/4")
                 let wf = (json["full_waveform"] as? [Double]) ?? (song.full_waveform ?? [])
+                let isInv = (json["is_inverted"] as? Bool) ?? song.is_inverted ?? false
                 
                 var cues: [CueSection] = []
                 if let cuesRaw = json["cues"] as? [[String: Any]],
@@ -731,7 +744,8 @@ class PlaybackState: ObservableObject {
                     totalSeconds: dur > 0 ? dur : 180.0,
                     cues: cues.isEmpty ? (fallbackCues ?? []) : cues,
                     waveform: wf,
-                    guideLeadIn: leadInVal
+                    guideLeadIn: leadInVal,
+                    isInverted: isInv
                 )
                 songCache[song.id] = data
                 try? FileManager.default.removeItem(atPath: path)
@@ -743,13 +757,15 @@ class PlaybackState: ObservableObject {
         if let dbSong = SongLibrary.shared.findSong(byId: song.id) ?? SongLibrary.shared.findSong(byId: song.filename),
            let dbCues = dbSong.cues, !dbCues.isEmpty {
             let leadInVal = dbSong.guide_lead_in ?? (UserDefaults.standard.object(forKey: "saved_guide_lead_in_\(song.id)") as? Double) ?? 1.0
+            let isInv = dbSong.is_inverted ?? song.is_inverted ?? false
             let data = CachedSongData(
                 bpm: dbSong.bpm ?? song.bpm ?? fileBpm ?? 120.0,
                 timeSignature: dbSong.time_signature ?? song.time_signature ?? "4/4",
                 totalSeconds: (dbSong.total_duration ?? 0) > 0 ? dbSong.total_duration! : 180.0,
                 cues: dbCues,
                 waveform: dbSong.full_waveform ?? [],
-                guideLeadIn: leadInVal
+                guideLeadIn: leadInVal,
+                isInverted: isInv
             )
             songCache[song.id] = data
             return data
@@ -1030,8 +1046,38 @@ class PlaybackState: ObservableObject {
     @Published var editorBpm: Double = 120.0
     @Published var editorTimeSignature: String = "4/4"
     @Published var editorCues: [CueSection] = []
-    @Published var isReprocessing: Bool = false
+    @Published var reprocessingSongIds: Set<String> = []
+    var isReprocessing: Bool {
+        return !reprocessingSongIds.isEmpty
+    }
     @Published var isAutoAnalyzing: Bool = false
+    @Published var analyzingSongIds: Set<String> = []
+    
+    func isSongProcessing(_ song: SongItem) -> Bool {
+        return isSongProcessing(id: song.id, filename: song.filename)
+    }
+    
+    func isSongProcessing(id: String, filename: String = "") -> Bool {
+        let nfcId = id.precomposedStringWithCanonicalMapping
+        let nfdId = id.decomposedStringWithCanonicalMapping
+        if analyzingSongIds.contains(nfcId) || analyzingSongIds.contains(nfdId) || analyzingSongIds.contains(id) { return true }
+        if !filename.isEmpty {
+            let nfcFn = filename.precomposedStringWithCanonicalMapping
+            let nfdFn = filename.decomposedStringWithCanonicalMapping
+            if analyzingSongIds.contains(nfcFn) || analyzingSongIds.contains(nfdFn) || analyzingSongIds.contains(filename) { return true }
+        }
+        if reprocessingSongIds.contains(id) || reprocessingSongIds.contains(nfcId) || reprocessingSongIds.contains(nfdId) { return true }
+        if !filename.isEmpty {
+            let nfcFn = filename.precomposedStringWithCanonicalMapping
+            let nfdFn = filename.decomposedStringWithCanonicalMapping
+            if reprocessingSongIds.contains(filename) || reprocessingSongIds.contains(nfcFn) || reprocessingSongIds.contains(nfdFn) { return true }
+        }
+        if SongLibrary.shared.isAnalyzing(songId: id) || (!filename.isEmpty && SongLibrary.shared.isAnalyzing(songId: filename)) {
+            return true
+        }
+        return false
+    }
+    
     @Published var quickEditingCueIdx: Int? = nil
     @Published var autoAdvance: Bool = true {
         didSet {
@@ -1336,16 +1382,42 @@ class PlaybackState: ObservableObject {
         
         SongLibrary.shared.onAutoAnalysisStarted = { [weak self] songId in
             DispatchQueue.main.async {
-                guard let self = self, self.currentSong?.id == songId else { return }
-                self.isAutoAnalyzing = true
+                guard let self = self else { return }
+                let nfc = songId.precomposedStringWithCanonicalMapping
+                let nfd = songId.decomposedStringWithCanonicalMapping
+                self.analyzingSongIds.insert(nfc)
+                self.analyzingSongIds.insert(nfd)
+                if let cur = self.currentSong, cur.id == songId || cur.filename == songId || cur.id == nfc || cur.id == nfd {
+                    self.isAutoAnalyzing = true
+                }
                 self.showUndoFeedback("Analisando seções com IA nativa...")
             }
         }
         
         SongLibrary.shared.onAutoAnalysisFailed = { [weak self] songId in
             DispatchQueue.main.async {
-                guard let self = self, self.currentSong?.id == songId else { return }
-                self.isAutoAnalyzing = false
+                guard let self = self else { return }
+                let nfc = songId.precomposedStringWithCanonicalMapping
+                let nfd = songId.decomposedStringWithCanonicalMapping
+                self.analyzingSongIds.remove(nfc)
+                self.analyzingSongIds.remove(nfd)
+                self.analyzingSongIds.remove(songId)
+                if let cur = self.currentSong, cur.id == songId || cur.filename == songId || cur.id == nfc || cur.id == nfd {
+                    self.analyzingSongIds.remove(cur.id)
+                    if !cur.filename.isEmpty {
+                        self.analyzingSongIds.remove(cur.filename.precomposedStringWithCanonicalMapping)
+                        self.analyzingSongIds.remove(cur.filename.decomposedStringWithCanonicalMapping)
+                    }
+                    self.isAutoAnalyzing = false
+                }
+                for item in self.setlist where item.song.id == songId || item.song.filename == songId || item.song.id == nfc || item.song.id == nfd {
+                    self.analyzingSongIds.remove(item.song.id.precomposedStringWithCanonicalMapping)
+                    self.analyzingSongIds.remove(item.song.id.decomposedStringWithCanonicalMapping)
+                    if !item.song.filename.isEmpty {
+                        self.analyzingSongIds.remove(item.song.filename.precomposedStringWithCanonicalMapping)
+                        self.analyzingSongIds.remove(item.song.filename.decomposedStringWithCanonicalMapping)
+                    }
+                }
                 self.showUndoFeedback("Análise de seções concluída sem alterações.")
             }
         }
@@ -1353,17 +1425,38 @@ class PlaybackState: ObservableObject {
         SongLibrary.shared.onAutoCuesReady = { [weak self] songId, cues, detectedTs, detectedBpm in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if self.currentSong?.id == songId {
+                let nfc = songId.precomposedStringWithCanonicalMapping
+                let nfd = songId.decomposedStringWithCanonicalMapping
+                self.analyzingSongIds.remove(nfc)
+                self.analyzingSongIds.remove(nfd)
+                self.analyzingSongIds.remove(songId)
+                if let cur = self.currentSong, cur.id == songId || cur.filename == songId || cur.id == nfc || cur.id == nfd {
+                    self.analyzingSongIds.remove(cur.id)
+                    if !cur.filename.isEmpty {
+                        self.analyzingSongIds.remove(cur.filename.precomposedStringWithCanonicalMapping)
+                        self.analyzingSongIds.remove(cur.filename.decomposedStringWithCanonicalMapping)
+                    }
                     self.isAutoAnalyzing = false
                 }
-                self.songCache[songId]?.cues = cues
-                if let idx = self.setlist.firstIndex(where: { $0.song.id == songId }) {
-                    self.setlist[idx].song.cues = cues
-                    self.setlist[idx].cues = cues
-                    if let ts = detectedTs { self.setlist[idx].song.time_signature = ts }
-                    if let b = detectedBpm { self.setlist[idx].song.bpm = b }
-                    self.saveSetlistState(writeToDisk: true)
+                for item in self.setlist where item.song.id == songId || item.song.filename == songId || item.song.id == nfc || item.song.id == nfd {
+                    self.analyzingSongIds.remove(item.song.id.precomposedStringWithCanonicalMapping)
+                    self.analyzingSongIds.remove(item.song.id.decomposedStringWithCanonicalMapping)
+                    if !item.song.filename.isEmpty {
+                        self.analyzingSongIds.remove(item.song.filename.precomposedStringWithCanonicalMapping)
+                        self.analyzingSongIds.remove(item.song.filename.decomposedStringWithCanonicalMapping)
+                    }
                 }
+                self.songCache[songId]?.cues = cues
+                for idx in 0..<self.setlist.count {
+                    let s = self.setlist[idx].song
+                    if s.id == songId || s.filename == songId || s.id == nfc || s.id == nfd {
+                        self.setlist[idx].song.cues = cues
+                        self.setlist[idx].cues = cues
+                        if let ts = detectedTs { self.setlist[idx].song.time_signature = ts }
+                        if let b = detectedBpm { self.setlist[idx].song.bpm = b }
+                    }
+                }
+                self.saveSetlistState(writeToDisk: true)
                 if self.currentSong?.id == songId {
                     AudioEngine.shared.applyAutoCues(songId: songId, cues: cues)
                     self.currentCues = cues
@@ -1812,6 +1905,9 @@ class PlaybackState: ObservableObject {
             if !restored.isEmpty {
                 self.setlist = restored
                 self.autoFetchCoversIfNeeded()
+                for it in restored {
+                    SongLibrary.shared.startBackgroundAnalysisIfNeeded(song: it.song)
+                }
                 
                 let lastSongId = UserDefaults.standard.string(forKey: "saved_last_loaded_song_id")
                 if let lastId = lastSongId,
@@ -2100,6 +2196,9 @@ class PlaybackState: ObservableObject {
             self.isLoadingSetlistDoc = false
             
             self.autoFetchCoversIfNeeded()
+            for it in restoredSongs {
+                SongLibrary.shared.startBackgroundAnalysisIfNeeded(song: it.song)
+            }
             self.addRecentSetlistPath(url.path)
             UserDefaults.standard.set(url.path, forKey: "last_opened_setlist_path")
             UserDefaults.standard.synchronize()
@@ -2297,6 +2396,7 @@ class PlaybackState: ObservableObject {
                         )
                     }
                     self.autoFetchCover(for: song)
+                    SongLibrary.shared.startBackgroundAnalysisIfNeeded(song: song)
                     addedAny = true
                 }
             }
@@ -2334,6 +2434,7 @@ class PlaybackState: ObservableObject {
                 )
             }
             self.autoFetchCover(for: song)
+            SongLibrary.shared.startBackgroundAnalysisIfNeeded(song: song)
             self.saveSetlistState()
         }
     }
@@ -2379,77 +2480,62 @@ class PlaybackState: ObservableObject {
     
     func setTracksFolder(path: String) {
         self.tracksFolderPath = path
-        UserDefaults.standard.set(path, forKey: "saved_tracks_folder_path")
+        _ = SongLibrary.shared.setTracksDirectory(path)
         self.isScanningFolder = true
         
-        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/folder") else {
-            self.isScanningFolder = false
-            return
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload = ["path": path]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            SongLibrary.shared.clearCache()
+            let songs = SongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
-                self?.isScanningFolder = false
-                self?.fetchAllLibrarySongs()
-                self?.fetchSetlistSongs()
+                guard let self = self else { return }
+                self.isScanningFolder = false
+                self.librarySongs = songs
+                self.songs = songs
+                self.fetchSetlistSongs()
             }
-        }.resume()
+        }
     }
     
     func refreshTracks() {
         guard !isScanningFolder else { return }
         isScanningFolder = true
         
-        guard let url = URL(string: "http://127.0.0.1:8080/api/tracks/refresh") else {
-            isScanningFolder = false
-            return
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            SongLibrary.shared.clearCache()
+            let songs = SongLibrary.shared.getAllSongs()
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isScanningFolder = false
-                if let data = data,
-                   let resp = try? JSONDecoder().decode(RefreshTracksResponse.self, from: data),
-                   let songs = resp.songs {
-                    self.librarySongs = songs
-                    self.songs = songs
-                    
-                    // Atualiza dados de músicas que já estejam no setlist sem alterar a lista
-                    for (idx, item) in self.setlist.enumerated() {
-                        if let updated = songs.first(where: { $0.id == item.song.id }) {
-                            let songCues = item.cues ?? updated.cues
-                            let songDur = item.totalDuration ?? updated.total_duration
-                            let songWf = item.waveform ?? updated.full_waveform
-                            self.setlist[idx] = SetlistSong(
-                                id: item.id,
-                                song: updated,
-                                transitionType: item.transitionType,
-                                cues: songCues,
-                                totalDuration: songDur,
-                                waveform: songWf
+                self.librarySongs = songs
+                self.songs = songs
+                
+                // Atualiza dados de músicas que já estejam no setlist sem alterar a lista
+                for (idx, item) in self.setlist.enumerated() {
+                    if let updated = songs.first(where: { $0.id == item.song.id }) {
+                        let songCues = item.cues ?? updated.cues
+                        let songDur = item.totalDuration ?? updated.total_duration
+                        let songWf = item.waveform ?? updated.full_waveform
+                        self.setlist[idx] = SetlistSong(
+                            id: item.id,
+                            song: updated,
+                            transitionType: item.transitionType,
+                            cues: songCues,
+                            totalDuration: songDur,
+                            waveform: songWf
+                        )
+                        if let dur = songDur, let cs = songCues {
+                            self.songCache[updated.id] = CachedSongData(
+                                bpm: updated.bpm ?? 120.0,
+                                timeSignature: updated.time_signature ?? "4/4",
+                                totalSeconds: dur,
+                                cues: cs,
+                                waveform: songWf ?? []
                             )
-                            if let dur = songDur, let cs = songCues {
-                                self.songCache[updated.id] = CachedSongData(
-                                    bpm: updated.bpm ?? 120.0,
-                                    timeSignature: updated.time_signature ?? "4/4",
-                                    totalSeconds: dur,
-                                    cues: cs,
-                                    waveform: songWf ?? []
-                                )
-                            }
                         }
                     }
                 }
             }
-        }.resume()
+        }
     }
     
     func fetchSongs(retryCount: Int = 0) {
@@ -2673,6 +2759,9 @@ class PlaybackState: ObservableObject {
             songToLoad.total_duration = d.totalSeconds
             songToLoad.full_waveform = d.waveform
             songToLoad.guide_lead_in = leadInVal
+            if let inv = d.isInverted ?? songToLoad.is_inverted {
+                songToLoad.is_inverted = inv
+            }
         } else {
             if let libSong = SongLibrary.shared.findSong(byId: song.id) {
                 if songToLoad.bpm == nil { songToLoad.bpm = libSong.bpm }
@@ -2685,6 +2774,7 @@ class PlaybackState: ObservableObject {
                     songToLoad.cover_url = libSong.cover_url
                 }
                 if songToLoad.guide_lead_in == nil { songToLoad.guide_lead_in = libSong.guide_lead_in }
+                if songToLoad.is_inverted == nil { songToLoad.is_inverted = libSong.is_inverted }
             }
             if let b = songToLoad.bpm { self.bpm = b }
             if let ts = songToLoad.time_signature { self.timeSignature = ts }
@@ -2706,7 +2796,8 @@ class PlaybackState: ObservableObject {
             totalSeconds: self.totalSeconds,
             cues: self.currentCues,
             waveform: self.fullWaveform,
-            guideLeadIn: self.guideLeadInBars
+            guideLeadIn: self.guideLeadInBars,
+            isInverted: songToLoad.is_inverted
         )
         
         self.triggerScrollToStart()
@@ -2721,6 +2812,7 @@ class PlaybackState: ObservableObject {
             let engineCues = engine.cues
             let engineTot = engine.totalDuration
             let engineWaveform = engine.fullWaveform
+            let engineInverted = engine.isChannelsInverted
             
             DispatchQueue.main.async {
                 if self.currentSong?.id == song.id {
@@ -2736,13 +2828,22 @@ class PlaybackState: ObservableObject {
                         self.totalSeconds = engineTot
                         self.currentSong?.total_duration = engineTot
                     }
+                    if self.currentSong?.is_inverted != engineInverted {
+                        self.currentSong?.is_inverted = engineInverted
+                        for i in 0..<self.setlist.count {
+                            if self.setlist[i].song.id == song.id || self.setlist[i].song.filename == song.filename {
+                                self.setlist[i].song.is_inverted = engineInverted
+                            }
+                        }
+                    }
                     self.songCache[song.id] = CachedSongData(
                         bpm: self.bpm,
                         timeSignature: self.timeSignature,
                         totalSeconds: self.totalSeconds,
                         cues: self.currentCues,
                         waveform: self.fullWaveform,
-                        guideLeadIn: self.guideLeadInBars
+                        guideLeadIn: self.guideLeadInBars,
+                        isInverted: engineInverted
                     )
                 }
                 if autoPlay && MappingManager.shared.mode == .none {
@@ -2907,7 +3008,7 @@ class PlaybackState: ObservableObject {
         isSongEditorPresented = true
     }
     
-    func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection], guideLeadIn: Double? = nil) {
+    func saveSongEditor(bpm: Double, timeSignature: String, cues: [CueSection], guideLeadIn: Double? = nil, isInverted: Bool? = nil) {
         guard currentSong != nil else { return }
         pushUndoSnapshot(description: "Song Editor Edit")
         self.bpm = bpm
@@ -2917,10 +3018,69 @@ class PlaybackState: ObservableObject {
         if let gli = guideLeadIn {
             self.guideLeadInBars = gli
         }
+        if let inv = isInverted, currentSong?.is_inverted != inv {
+            currentSong?.is_inverted = inv
+            if let sid = currentSong?.id {
+                SongLibrary.shared.updateIsInverted(songId: sid, isInverted: inv)
+            }
+            if let fn = currentSong?.filename, !fn.isEmpty {
+                SongLibrary.shared.updateIsInverted(songId: fn, isInverted: inv)
+            }
+            for i in 0..<setlist.count {
+                if setlist[i].song.id == currentSong?.id || setlist[i].song.filename == currentSong?.filename {
+                    setlist[i].song.is_inverted = inv
+                }
+            }
+            AudioEngine.shared.setInvertedChannels(inv)
+            self.fullWaveform = AudioEngine.shared.fullWaveform
+            if let sid = currentSong?.id, var cached = songCache[sid] {
+                cached.isInverted = inv
+                cached.waveform = self.fullWaveform
+                songCache[sid] = cached
+            }
+            saveSetlistState(writeToDisk: true)
+        }
         self.syncAbleton(bpm: bpm, timeSignature: timeSignature)
         self.isSongEditorPresented = false
         self.saveCurrentCues(guideLeadIn: guideLeadIn)
         self.editorCues = self.currentCues
+    }
+    
+    func toggleCurrentSongInverted() {
+        guard let song = currentSong else { return }
+        toggleInvertedChannels(for: song)
+    }
+    
+    func toggleInvertedChannels(for song: SongItem) {
+        let currentInv = song.is_inverted ?? false
+        let newInv = !currentInv
+        
+        if currentSong?.id == song.id || currentSong?.filename == song.filename {
+            currentSong?.is_inverted = newInv
+            AudioEngine.shared.setInvertedChannels(newInv)
+            self.fullWaveform = AudioEngine.shared.fullWaveform
+        }
+        
+        for i in 0..<setlist.count {
+            if setlist[i].song.id == song.id || setlist[i].song.filename == song.filename {
+                setlist[i].song.is_inverted = newInv
+            }
+        }
+        
+        SongLibrary.shared.updateIsInverted(songId: song.id, isInverted: newInv)
+        if !song.filename.isEmpty && song.filename != song.id {
+            SongLibrary.shared.updateIsInverted(songId: song.filename, isInverted: newInv)
+        }
+        
+        if var cached = songCache[song.id] {
+            cached.isInverted = newInv
+            if currentSong?.id == song.id { cached.waveform = self.fullWaveform }
+            songCache[song.id] = cached
+        }
+        
+        saveSetlistState(writeToDisk: true)
+        let modeStr = newInv ? "Inverted (L: Tracks / R: Click)" : "Standard (L: Click / R: Tracks)"
+        showUndoFeedback("Audio Routing: \(modeStr)")
     }
     
     func resetSongSections(bpm: Double? = nil, timeSignature: String? = nil) {
@@ -2955,78 +3115,125 @@ class PlaybackState: ObservableObject {
         self.showUndoFeedback("All section divisions cleared (1 unified section)")
     }
     
-    func reprocessWithAI() {
-        guard let song = currentSong else { return }
+    func reprocessWithAI(target: SongItem? = nil) {
+        guard let song = target ?? currentSong else { return }
+        let targetSongId = song.id
+        let targetFilename = song.filename
+        let targetNfc = targetSongId.precomposedStringWithCanonicalMapping
+        let targetNfd = targetSongId.decomposedStringWithCanonicalMapping
+        
         pushUndoSnapshot(description: "AI Re-analysis")
-        self.isReprocessing = true
+        self.reprocessingSongIds.insert(targetSongId)
+        self.reprocessingSongIds.insert(targetNfc)
+        self.reprocessingSongIds.insert(targetNfd)
+        if !targetFilename.isEmpty {
+            self.reprocessingSongIds.insert(targetFilename)
+            self.reprocessingSongIds.insert(targetFilename.precomposedStringWithCanonicalMapping)
+            self.reprocessingSongIds.insert(targetFilename.decomposedStringWithCanonicalMapping)
+        }
+        self.analyzingSongIds.insert(targetSongId)
+        self.analyzingSongIds.insert(targetNfc)
+        self.analyzingSongIds.insert(targetNfd)
+        if !targetFilename.isEmpty {
+            self.analyzingSongIds.insert(targetFilename)
+            self.analyzingSongIds.insert(targetFilename.precomposedStringWithCanonicalMapping)
+            self.analyzingSongIds.insert(targetFilename.decomposedStringWithCanonicalMapping)
+        }
         
         SongLibrary.shared.reprocessWithAI(
-            songId: song.id,
+            songId: targetSongId,
             bpm: editorBpm,
             timeSignature: editorTimeSignature
         ) { [weak self] updatedSong in
             guard let self = self else { return }
-            self.isReprocessing = false
+            self.reprocessingSongIds.remove(targetSongId)
+            self.reprocessingSongIds.remove(targetNfc)
+            self.reprocessingSongIds.remove(targetNfd)
+            if !targetFilename.isEmpty {
+                self.reprocessingSongIds.remove(targetFilename)
+                self.reprocessingSongIds.remove(targetFilename.precomposedStringWithCanonicalMapping)
+                self.reprocessingSongIds.remove(targetFilename.decomposedStringWithCanonicalMapping)
+            }
+            self.analyzingSongIds.remove(targetSongId)
+            self.analyzingSongIds.remove(targetNfc)
+            self.analyzingSongIds.remove(targetNfd)
+            if !targetFilename.isEmpty {
+                self.analyzingSongIds.remove(targetFilename)
+                self.analyzingSongIds.remove(targetFilename.precomposedStringWithCanonicalMapping)
+                self.analyzingSongIds.remove(targetFilename.decomposedStringWithCanonicalMapping)
+            }
             guard let updated = updatedSong else {
                 self.showUndoFeedback("AI analysis failed or returned no cues")
                 return
             }
             
-            if let newBpm = updated.bpm {
-                self.bpm = newBpm
-                self.editorBpm = newBpm
-            }
-            if let newTs = updated.time_signature {
-                self.timeSignature = newTs
-                self.editorTimeSignature = newTs
-            }
-            
-            if let newCues = updated.cues {
-                self.currentCues = newCues
-                self.editorCues = newCues
-            }
-            if let wf = updated.full_waveform, !wf.isEmpty {
-                self.fullWaveform = wf
-            } else if !AudioEngine.shared.fullWaveform.isEmpty {
-                self.fullWaveform = AudioEngine.shared.fullWaveform
-            }
-            var updatedWithLeadIn = updated
             let leadInVal = updated.guide_lead_in ?? song.guide_lead_in ?? self.guideLeadInBars
+            var updatedWithLeadIn = updated
             updatedWithLeadIn.guide_lead_in = leadInVal
-            self.currentSong = updatedWithLeadIn
-            self.guideLeadInBars = leadInVal
-            AudioEngine.shared.guideLeadInBars = leadInVal
+            let wf = updated.full_waveform ?? []
+            
             let cachedData = CachedSongData(
-                bpm: self.bpm,
-                timeSignature: self.timeSignature,
-                totalSeconds: self.totalSeconds,
-                cues: self.currentCues,
-                waveform: self.fullWaveform,
-                guideLeadIn: leadInVal
+                bpm: updated.bpm ?? self.bpm,
+                timeSignature: updated.time_signature ?? self.timeSignature,
+                totalSeconds: updated.total_duration ?? self.totalSeconds,
+                cues: updated.cues ?? [],
+                waveform: wf,
+                guideLeadIn: leadInVal,
+                isInverted: updated.is_inverted
             )
-            self.songCache[song.id] = cachedData
-            if !song.filename.isEmpty {
-                self.songCache[song.filename] = cachedData
+            self.songCache[targetSongId] = cachedData
+            if !targetFilename.isEmpty {
+                self.songCache[targetFilename] = cachedData
             }
-            if let cuesData = try? JSONEncoder().encode(self.currentCues) {
-                UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.id)")
-                if !song.filename.isEmpty {
-                    UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(song.filename)")
+            if let newCues = updated.cues, let cuesData = try? JSONEncoder().encode(newCues) {
+                UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(targetSongId)")
+                if !targetFilename.isEmpty {
+                    UserDefaults.standard.set(cuesData, forKey: "saved_cues_\(targetFilename)")
                 }
                 UserDefaults.standard.synchronize()
             }
             for i in 0..<self.setlist.count {
-                if self.setlist[i].song.id == song.id || self.setlist[i].song.filename == song.filename {
-                    self.setlist[i].song = updated
+                if self.setlist[i].song.id == targetSongId || (!targetFilename.isEmpty && self.setlist[i].song.filename == targetFilename) {
+                    self.setlist[i].song = updatedWithLeadIn
                     self.setlist[i].cues = updated.cues
-                    self.setlist[i].totalDuration = self.totalSeconds
-                    self.setlist[i].waveform = self.fullWaveform
+                    if let dur = updated.total_duration { self.setlist[i].totalDuration = dur }
+                    if !wf.isEmpty { self.setlist[i].waveform = wf }
                 }
             }
             self.saveSetlistState(writeToDisk: true)
-            AudioEngine.shared.loadSong(updated, crossfade: false)
-            self.syncAudioEngineState()
-            self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
+            
+            // Só atualiza a timeline e o AudioEngine se a música ativa na tela AINDA FOR a música reprocessada
+            let isStillCurrent = (self.currentSong?.id == targetSongId ||
+                                  self.currentSong?.id == targetNfc ||
+                                  self.currentSong?.id == targetNfd ||
+                                  (!targetFilename.isEmpty && self.currentSong?.filename == targetFilename))
+            if isStillCurrent {
+                if let newBpm = updated.bpm {
+                    self.bpm = newBpm
+                    self.editorBpm = newBpm
+                }
+                if let newTs = updated.time_signature {
+                    self.timeSignature = newTs
+                    self.editorTimeSignature = newTs
+                }
+                if let newCues = updated.cues {
+                    self.currentCues = newCues
+                    self.editorCues = newCues
+                }
+                if !wf.isEmpty {
+                    self.fullWaveform = wf
+                } else if !AudioEngine.shared.fullWaveform.isEmpty {
+                    self.fullWaveform = AudioEngine.shared.fullWaveform
+                }
+                self.currentSong = updatedWithLeadIn
+                self.guideLeadInBars = leadInVal
+                AudioEngine.shared.guideLeadInBars = leadInVal
+                AudioEngine.shared.loadSong(updatedWithLeadIn, crossfade: false)
+                self.syncAudioEngineState()
+                self.showUndoFeedback("AI analysis complete (\(updated.cues?.count ?? 0) sections)")
+            } else {
+                self.showUndoFeedback("AI analysis of '\(updated.name)' complete!")
+            }
         }
     }
     
@@ -4452,6 +4659,32 @@ class SetlistScrollNSView: NSView {
     }
 }
 
+// MARK: - Wave Dots Animation (Animação de Movimento de Onda para "Processing • • •")
+struct WaveDotsAnimationView: View {
+    @State private var animating = false
+    
+    var body: some View {
+        HStack(spacing: 3.5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 3.2, height: 3.2)
+                    .shadow(color: Color.black.opacity(0.8), radius: 2, x: 0, y: 1)
+                    .offset(y: animating ? -3.0 : 3.0)
+                    .animation(
+                        Animation.easeInOut(duration: 0.42)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.14),
+                        value: animating
+                    )
+            }
+        }
+        .onAppear {
+            animating = true
+        }
+    }
+}
+
 struct SetlistCarouselView: View {
     @ObservedObject var state: PlaybackState
     @State private var lastClickedSongId: String? = nil
@@ -4469,6 +4702,7 @@ struct SetlistCarouselView: View {
                             let isSelected = state.currentSong?.id == item.song.id
                             let isCountingIn = isSelected && state.isCurrentSongCountingIn
                             let isBeingDragged = state.isEditMode && (state.draggedSetlistSong?.id == item.id)
+                            let isProcessing = state.isSongProcessing(item.song)
                             let songMappableAction: MappableAction? = {
                                 switch index {
                                 case 0: return .song1
@@ -4558,9 +4792,32 @@ struct SetlistCarouselView: View {
                                                     isCountingIn: isCountingIn,
                                                     refreshId: state.coverRefreshTrigger
                                                 )
+                                                .blur(radius: isProcessing ? 2.5 : 0)
+                                                .opacity(isProcessing ? 0.55 : 1.0)
+                                                .transition(.opacity)
+                                            }
+                                            
+                                            // Overlay de Processamento ("Processing • • •" com Animação de Onda) SOBRE a capa no mesmo ZStack
+                                            if isProcessing {
+                                                ZStack {
+                                                    RoundedRectangle(cornerRadius: 10)
+                                                        .fill(Color.black.opacity(0.68))
+                                                    
+                                                    HStack(spacing: 6) {
+                                                        Text("Processing")
+                                                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                                            .foregroundColor(.white)
+                                                            .shadow(color: Color.black.opacity(0.8), radius: 3, x: 0, y: 1)
+                                                        
+                                                        WaveDotsAnimationView()
+                                                    }
+                                                }
+                                                .frame(width: 160, height: 88)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10))
                                                 .transition(.opacity)
                                             }
                                         }
+                                        .frame(width: 160, height: 88)
                                         .animation(.easeInOut(duration: 0.22), value: isBeingDragged)
                                     }
                                     .buttonStyle(PlainButtonStyle())
@@ -4652,7 +4909,7 @@ struct SetlistCarouselView: View {
                                 .frame(width: 160, height: 88)
                                 .mappableControl(songMappableAction, cornerRadius: 10)
                                 
-                                // Info da Música Embaixo (Apenas o Nome da Música)
+                                // Info da Música Embaixo (Nome da Música + Ícone Invertido se ativo)
                                 HStack(alignment: .center, spacing: 4) {
                                     if isSelected && !isBeingDragged {
                                         Image(systemName: "play.fill")
@@ -4679,9 +4936,16 @@ struct SetlistCarouselView: View {
                             }
                         }
                         
-                        // Card "Add a Song" no mesmo formato e tamanho das músicas (visível apenas em Modo EDIT)
-                        if state.isEditMode {
-                            Button(action: { state.isAddSongSheetPresented = true }) {
+                        // Card "Add a Song" no mesmo formato e tamanho das músicas (visível em Modo EDIT ou quando o setlist estiver vazio)
+                        if state.isEditMode || state.setlist.isEmpty {
+                            Button(action: {
+                                if state.setlist.isEmpty {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        state.isEditMode = true
+                                    }
+                                }
+                                state.isAddSongSheetPresented = true
+                            }) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 10)
@@ -5580,6 +5844,7 @@ struct SpectrogramWaveformView: View {
             let totalTrackWidth = max(totalAvailableWidth, CGFloat(max(1.0, state.totalSeconds)) * scale)
             let blockWidths = calculateBlockWidths(scale: scale, totalTrackWidth: totalTrackWidth)
             let playheadX = CGFloat(max(0.0, state.currentSeconds)) * scale
+            let isCurrentSongProcessing = state.currentSong.map { state.isSongProcessing($0) } ?? false
             
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -5658,7 +5923,9 @@ struct SpectrogramWaveformView: View {
                             }
                         }
                     }
-                    .blur(radius: (state.isAutoAnalyzing || state.isReprocessing) ? 7 : 0)
+                    .blur(radius: isCurrentSongProcessing ? 6 : 0)
+                    .opacity(isCurrentSongProcessing ? 0.35 : 1.0)
+                    .animation(.easeInOut(duration: 0.3), value: isCurrentSongProcessing)
                     .id(state.currentSong?.id ?? "none")
                     .animation(nil, value: state.currentSong?.id)
                     .frame(height: 195)
@@ -5805,35 +6072,6 @@ struct SpectrogramWaveformView: View {
         )
         .overlay(
             Group {
-                if state.isAutoAnalyzing || state.isReprocessing {
-                    ZStack {
-                        Color.black.opacity(0.52)
-                        
-                        VStack(spacing: 12) {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(1.2)
-                            Text("Analyzing...")
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.6), radius: 6, y: 2)
-                        }
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 20)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(Color(red: 0.12, green: 0.12, blue: 0.15).opacity(0.92))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14)
-                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-                        )
-                        .shadow(color: .black.opacity(0.7), radius: 24, y: 8)
-                    }
-                    .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.25), value: (state.isAutoAnalyzing || state.isReprocessing))
-                }
-                
                 if let msg = state.undoNotificationMessage {
                     VStack {
                         HStack(spacing: 8) {
@@ -6627,8 +6865,10 @@ struct FaderValueBadgeView: View {
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundColor(isMuted ? Color(red: 0.90, green: 0.30, blue: 0.30) : Color.white.opacity(0.85))
             .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .frame(width: 58, alignment: .trailing)
+            .truncationMode(.tail)
+            .minimumScaleFactor(0.80)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: 66, height: 18, alignment: .trailing)
     }
 }
 
@@ -6667,10 +6907,10 @@ struct PlaybackFaderView: View {
     
     private var dbText: String {
         if isMuted { return "MUTED" }
-        if effectiveVolume <= 0.001 { return "-∞ dB" }
+        if effectiveVolume <= 0.001 { return "-∞\u{00A0}dB" }
         let db = 20.0 * log10(effectiveVolume)
-        if abs(db) < 0.15 { return "0.0 dB" }
-        return String(format: "%+.1f dB", db)
+        if abs(db) < 0.15 { return "0.0\u{00A0}dB" }
+        return String(format: "%+.1f\u{00A0}dB", db)
     }
     
     var body: some View {
@@ -7662,6 +7902,7 @@ struct AddSongSheetView: View {
                                     }
                                     state.saveSetlistState()
                                     state.autoFetchCover(for: song)
+                                    SongLibrary.shared.startBackgroundAnalysisIfNeeded(song: song)
                                     presentationMode.wrappedValue.dismiss()
                                 }
                                 .buttonStyle(BorderedProminentButtonStyle())
@@ -8072,6 +8313,7 @@ struct SongEditorSheetView: View {
     @State private var localTimeSignature: String = "4/4"
     @State private var localCues: [CueSection] = []
     @State private var localGuideLeadIn: Double = 1.0
+    @State private var localIsInverted: Bool = false
     @State private var showResetConfirmation: Bool = false
     @State private var keyMonitor: Any? = nil
     
@@ -8326,7 +8568,60 @@ struct SongEditorSheetView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
                 
-                // 3. Card de Reprocessamento com Inteligência Artificial
+                // 3. Card de Roteamento de Canais de Áudio (L / R)
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                colors: [Color.orange.opacity(0.30), Color.yellow.opacity(0.20)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 40, height: 40)
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.orange)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text("Channel Routing (L / R)")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text(localIsInverted ? "INVERTED" : "STANDARD")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundColor(localIsInverted ? .orange : .green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background((localIsInverted ? Color.orange : Color.green).opacity(0.15))
+                                .cornerRadius(4)
+                        }
+                        
+                        Text(localIsInverted
+                             ? "Inverted track: Left is Backing Tracks and Right is Click/Guide. System swaps channels so output remains standard."
+                             : "Standard multitrack: Left is Click + Voice Guide and Right is Backing Tracks.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                    }
+                    
+                    Spacer()
+                    
+                    Picker("", selection: $localIsInverted) {
+                        Text("Standard (L: Click)").tag(false)
+                        Text("Inverted (R: Click)").tag(true)
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .frame(width: 250)
+                }
+                .padding(14)
+                .background(Color.white.opacity(0.04))
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(localIsInverted ? Color.orange.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1))
+                
+                // 4. Card de Reprocessamento com Inteligência Artificial
+                let isThisSongProcessing = state.currentSong.map { state.isSongProcessing($0) } ?? false
                 HStack(spacing: 14) {
                     ZStack {
                         Circle()
@@ -8356,11 +8651,11 @@ struct SongEditorSheetView: View {
                         }
                     }) {
                         HStack(spacing: 6) {
-                            if state.isReprocessing {
+                            if isThisSongProcessing {
                                 ProgressView()
                                     .scaleEffect(0.75)
                                     .colorInvert()
-                                Text("Analyzing...")
+                                Text("Processing...")
                                     .font(.system(size: 12, weight: .bold))
                             } else {
                                 Image(systemName: "sparkles")
@@ -8377,7 +8672,7 @@ struct SongEditorSheetView: View {
                         .shadow(color: Color.purple.opacity(0.35), radius: 5, y: 2)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(state.isReprocessing)
+                    .disabled(isThisSongProcessing)
                 }
                 .padding(14)
                 .background(Color.white.opacity(0.04))
@@ -8444,7 +8739,7 @@ struct SongEditorSheetView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(localCues.count <= 1 || state.isReprocessing)
+                    .disabled(localCues.count <= 1 || isThisSongProcessing)
                     .help("Clear all section markers and keep the song as a single continuous track (Zerar divisões)")
                 }
                 .padding(14)
@@ -8493,7 +8788,7 @@ struct SongEditorSheetView: View {
             .padding(.bottom, 22)
             .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
-        .frame(width: 660, height: 560)
+        .frame(width: 660, height: 630)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .alert(isPresented: $showResetConfirmation) {
             Alert(
@@ -8513,6 +8808,7 @@ struct SongEditorSheetView: View {
             localTimeSignature = state.timeSignature
             localCues = state.currentCues
             localGuideLeadIn = state.currentSong?.guide_lead_in ?? state.guideLeadInBars
+            localIsInverted = state.currentSong?.is_inverted ?? false
             
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard !showResetConfirmation && !state.isCoverPickerPresented else { return event }
@@ -8555,7 +8851,7 @@ struct SongEditorSheetView: View {
         guard !showResetConfirmation && !state.isCoverPickerPresented else { return }
         let cleanBpm = localBpmText.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
         if let bpmVal = Double(cleanBpm), bpmVal >= 20 {
-            state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues, guideLeadIn: localGuideLeadIn)
+            state.saveSongEditor(bpm: bpmVal, timeSignature: localTimeSignature, cues: localCues, guideLeadIn: localGuideLeadIn, isInverted: localIsInverted)
             presentationMode.wrappedValue.dismiss()
         }
     }

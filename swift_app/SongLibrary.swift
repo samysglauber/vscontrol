@@ -13,7 +13,7 @@ final class SongLibrary {
     
     private let defaultDir = "/Users/samysglauber/Documents/Vs"
     private var songsCache: [String: SongItem] = [:]
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     
     var onAutoCuesReady: ((String, [CueSection], String?, Double?) -> Void)?
     var onAutoAnalysisStarted: ((String) -> Void)?
@@ -72,16 +72,24 @@ final class SongLibrary {
     
     func cacheSong(_ song: SongItem) {
         lock.lock()
-        songsCache[song.id] = song
+        let nfcId = song.id.precomposedStringWithCanonicalMapping
+        let nfdId = song.id.decomposedStringWithCanonicalMapping
+        songsCache[nfcId] = song
+        songsCache[nfdId] = song
         if !song.filename.isEmpty {
-            songsCache[song.filename] = song
+            let nfcFn = song.filename.precomposedStringWithCanonicalMapping
+            let nfdFn = song.filename.decomposedStringWithCanonicalMapping
+            songsCache[nfcFn] = song
+            songsCache[nfdFn] = song
         }
         lock.unlock()
     }
     
     func getSong(id: String) -> SongItem? {
         lock.lock()
-        if let cached = songsCache[id] {
+        let nfc = id.precomposedStringWithCanonicalMapping
+        let nfd = id.decomposedStringWithCanonicalMapping
+        if let cached = songsCache[nfc] ?? songsCache[nfd] {
             lock.unlock()
             return cached
         }
@@ -392,7 +400,8 @@ final class SongLibrary {
         timeSignature: String? = nil,
         fullWaveform: [Double]? = nil,
         autoAnalysis: String? = nil,
-        guideLeadIn: Double? = nil
+        guideLeadIn: Double? = nil,
+        isInverted: Bool? = nil
     ) {
         Database.shared.saveCues(
             songId: songId,
@@ -401,7 +410,8 @@ final class SongLibrary {
             timeSignature: timeSignature,
             fullWaveform: fullWaveform,
             autoAnalysis: autoAnalysis,
-            guideLeadIn: guideLeadIn
+            guideLeadIn: guideLeadIn,
+            isInverted: isInverted
         )
         
         // Limpa arquivo legado .cues.json se existir no disco para manter a pasta 100% limpa
@@ -428,6 +438,7 @@ final class SongLibrary {
             if let wf = fullWaveform { cached.full_waveform = wf }
             if let aa = autoAnalysis { cached.auto_analysis = aa }
             if let gli = guideLeadIn { cached.guide_lead_in = gli }
+            if let inv = isInverted { cached.is_inverted = inv }
             songsCache[songId] = cached
         } else if var item = Database.shared.getSong(id: songId) {
             item.cues = cues
@@ -436,7 +447,18 @@ final class SongLibrary {
             if let wf = fullWaveform { item.full_waveform = wf }
             if let aa = autoAnalysis { item.auto_analysis = aa }
             if let gli = guideLeadIn { item.guide_lead_in = gli }
+            if let inv = isInverted { item.is_inverted = inv }
             songsCache[songId] = item
+        }
+        lock.unlock()
+    }
+    
+    func updateIsInverted(songId: String, isInverted: Bool) {
+        Database.shared.updateIsInverted(songId: songId, isInverted: isInverted)
+        lock.lock()
+        if var cached = songsCache[songId] {
+            cached.is_inverted = isInverted
+            songsCache[songId] = cached
         }
         lock.unlock()
     }
@@ -447,23 +469,119 @@ final class SongLibrary {
         if songId.hasPrefix("metro_") || songId.hasPrefix("metronome_") || songId.contains(".virtual") || songId.starts(with: "virtual://") {
             return false
         }
-        if let song = getSong(id: songId) ?? Database.shared.getSong(id: songId) {
-            if song.is_metronome == true { return false }
-            if let auto = song.auto_analysis {
-                if auto == "pending" { return true }
-                if auto == "done" || auto == "failed" { return false }
-            }
-            if let cues = song.cues, !cues.isEmpty {
-                let hasGenericNames = cues.contains { cue in
-                    cue.name.hasPrefix("Section ") || cue.name == "Section"
+        guard let song = getSong(id: songId) ?? Database.shared.getSong(id: songId) else {
+            return true
+        }
+        if song.is_metronome == true { return false }
+        
+        // Se a música foi manualmente editada ou salva pelo usuário, respeita 100% e não sobrescreve
+        if Database.shared.isUserEdited(songId: songId) {
+            return false
+        }
+        
+        // Se estiver explicitamente pendente
+        if song.auto_analysis == "pending" {
+            return true
+        }
+        
+        guard let cues = song.cues, !cues.isEmpty else {
+            return true
+        }
+        
+        // Verifica se possui nomes genéricos de seções (Section 1, Section 2...)
+        let hasGenericNames = cues.contains { cue in
+            cue.name.hasPrefix("Section ") || cue.name == "Section"
+        }
+        if hasGenericNames {
+            return true
+        }
+        
+        // Verifica se corresponde ao template padrão de seções provisórias (generateDefaultCues)
+        let defaultTemplateNames = ["Count-In", "Intro", "Verse 1", "Verse 2", "Chorus", "Instrumental", "Bridge", "Chorus", "Ending"]
+        let currentNames = cues.map { $0.name }
+        if currentNames == defaultTemplateNames || (currentNames.count >= 3 && defaultTemplateNames.starts(with: currentNames)) {
+            return true
+        }
+        
+        // Se já possui seções reais e auto_analysis foi concluído
+        if song.auto_analysis == "done" {
+            return false
+        }
+        
+        return false
+    }
+    
+    func isAnalyzing(songId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let nfc = songId.precomposedStringWithCanonicalMapping
+        let nfd = songId.decomposedStringWithCanonicalMapping
+        return analyzingSongIds.contains(nfc) || analyzingSongIds.contains(nfd) || analyzingSongIds.contains(songId)
+    }
+    
+    func startBackgroundAnalysisIfNeeded(song: SongItem) {
+        guard needsAutoCueAnalysis(songId: song.id) else { return }
+        
+        let path = song.path
+        guard !path.isEmpty && FileManager.default.fileExists(atPath: path) else { return }
+        
+        let url = URL(fileURLWithPath: path)
+        let songId = song.id.precomposedStringWithCanonicalMapping
+        let songNfd = song.id.decomposedStringWithCanonicalMapping
+        
+        lock.lock()
+        if analyzingSongIds.contains(songId) || analyzingSongIds.contains(songNfd) {
+            lock.unlock()
+            return
+        }
+        analyzingSongIds.insert(songId)
+        analyzingSongIds.insert(songNfd)
+        if !song.filename.isEmpty {
+            analyzingSongIds.insert(song.filename.precomposedStringWithCanonicalMapping)
+            analyzingSongIds.insert(song.filename.decomposedStringWithCanonicalMapping)
+        }
+        lock.unlock()
+        
+        DispatchQueue.main.async {
+            self.onAutoAnalysisStarted?(songId)
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let (left, right, sr) = try loadAudioFileStereo(url: url)
+                let explicitBpm = extractBpmFromFilename(songId) ?? (song.bpm ?? 0.0)
+                let ts = song.time_signature ?? "4/4"
+                let isInv = song.is_inverted ?? false
+                let effLeft = isInv ? right : left
+                let effRight = isInv ? left : right
+                
+                let dur = sr > 0 ? Double(effLeft.count) / sr : (song.total_duration ?? 0.0)
+                let tmpl = song.cues ?? self.generateDefaultCues(totalDuration: dur, bpm: explicitBpm, timeSignature: ts)
+                
+                self.autoAnalyzeCues(
+                    songId: songId,
+                    left: effLeft,
+                    right: effRight,
+                    sampleRate: sr,
+                    bpm: explicitBpm,
+                    timeSignature: ts,
+                    templateCues: tmpl
+                )
+            } catch {
+                self.lock.lock()
+                self.analyzingSongIds.remove(songId)
+                self.analyzingSongIds.remove(songNfd)
+                if !song.filename.isEmpty {
+                    self.analyzingSongIds.remove(song.filename.precomposedStringWithCanonicalMapping)
+                    self.analyzingSongIds.remove(song.filename.decomposedStringWithCanonicalMapping)
                 }
-                if hasGenericNames {
-                    return true
+                self.lock.unlock()
+                DispatchQueue.main.async {
+                    self.onAutoAnalysisFailed?(songId)
                 }
-                return false
             }
         }
-        return true
     }
     
     func autoAnalyzeCues(
@@ -475,12 +593,11 @@ final class SongLibrary {
         timeSignature: String,
         templateCues: [CueSection]
     ) {
+        let nfc = songId.precomposedStringWithCanonicalMapping
+        let nfd = songId.decomposedStringWithCanonicalMapping
         lock.lock()
-        if analyzingSongIds.contains(songId) {
-            lock.unlock()
-            return
-        }
-        analyzingSongIds.insert(songId)
+        analyzingSongIds.insert(nfc)
+        analyzingSongIds.insert(nfd)
         lock.unlock()
         
         DispatchQueue.main.async {
@@ -499,11 +616,21 @@ final class SongLibrary {
         ) { [weak self] result in
             guard let self = self else { return }
             
+            let songItem = self.getSong(id: songId)
             self.lock.lock()
+            self.analyzingSongIds.remove(nfc)
+            self.analyzingSongIds.remove(nfd)
             self.analyzingSongIds.remove(songId)
+            if let song = songItem, !song.filename.isEmpty {
+                self.analyzingSongIds.remove(song.filename)
+                self.analyzingSongIds.remove(song.filename.precomposedStringWithCanonicalMapping)
+                self.analyzingSongIds.remove(song.filename.decomposedStringWithCanonicalMapping)
+            }
             self.lock.unlock()
             
-            let peaks = !right.isEmpty ? self.computeWaveformPeaks(from: right, targetPeaks: 7200) : nil
+            let existingInv = songItem?.is_inverted ?? false
+            let effRightForWave = existingInv ? left : right
+            let peaks = !effRightForWave.isEmpty ? self.computeWaveformPeaks(from: effRightForWave, targetPeaks: 7200) : nil
             
             guard let res = result else {
                 self.saveCues(
@@ -548,7 +675,8 @@ final class SongLibrary {
                     bpm: finalBpm,
                     timeSignature: detectedTs,
                     fullWaveform: peaks,
-                    autoAnalysis: "done"
+                    autoAnalysis: "done",
+                    isInverted: existingInv ? true : nil
                 )
                 DispatchQueue.main.async {
                     self.onAutoCuesReady?(songId, res.cues, detectedTs, finalBpm)
@@ -560,8 +688,12 @@ final class SongLibrary {
                     bpm: finalBpm,
                     timeSignature: detectedTs,
                     fullWaveform: peaks,
-                    autoAnalysis: "done"
+                    autoAnalysis: "done",
+                    isInverted: existingInv ? true : nil
                 )
+                DispatchQueue.main.async {
+                    self.onAutoCuesReady?(songId, currentSavedCues, detectedTs, finalBpm)
+                }
             }
         }
     }
@@ -842,9 +974,13 @@ final class SongLibrary {
             
             do {
                 let (left, right, sr) = try loadAudioFileStereo(url: audioUrl)
+                let isInv = song.is_inverted ?? false
+                let effLeft = isInv ? right : left
+                let effRight = isInv ? left : right
+                
                 CueDetector.shared.analyze(
-                    left: left,
-                    right: right,
+                    left: effLeft,
+                    right: effRight,
                     sampleRate: sr,
                     bpmHint: hintBpm,
                     timeSignature: resolvedTs
@@ -876,7 +1012,7 @@ final class SongLibrary {
                         finalBpm = 120.0
                     }
                     
-                    let peaks = self.computeWaveformPeaks(from: right, targetPeaks: 7200)
+                    let peaks = self.computeWaveformPeaks(from: effRight, targetPeaks: 7200)
                     self.saveCues(
                         songId: songId,
                         cues: result.cues,
@@ -884,7 +1020,8 @@ final class SongLibrary {
                         timeSignature: finalTs,
                         fullWaveform: peaks,
                         autoAnalysis: "done",
-                        guideLeadIn: song.guide_lead_in
+                        guideLeadIn: song.guide_lead_in,
+                        isInverted: isInv
                     )
                     
                     self.lock.lock()

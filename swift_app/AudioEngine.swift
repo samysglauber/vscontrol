@@ -45,6 +45,7 @@ final class AudioEngine {
     var sampleRate: Double = 44100.0
     var audioLeft: [Float] = []
     var audioRight: [Float] = []
+    var isChannelsInverted: Bool = false
     var totalFrames: Int64 = 0
     var posFrame: Int64 = 0
     var bpm: Double = 120.0
@@ -673,7 +674,8 @@ final class AudioEngine {
             cues: song.cues ?? [],
             timeSignature: song.time_signature ?? "4/4",
             crossfade: crossfade,
-            crossfadeDuration: crossfadeDuration
+            crossfadeDuration: crossfadeDuration,
+            isInverted: song.is_inverted
         )
     }
 
@@ -783,9 +785,21 @@ final class AudioEngine {
         cues: [CueSection],
         timeSignature: String = "4/4",
         crossfade: Bool = false,
-        crossfadeDuration: Double = 4.0
+        crossfadeDuration: Double = 4.0,
+        isInverted: Bool? = nil
     ) throws {
         let (left, right, sr) = try loadAudioFileStereo(url: url)
+        let filename = url.lastPathComponent
+        
+        var effInverted: Bool = false
+        if let inv = isInverted {
+            effInverted = inv
+        } else if let savedSong = SongLibrary.shared.getSong(id: filename), let savedInv = savedSong.is_inverted {
+            effInverted = savedInv
+        }
+        
+        let effLeft = effInverted ? right : left
+        let effRight = effInverted ? left : right
         
         os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
@@ -808,9 +822,10 @@ final class AudioEngine {
         self.currentUrl = url
         self.sampleRate = sr
         updateSampleRateIfNeeded(sr)
-        self.audioLeft = left
-        self.audioRight = right
-        self.totalFrames = Int64(left.count)
+        self.audioLeft = effLeft
+        self.audioRight = effRight
+        self.isChannelsInverted = effInverted
+        self.totalFrames = Int64(effLeft.count)
         self.posFrame = 0
         self.bpm = bpm > 30 ? bpm : 120.0
         
@@ -821,7 +836,7 @@ final class AudioEngine {
             self.timeSignature = (4, 4)
         }
         
-        let totSec = sr > 0 ? Double(left.count) / sr : 0.0
+        let totSec = sr > 0 ? Double(effLeft.count) / sr : 0.0
         var resolvedCues = cues
         if resolvedCues.isEmpty && totSec > 0 {
             resolvedCues = SongLibrary.shared.generateDefaultCues(
@@ -832,12 +847,11 @@ final class AudioEngine {
         }
         self.cues = resolvedCues
         
-        // Computa forma de onda real com Accelerate vDSP em alta resolução (7200 picos)
-        let peaks = SongLibrary.shared.computeWaveformPeaks(from: right, targetPeaks: 7200)
+        // Computa forma de onda real com Accelerate vDSP em alta resolução (7200 picos) a partir do canal de música (effRight)
+        let peaks = SongLibrary.shared.computeWaveformPeaks(from: effRight, targetPeaks: 7200)
         self.fullWaveform = peaks
         
         // Salva na biblioteca SQLite para que a música nova fique permanentemente salva
-        let filename = url.lastPathComponent
         let needsAuto = SongLibrary.shared.needsAutoCueAnalysis(songId: filename)
         
         let existingItem = SongLibrary.shared.getSong(id: filename)
@@ -848,7 +862,8 @@ final class AudioEngine {
                 bpm: self.bpm,
                 timeSignature: "\(self.timeSignature.0)/\(self.timeSignature.1)",
                 fullWaveform: peaks,
-                autoAnalysis: needsAuto ? "pending" : nil
+                autoAnalysis: needsAuto ? "pending" : nil,
+                isInverted: effInverted
             )
         } else if let existing = existingItem, (existing.full_waveform?.count ?? 0) < 7000 {
             SongLibrary.shared.saveCues(
@@ -858,7 +873,8 @@ final class AudioEngine {
                 timeSignature: existing.time_signature ?? "\(self.timeSignature.0)/\(self.timeSignature.1)",
                 fullWaveform: peaks,
                 autoAnalysis: existing.auto_analysis,
-                guideLeadIn: existing.guide_lead_in
+                guideLeadIn: existing.guide_lead_in,
+                isInverted: effInverted
             )
         }
         
@@ -868,8 +884,8 @@ final class AudioEngine {
             let explicitBpm = extractBpmFromFilename(filename)
             SongLibrary.shared.autoAnalyzeCues(
                 songId: filename,
-                left: left,
-                right: right,
+                left: effLeft,
+                right: effRight,
                 sampleRate: sr,
                 bpm: explicitBpm ?? 0.0,
                 timeSignature: "\(num)/\(den)",
@@ -914,6 +930,21 @@ final class AudioEngine {
             } else {
                 abletonPlayTriggered = false
             }
+        }
+    }
+    
+    func setInvertedChannels(_ inverted: Bool) {
+        os_unfair_lock_lock(lock)
+        defer { os_unfair_lock_unlock(lock) }
+        guard !isProceduralMetronome, !audioLeft.isEmpty, !audioRight.isEmpty else { return }
+        if isChannelsInverted != inverted {
+            let tmp = audioLeft
+            audioLeft = audioRight
+            audioRight = tmp
+            isChannelsInverted = inverted
+            
+            let peaks = SongLibrary.shared.computeWaveformPeaks(from: audioRight, targetPeaks: 7200)
+            self.fullWaveform = peaks
         }
     }
     

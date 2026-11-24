@@ -339,7 +339,10 @@ final class CueDetector {
         var envS = envV
         if envV.count > 1 {
             for i in 1..<envV.count {
-                envS[i] = ((envV[i] * envV[i] + envV[i - 1] * envV[i - 1]) / 2.0).squareRoot()
+                let v0 = envV[i]
+                let v1 = envV[i - 1]
+                let meanSq = (v0 * v0 + v1 * v1) / 2.0
+                envS[i] = meanSq.squareRoot()
             }
         }
         let p50 = percentile(envS, 0.50)
@@ -391,7 +394,7 @@ final class CueDetector {
                 let a = max(0, Int((p.start - 0.2) * sr))
                 let b = min(left.count, Int((p.end + 0.3) * sr))
                 if let whisperRes = CueDetector.transcribeWithWhisper(slice: left[a..<b], sr: sr) {
-                    let txt = whisperRes.text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+                    let txt = whisperRes.text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale.current).lowercased()
                     let countWords = ["1", "2", "3", "4", "5", "6", "um", "dois", "tres", "quatro", "cinco", "seis", "one", "two", "three", "four", "paixo", "paixa"]
                     let hasCountWord = countWords.contains { txt.contains($0) }
                     if hasCountWord && !txt.contains("verso") && !txt.contains("refrao") {
@@ -718,13 +721,21 @@ final class CueDetector {
         
         let pipe = Pipe()
         proc.standardOutput = pipe
-        proc.standardError = Pipe()
+        proc.standardError = FileHandle.nullDevice
+        
+        let timeoutWork = DispatchWorkItem {
+            if proc.isRunning {
+                proc.terminate()
+            }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 8.0, execute: timeoutWork)
         
         do {
             try proc.run()
-            proc.waitUntilExit()
-            guard proc.terminationStatus == 0 else { return nil }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            timeoutWork.cancel()
+            guard proc.terminationStatus == 0 else { return nil }
             guard let rawText = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !rawText.isEmpty else { return nil }
             

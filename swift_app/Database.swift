@@ -10,7 +10,7 @@ final class Database {
     static let shared = Database()
     
     private var db: OpaquePointer?
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private let dbPath: String
     private let coversDirectory: URL
     
@@ -87,11 +87,13 @@ final class Database {
             user_edited INTEGER DEFAULT 0,
             auto_analysis TEXT,
             guide_lead_in REAL DEFAULT 1.0,
+            is_inverted INTEGER DEFAULT 0,
             updated_at REAL
         );
         """
         execute(sql: sqlSongs)
         execute(sql: "ALTER TABLE songs ADD COLUMN guide_lead_in REAL DEFAULT 1.0;")
+        execute(sql: "ALTER TABLE songs ADD COLUMN is_inverted INTEGER DEFAULT 0;")
         
         let sqlCues = """
         CREATE TABLE IF NOT EXISTS cues (
@@ -126,17 +128,23 @@ final class Database {
         defer { lock.unlock() }
         
         guard let db = db else { return nil }
+        let nfc = id.precomposedStringWithCanonicalMapping
+        let nfd = id.decomposedStringWithCanonicalMapping
+        
         let query = """
         SELECT id, name, filename, path, bpm, time_signature, default_key, total_duration,
-               has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, auto_analysis, guide_lead_in
-        FROM songs WHERE id = ? LIMIT 1;
+               has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, auto_analysis, guide_lead_in, is_inverted
+        FROM songs WHERE id = ? OR id = ? OR filename = ? OR filename = ? LIMIT 1;
         """
         
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         
-        sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (nfd as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 3, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 4, (nfd as NSString).utf8String, -1, nil)
         
         if sqlite3_step(stmt) == SQLITE_ROW {
             let sId = String(cString: sqlite3_column_text(stmt, 0))
@@ -155,6 +163,7 @@ final class Database {
             let subdivision = sqlite3_column_text(stmt, 13).map { String(cString: $0) } ?? "1/4"
             let autoAnalysis = sqlite3_column_text(stmt, 14).map { String(cString: $0) }
             let guideLeadIn = sqlite3_column_type(stmt, 15) != SQLITE_NULL ? sqlite3_column_double(stmt, 15) : 1.0
+            let isInverted = sqlite3_column_int(stmt, 16) != 0
             
             let cues = getCuesInternal(songId: sId)
             let waveform = getWaveformInternal(songId: sId)
@@ -177,7 +186,8 @@ final class Database {
                 subdivide: subdivide,
                 subdivision: subdivision,
                 auto_analysis: autoAnalysis,
-                guide_lead_in: guideLeadIn
+                guide_lead_in: guideLeadIn,
+                is_inverted: isInverted
             )
         }
         
@@ -201,6 +211,28 @@ final class Database {
         return false
     }
     
+    func isUserEdited(songId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        guard let db = db else { return false }
+        let nfc = songId.precomposedStringWithCanonicalMapping
+        let nfd = songId.decomposedStringWithCanonicalMapping
+        let query = "SELECT user_edited FROM songs WHERE id = ? OR id = ? OR filename = ? OR filename = ? LIMIT 1;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        
+        sqlite3_bind_text(stmt, 1, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (nfd as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 3, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 4, (nfd as NSString).utf8String, -1, nil)
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            return sqlite3_column_int(stmt, 0) != 0
+        }
+        return false
+    }
+    
     // MARK: - Salvar ou Atualizar Música
     
     func saveSong(item: SongItem, noCover: Bool = false) {
@@ -211,8 +243,8 @@ final class Database {
         
         let sql = """
         INSERT INTO songs (id, name, filename, path, bpm, time_signature, default_key, total_duration,
-                           has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, no_cover, auto_analysis, guide_lead_in, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           has_cover, cover_url, search_query, is_metronome, subdivide, subdivision, no_cover, auto_analysis, guide_lead_in, is_inverted, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             filename = excluded.filename,
@@ -230,6 +262,7 @@ final class Database {
             no_cover = excluded.no_cover,
             auto_analysis = COALESCE(excluded.auto_analysis, songs.auto_analysis),
             guide_lead_in = COALESCE(excluded.guide_lead_in, songs.guide_lead_in),
+            is_inverted = excluded.is_inverted,
             updated_at = excluded.updated_at;
         """
         
@@ -271,7 +304,8 @@ final class Database {
             sqlite3_bind_null(stmt, 16)
         }
         sqlite3_bind_double(stmt, 17, item.guide_lead_in ?? 1.0)
-        sqlite3_bind_double(stmt, 18, Date().timeIntervalSince1970)
+        sqlite3_bind_int(stmt, 18, (item.is_inverted == true) ? 1 : 0)
+        sqlite3_bind_double(stmt, 19, Date().timeIntervalSince1970)
         
         sqlite3_step(stmt)
         
@@ -292,7 +326,8 @@ final class Database {
         timeSignature: String? = nil,
         fullWaveform: [Double]? = nil,
         autoAnalysis: String? = nil,
-        guideLeadIn: Double? = nil
+        guideLeadIn: Double? = nil,
+        isInverted: Bool? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -303,14 +338,15 @@ final class Database {
             saveWaveformInternal(songId: songId, peaks: wf)
         }
         
-        // Atualiza BPM, Time Signature, auto_analysis e guide_lead_in na tabela songs se fornecidos
+        // Atualiza BPM, Time Signature, auto_analysis, guide_lead_in e is_inverted na tabela songs se fornecidos
         guard let db = db else { return }
-        if bpm != nil || timeSignature != nil || autoAnalysis != nil || guideLeadIn != nil {
+        if bpm != nil || timeSignature != nil || autoAnalysis != nil || guideLeadIn != nil || isInverted != nil {
             var updates: [String] = []
             if bpm != nil { updates.append("bpm = ?") }
             if timeSignature != nil { updates.append("time_signature = ?") }
             if autoAnalysis != nil { updates.append("auto_analysis = ?") }
             if guideLeadIn != nil { updates.append("guide_lead_in = ?") }
+            if isInverted != nil { updates.append("is_inverted = ?") }
             updates.append("user_edited = 1")
             updates.append("updated_at = ?")
             
@@ -334,6 +370,10 @@ final class Database {
                     sqlite3_bind_double(stmt, bindIdx, gli)
                     bindIdx += 1
                 }
+                if let inv = isInverted {
+                    sqlite3_bind_int(stmt, bindIdx, inv ? 1 : 0)
+                    bindIdx += 1
+                }
                 sqlite3_bind_double(stmt, bindIdx, Date().timeIntervalSince1970)
                 bindIdx += 1
                 sqlite3_bind_text(stmt, bindIdx, (songId as NSString).utf8String, -1, nil)
@@ -341,6 +381,21 @@ final class Database {
                 sqlite3_step(stmt)
                 sqlite3_finalize(stmt)
             }
+        }
+    }
+    
+    func updateIsInverted(songId: String, isInverted: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db = db else { return }
+        let sql = "UPDATE songs SET is_inverted = ?, user_edited = 1, updated_at = ? WHERE id = ?;"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_int(stmt, 1, isInverted ? 1 : 0)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (songId as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
         }
     }
     
@@ -388,16 +443,19 @@ final class Database {
     
     private func getCuesInternal(songId: String) -> [CueSection]? {
         guard let db = db else { return nil }
+        let nfc = songId.precomposedStringWithCanonicalMapping
+        let nfd = songId.decomposedStringWithCanonicalMapping
         
         let query = """
         SELECT cue_id, name, time, bar, color, waveform_json
-        FROM cues WHERE song_id = ? ORDER BY cue_order ASC;
+        FROM cues WHERE song_id = ? OR song_id = ? ORDER BY cue_order ASC;
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         
-        sqlite3_bind_text(stmt, 1, (songId as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (nfd as NSString).utf8String, -1, nil)
         
         var list: [CueSection] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -442,13 +500,16 @@ final class Database {
     
     private func getWaveformInternal(songId: String) -> [Double]? {
         guard let db = db else { return nil }
+        let nfc = songId.precomposedStringWithCanonicalMapping
+        let nfd = songId.decomposedStringWithCanonicalMapping
         
-        let query = "SELECT peaks_json FROM waveforms WHERE song_id = ? LIMIT 1;"
+        let query = "SELECT peaks_json FROM waveforms WHERE song_id = ? OR song_id = ? LIMIT 1;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         
-        sqlite3_bind_text(stmt, 1, (songId as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (nfc as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (nfd as NSString).utf8String, -1, nil)
         if sqlite3_step(stmt) == SQLITE_ROW, let txt = sqlite3_column_text(stmt, 0) {
             let str = String(cString: txt)
             if let data = str.data(using: .utf8),
@@ -542,6 +603,7 @@ final class Database {
             let subdiv = (json["subdivision"] as? String) ?? "1/4"
             let subdivide = (json["subdivide"] as? Bool) ?? (subdiv != "1/4")
             let noCover = (json["no_cover"] as? Bool) ?? false
+            let isInv = json["is_inverted"] as? Bool
             
             // Verifica se possui capa em Application Support ou legado
             let coverPath = getCoverFilePath(for: songId)
@@ -573,7 +635,8 @@ final class Database {
                 cues: parsedCues,
                 is_metronome: isMetro,
                 subdivide: subdivide,
-                subdivision: subdiv
+                subdivision: subdiv,
+                is_inverted: isInv
             )
             
             saveSong(item: item, noCover: noCover)
