@@ -8364,43 +8364,32 @@ struct SongEditorSheetView: View {
                                 .foregroundColor(.gray)
                                 .lineLimit(1)
                             
-                            HStack(spacing: 8) {
+                            HStack(spacing: 6) {
                                 Button(action: {
                                     state.openCoverPicker(for: song)
                                 }) {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: "photo.badge.plus")
-                                            .font(.system(size: 11))
-                                        Text(song.has_cover == true ? "Change Cover" : "Add Cover")
-                                            .font(.system(size: 11, weight: .semibold))
-                                    }
-                                    .foregroundColor(.cyan)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(Color.cyan.opacity(0.12))
-                                    .cornerRadius(6)
+                                    Text(song.has_cover == true ? "Change cover" : "Add cover")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.gray)
                                 }
                                 .buttonStyle(PlainButtonStyle())
                                 
                                 if song.has_cover == true {
+                                    Text("·")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.gray.opacity(0.5))
+                                    
                                     Button(action: {
                                         state.removeCover(for: song)
                                     }) {
-                                        HStack(spacing: 5) {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 11))
-                                            Text("Remove Cover")
-                                                .font(.system(size: 11, weight: .medium))
-                                        }
-                                        .foregroundColor(.red.opacity(0.85))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(Color.red.opacity(0.10))
-                                        .cornerRadius(6)
+                                        Text("Remove")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.gray.opacity(0.7))
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                 }
                             }
+                            .padding(.top, 2)
                         }
                         Spacer()
                     }
@@ -8552,184 +8541,143 @@ struct SongEditorSheetView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
                 
-                // 3. Card de Roteamento de Canais de Áudio (L / R)
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(
-                                colors: [Color.orange.opacity(0.30), Color.yellow.opacity(0.20)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-                            .frame(width: 40, height: 40)
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.orange)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text("Channel Routing (L / R)")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.white)
-                            
-                            Text(localIsInverted ? "INVERTED" : "STANDARD")
-                                .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .foregroundColor(localIsInverted ? .orange : .green)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background((localIsInverted ? Color.orange : Color.green).opacity(0.15))
-                                .cornerRadius(4)
-                        }
-                        
-                        Text(localIsInverted
-                             ? "Inverted track: Left is Backing Tracks and Right is Click/Guide. System swaps channels so output remains standard."
-                             : "Standard multitrack: Left is Click + Voice Guide and Right is Backing Tracks.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
-                    }
-                    
-                    Spacer()
-                    
-                    Picker("", selection: $localIsInverted) {
-                        Text("Standard (L: Click)").tag(false)
-                        Text("Inverted (R: Click)").tag(true)
-                    }
-                    .pickerStyle(SegmentedPickerStyle())
-                    .frame(width: 250)
-                }
-                .padding(14)
-                .background(Color.white.opacity(0.04))
-                .cornerRadius(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(localIsInverted ? Color.orange.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1))
-                
-                // 4. Card de Reprocessamento com Inteligência Artificial
+                // 3. Grid de Ações e Configurações: Routing, Sections e Analysis
                 let isThisSongProcessing = state.currentSong.map { state.isSongProcessing($0) } ?? false
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(colors: [Color.purple.opacity(0.35), Color.indigo.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 40, height: 40)
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(Color(red: 0.8, green: 0.5, blue: 1.0))
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("AI Re-Analysis")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.white)
-                        Text("Automatically detects dynamic sections, voice guide cues, and bar grid.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
-                            state.editorBpm = bpmVal
-                            state.editorTimeSignature = localTimeSignature
-                            state.reprocessWithAI()
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            if isThisSongProcessing {
-                                ProgressView()
-                                    .scaleEffect(0.75)
-                                    .colorInvert()
-                                Text("Processing...")
-                                    .font(.system(size: 12, weight: .bold))
-                            } else {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("Reprocess with AI")
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(LinearGradient(colors: [Color.purple, Color.indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .cornerRadius(8)
-                        .shadow(color: Color.purple.opacity(0.35), radius: 5, y: 2)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isThisSongProcessing)
-                }
-                .padding(14)
-                .background(Color.white.opacity(0.04))
-                .cornerRadius(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.purple.opacity(0.3), lineWidth: 1))
-                
-                // 4. Card de Zerar Divisões / Limpar Seções (Clear Divisions)
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(
-                                colors: [Color.orange.opacity(0.30), Color.red.opacity(0.25)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-                            .frame(width: 40, height: 40)
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(Color(red: 1.0, green: 0.6, blue: 0.4))
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text("Song Divisions")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.white)
-                            
-                            Text(localCues.count > 1 ? "\(localCues.count) sections" : "1 section")
+                HStack(spacing: 12) {
+                    // Coluna 1: Routing
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ROUTING")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(localCues.count > 1 ? .cyan : .gray)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.08))
-                                .cornerRadius(4)
+                                .foregroundColor(.gray)
+                            Text(localIsInverted ? "R: Click · L: Tracks" : "L: Click · R: Tracks")
+                                .font(.system(size: 10))
+                                .foregroundColor(.gray.opacity(0.8))
+                                .lineLimit(1)
                         }
                         
-                        Text(localCues.count > 1
-                             ? "Remove all section cuts and reset the track to a single continuous section."
-                             : "Track has 1 single continuous section (no divisions to clear).")
-                            .font(.system(size: 11))
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        showResetConfirmation = true
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("Clear Divisions")
-                                .font(.system(size: 12, weight: .bold))
+                        Spacer(minLength: 4)
+                        
+                        Picker("", selection: $localIsInverted) {
+                            Text("Standard").tag(false)
+                            Text("Inverted").tag(true)
                         }
-                        .foregroundColor(localCues.count > 1 ? Color(red: 1.0, green: 0.45, blue: 0.45) : Color.gray)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(localCues.count > 1 ? Color.red.opacity(0.14) : Color.white.opacity(0.04))
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(localCues.count > 1 ? Color.red.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
-                        )
+                        .pickerStyle(SegmentedPickerStyle())
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(localCues.count <= 1 || isThisSongProcessing)
-                    .help("Clear all section markers and keep the song as a single continuous track (Zerar divisões)")
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    
+                    // Coluna 2: Sections
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text("SECTIONS")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Text(localCues.count > 1 ? "\(localCues.count) cuts" : "1 cut")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.6))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1.5)
+                                    .background(Color.white.opacity(0.08))
+                                    .cornerRadius(4)
+                            }
+                            Text("Remove all section cuts")
+                                .font(.system(size: 10))
+                                .foregroundColor(.gray.opacity(0.8))
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer(minLength: 4)
+                        
+                        Button(action: {
+                            showResetConfirmation = true
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10))
+                                Text("Clear")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 28)
+                            .foregroundColor(localCues.count > 1 ? Color(red: 1.0, green: 0.5, blue: 0.5).opacity(0.9) : Color.white.opacity(0.35))
+                            .background(localCues.count > 1 ? Color.red.opacity(0.10) : Color.white.opacity(0.03))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(localCues.count > 1 ? Color.red.opacity(0.22) : Color.white.opacity(0.06), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(localCues.count <= 1 || isThisSongProcessing)
+                        .help("Clear all section markers and keep the song as a single continuous track")
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    
+                    // Coluna 3: Analysis
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ANALYSIS")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.gray)
+                            Text("Detect cues from audio")
+                                .font(.system(size: 10))
+                                .foregroundColor(.gray.opacity(0.8))
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer(minLength: 4)
+                        
+                        Button(action: {
+                            if let bpmVal = Double(localBpmText.replacingOccurrences(of: ",", with: ".")) {
+                                state.editorBpm = bpmVal
+                                state.editorTimeSignature = localTimeSignature
+                                state.reprocessWithAI()
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                if isThisSongProcessing {
+                                    ProgressView()
+                                        .scaleEffect(0.65)
+                                        .colorInvert()
+                                    Text("Processing...")
+                                        .font(.system(size: 11, weight: .medium))
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 10, weight: .medium))
+                                    Text("Reprocess")
+                                        .font(.system(size: 12, weight: .medium))
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 28)
+                            .foregroundColor(.white.opacity(0.9))
+                            .background(Color.white.opacity(0.07))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(isThisSongProcessing)
+                        .help("Detect dynamic cues and section markers from audio")
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
-                .padding(14)
-                .background(Color.white.opacity(0.04))
-                .cornerRadius(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
             .padding(.horizontal, 24)
             .padding(.top, 20)
@@ -8772,7 +8720,7 @@ struct SongEditorSheetView: View {
             .padding(.bottom, 22)
             .background(Color(red: 0.11, green: 0.11, blue: 0.12))
         }
-        .frame(width: 660, height: 630)
+        .frame(width: 660, height: 490)
         .background(Color(red: 0.09, green: 0.09, blue: 0.10))
         .alert(isPresented: $showResetConfirmation) {
             Alert(
