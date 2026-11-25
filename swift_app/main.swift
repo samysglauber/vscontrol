@@ -3541,6 +3541,22 @@ class PlaybackState: ObservableObject {
         showUndoFeedback("Compasso ajustado (\(deltaStr))")
     }
     
+    func adjustFocusedSectionDuration(deltaBars: Double) {
+        guard !currentCues.isEmpty else { return }
+        let targetIdx = focusedCueIdx ?? currentCueIdx
+        guard targetIdx >= 0 && targetIdx < currentCues.count else { return }
+        if focusedCueIdx == nil {
+            focusedCueIdx = targetIdx
+        }
+        
+        if targetIdx + 1 < currentCues.count {
+            adjustSectionDuration(at: targetIdx, deltaBars: deltaBars)
+        } else if targetIdx > 0 {
+            // Para o último bloco: ajusta a fronteira com o bloco anterior
+            adjustSectionDuration(at: targetIdx - 1, deltaBars: -deltaBars)
+        }
+    }
+    
     func changeSectionType(at index: Int, newType: String) {
         guard index >= 0 && index < currentCues.count else { return }
         let oldName = currentCues[index].name
@@ -3995,6 +4011,27 @@ struct PlaybackAppView: View {
                     return event
                 }
                 
+                // Ajuste de Duração de Blocos no Modo EDIT (Option + Setas ou [ e ])
+                if state.isEditMode {
+                    let delta = event.modifierFlags.contains(.shift) ? 0.5 : 1.0
+                    if event.modifierFlags.contains(.option) && event.keyCode == 123 { // Option + Seta Esquerda
+                        state.adjustFocusedSectionDuration(deltaBars: -delta)
+                        return nil
+                    }
+                    if event.modifierFlags.contains(.option) && event.keyCode == 124 { // Option + Seta Direita
+                        state.adjustFocusedSectionDuration(deltaBars: delta)
+                        return nil
+                    }
+                    if event.keyCode == 33 || event.charactersIgnoringModifiers == "[" { // Tecla [
+                        state.adjustFocusedSectionDuration(deltaBars: -delta)
+                        return nil
+                    }
+                    if event.keyCode == 30 || event.charactersIgnoringModifiers == "]" { // Tecla ]
+                        state.adjustFocusedSectionDuration(deltaBars: delta)
+                        return nil
+                    }
+                }
+                
                 // Mapeamento de Teclado (Modo de Aprendizado KEY MAP ou Execução de Atalhos Mapeados)
                 if MappingManager.shared.handleKeyDown(event: event) {
                     return nil
@@ -4102,6 +4139,7 @@ struct PlaybackAppView: View {
                     
                     // Tecla L: Alterna o modo Loop 1x da seção focada ou da seção atual
                     if char.lowercased() == "l" || event.keyCode == 37 {
+                        guard !state.isEditMode else { return nil }
                         if let focusedIdx = state.focusedCueIdx {
                             state.toggleLoop(cueIdx: focusedIdx)
                         } else {
@@ -4112,6 +4150,7 @@ struct PlaybackAppView: View {
                     
                     // Tecla I: Alterna o modo Infinito (repetição sem parar) da seção focada ou da seção atual
                     if char.lowercased() == "i" || event.keyCode == 34 {
+                        guard !state.isEditMode else { return nil }
                         if let focusedIdx = state.focusedCueIdx {
                             state.toggleInfinite(cueIdx: focusedIdx)
                         } else {
@@ -4512,7 +4551,10 @@ struct TopBarView: View {
                     .help(isInverted ? String(format: "Fade In Tracks (%.1fs) [Shortcut: Key 0]", state.defaultFadeDuration) : String(format: "Fade Out Tracks (%.1fs) [Shortcut: Key 0]", state.defaultFadeDuration))
                     
                     // 5. Botão Loop da Seção Atual (Repete 1 única vez e segue adiante)
-                    Button(action: { state.toggleLoop() }) {
+                    Button(action: {
+                        guard !state.isEditMode else { return }
+                        state.toggleLoop()
+                    }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(state.isLoopOnceActive ? Color.cyan.opacity(0.28) : Color.white.opacity(0.06))
@@ -4530,8 +4572,10 @@ struct TopBarView: View {
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .disabled(state.isEditMode)
+                    .opacity(state.isEditMode ? 0.35 : 1.0)
                     .mappableControl(.toggleLoop, cornerRadius: 8)
-                    .help("Repetir seção atual uma vez [Atalho: L]")
+                    .help(state.isEditMode ? "" : "Repetir seção atual uma vez [Atalho: L]")
                 }
             }
             .padding(.horizontal, 20)
@@ -5634,6 +5678,7 @@ struct WaveformMouseTrackingView: NSViewRepresentable {
 struct HorizontalScrollWheelHook: NSViewRepresentable {
     var onUserScrolled: (() -> Void)? = nil
     var onZoomChange: ((Double) -> Void)? = nil
+    var onPlayheadScrub: ((Double) -> Void)? = nil
     var resetTrigger: Int = 0
     
     func makeCoordinator() -> Coordinator {
@@ -5644,12 +5689,14 @@ struct HorizontalScrollWheelHook: NSViewRepresentable {
         let view = HorizontalScrollNSView()
         view.onUserScrolled = onUserScrolled
         view.onZoomChange = onZoomChange
+        view.onPlayheadScrub = onPlayheadScrub
         return view
     }
     
     func updateNSView(_ nsView: HorizontalScrollNSView, context: Context) {
         nsView.onUserScrolled = onUserScrolled
         nsView.onZoomChange = onZoomChange
+        nsView.onPlayheadScrub = onPlayheadScrub
         nsView.findScrollView()
         if context.coordinator.lastResetTrigger != resetTrigger {
             context.coordinator.lastResetTrigger = resetTrigger
@@ -5667,6 +5714,7 @@ class HorizontalScrollNSView: NSView {
     var monitor: Any?
     var onUserScrolled: (() -> Void)?
     var onZoomChange: ((Double) -> Void)?
+    var onPlayheadScrub: ((Double) -> Void)?
     
     override var mouseDownCanMoveWindow: Bool { false }
     
@@ -5745,8 +5793,28 @@ class HorizontalScrollNSView: NSView {
             
             // 2. Roda do Mouse e Trackpad
             if event.type == .scrollWheel {
-                // Se estiver segurando Option (Alt) ou Command: faz ZOOM em direção ao ponteiro vermelho!
-                if event.modifierFlags.contains(.option) || event.modifierFlags.contains(.command) {
+                // Se estiver segurando Command (e NÃO Option): faz SCRUBBING do playhead!
+                if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.option) {
+                    let deltaY = event.scrollingDeltaY
+                    let deltaX = event.scrollingDeltaX
+                    var horizontalDelta: CGFloat = 0.0
+                    if abs(deltaX) > 0.001 {
+                        horizontalDelta = deltaX
+                    } else if abs(deltaY) > 0.001 {
+                        horizontalDelta = deltaY
+                    }
+                    if abs(horizontalDelta) > 0.001 {
+                        let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1.0 : 20.0
+                        let shift = -Double(horizontalDelta * factor)
+                        DispatchQueue.main.async {
+                            self.onPlayheadScrub?(shift)
+                        }
+                        return nil
+                    }
+                }
+                
+                // Se estiver segurando Option: faz ZOOM em direção ao ponteiro vermelho!
+                if event.modifierFlags.contains(.option) {
                     let deltaY = event.scrollingDeltaY
                     if abs(deltaY) > 0.01 {
                         let zoomFactor = event.hasPreciseScrollingDeltas ? 0.005 : 0.03
@@ -5826,6 +5894,11 @@ struct SpectrogramWaveformView: View {
     @ObservedObject var state: PlaybackState
     @State private var lastUserScrollTime: Date = .distantPast
     
+    // Estado de Edição de Divisórias (Modo EDIT)
+    @State private var draggingDividerIdx: Int? = nil
+    @State private var dividerDragTranslation: CGFloat = 0.0
+    @State private var hoveredDividerIdx: Int? = nil
+    
     var body: some View {
         GeometryReader { geo in
             let totalAvailableWidth = geo.size.width - 40
@@ -5838,7 +5911,7 @@ struct SpectrogramWaveformView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     ZStack(alignment: .leading) {
-                        // Hook de Rolagem com Rodinha do Mouse e Trackpad (e Zoom com Option/Pinça)
+                        // Hook de Rolagem com Rodinha do Mouse e Trackpad (Zoom com Option e Scrubbing com Cmd)
                         HorizontalScrollWheelHook(
                             onUserScrolled: {
                                 TimelineZoomAnimator.shared.cancel()
@@ -5847,6 +5920,9 @@ struct SpectrogramWaveformView: View {
                             onZoomChange: { delta in
                                 TimelineZoomAnimator.shared.cancel()
                                 state.zoomLevel = max(0.0, min(1.0, state.zoomLevel + delta))
+                            },
+                            onPlayheadScrub: { shift in
+                                handlePlayheadScrub(shiftPixels: shift, scale: scale)
                             },
                             resetTrigger: state.scrollToStartTrigger
                         )
@@ -5900,14 +5976,17 @@ struct SpectrogramWaveformView: View {
                             }
                             .frame(width: totalTrackWidth, height: 175)
                             
-                            // 5. LINHAS DIVISÓRIAS VERTICAIS ENTRE TODOS OS TRECHOS (Alinhadas perfeitamente com os cartões)
+                            // 5. LINHAS DIVISÓRIAS VERTICAIS ENTRE TODOS OS TRECHOS (Interativas no modo EDIT)
                             let dividerPositions = calculateDividerPositions(blockWidths: blockWidths)
-                            ZStack(alignment: .leading) {
-                                ForEach(Array(dividerPositions.enumerated()), id: \.offset) { _, xPos in
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.42))
-                                        .frame(width: 1.5, height: 171)
-                                        .position(x: xPos, y: 175 / 2)
+                            ZStack {
+                                ForEach(Array(dividerPositions.enumerated()), id: \.offset) { idx, xPos in
+                                    dividerLineView(
+                                        idx: idx,
+                                        xPos: xPos,
+                                        scale: scale,
+                                        totalTrackWidth: totalTrackWidth
+                                    )
+                                    .position(x: xPos, y: 175 / 2)
                                 }
                             }
                             .frame(width: totalTrackWidth, height: 175)
@@ -5943,16 +6022,28 @@ struct SpectrogramWaveformView: View {
                     .frame(minHeight: geo.size.height)
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 3)
+                        DragGesture(minimumDistance: 2)
                             .onChanged { val in
-                                lastUserScrollTime = Date()
-                                WaveformScrollController.shared.onDragChanged(translationX: val.translation.width)
+                                handleWaveformDrag(val: val, scale: scale)
                             }
-                            .onEnded { _ in
-                                lastUserScrollTime = Date()
-                                WaveformScrollController.shared.onDragEnded()
+                            .onEnded { val in
+                                handleWaveformDragEnd(val: val, scale: scale)
                             }
                     )
+                    .onHover { isHovered in
+                        if !isHovered || (state.isEditMode && hoveredDividerIdx == nil && draggingDividerIdx == nil) {
+                            NSCursor.arrow.set()
+                        }
+                    }
+                }
+                .onChange(of: state.isEditMode) { _, isEdit in
+                    if !isEdit {
+                        hoveredDividerIdx = nil
+                        draggingDividerIdx = nil
+                        NSCursor.arrow.set()
+                    } else if state.focusedCueIdx == nil {
+                        state.focusedCueIdx = state.currentCueIdx
+                    }
                 }
                 .onChange(of: state.scrollToStartTrigger) { _, _ in
                     lastUserScrollTime = .distantPast
@@ -6080,6 +6171,70 @@ struct SpectrogramWaveformView: View {
                 WaveformMouseTrackingView()
             }
         )
+        .overlay(alignment: .topTrailing) {
+            if state.isEditMode {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.yellow)
+                        .frame(width: 5, height: 5)
+                    Text("EDIT MODE")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .foregroundColor(.yellow)
+                    Text("· Drag dividers (Snaps to bars) · ⌥+Arrows to resize")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.black.opacity(0.75))
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.yellow.opacity(0.35), lineWidth: 1))
+                .padding(.top, 4)
+                .padding(.trailing, 16)
+                .transition(.opacity)
+            }
+        }
+    }
+    
+    private func handlePlayheadScrub(shiftPixels: Double, scale: CGFloat) {
+        TimelineZoomAnimator.shared.cancel()
+        lastUserScrollTime = Date()
+        let s = Double(scale)
+        guard s > 0.1 else { return }
+        let deltaSec = shiftPixels / s
+        let target = state.currentSeconds + deltaSec
+        let bounded = max(0.0, min(state.totalSeconds, target))
+        state.currentSeconds = bounded
+        state.seekToSeconds(bounded)
+    }
+    
+    private func handleWaveformDrag(val: DragGesture.Value, scale: CGFloat) {
+        lastUserScrollTime = Date()
+        if NSEvent.modifierFlags.contains(.command) {
+            WaveformScrollController.shared.onDragEnded()
+            let s = Double(scale)
+            guard s > 0.1 else { return }
+            let actualX = max(0.0, Double(val.location.x) - 20.0)
+            let target = max(0.0, min(state.totalSeconds, actualX / s))
+            state.currentSeconds = target
+            state.seekToSeconds(target)
+        } else {
+            WaveformScrollController.shared.onDragChanged(translationX: val.translation.width)
+        }
+    }
+    
+    private func handleWaveformDragEnd(val: DragGesture.Value, scale: CGFloat) {
+        lastUserScrollTime = Date()
+        if NSEvent.modifierFlags.contains(.command) {
+            let s = Double(scale)
+            guard s > 0.1 else { return }
+            let actualX = max(0.0, Double(val.location.x) - 20.0)
+            let target = max(0.0, min(state.totalSeconds, actualX / s))
+            state.currentSeconds = target
+            state.seekToSeconds(target)
+        } else {
+            WaveformScrollController.shared.onDragEnded()
+        }
     }
     
     private func calculateScale(totalAvailableWidth: CGFloat) -> CGFloat {
@@ -6133,6 +6288,125 @@ struct SpectrogramWaveformView: View {
         return positions
     }
     
+    @ViewBuilder
+    private func dividerLineView(idx: Int, xPos: CGFloat, scale: CGFloat, totalTrackWidth: CGFloat) -> some View {
+        let isThisDragging = (draggingDividerIdx == idx)
+        let isThisHovered = (hoveredDividerIdx == idx)
+        
+        if !state.isEditMode {
+            // Modo LIVE: Linha divisória estática e segura
+            Rectangle()
+                .fill(Color.white.opacity(0.42))
+                .frame(width: 1.5, height: 171)
+        } else {
+            // Modo EDIT: Divisória interativa arrastável com snap musical e HUD
+            let secPerBar = state.calculateSecPerBar()
+            let curDuration = idx < state.currentCues.count ? state.calculateDurationBars(for: idx) : 4.0
+            let nextDuration = (idx + 1) < state.currentCues.count ? state.calculateDurationBars(for: idx + 1) : 4.0
+            
+            let s = Double(scale) > 0.001 ? Double(scale) : 1.0
+            let rawDeltaSec = isThisDragging ? (Double(dividerDragTranslation) / s) : 0.0
+            let rawDeltaBars = rawDeltaSec / secPerBar
+            let isShift = NSEvent.modifierFlags.contains(.shift)
+            let snapStep = isShift ? 0.5 : 1.0
+            let snappedBars = round(rawDeltaBars / snapStep) * snapStep
+            
+            let clampedBars: Double = {
+                var b = snappedBars
+                if curDuration + b < 1.0 { b = 1.0 - curDuration }
+                if nextDuration - b < 1.0 { b = nextDuration - 1.0 }
+                return b
+            }()
+            let visualOffset = isThisDragging ? CGFloat(clampedBars * secPerBar) * scale : 0.0
+            
+            ZStack(alignment: .top) {
+                // Área de captura maior (hit target) estritamente de 24px de largura
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: 24, height: 171)
+                
+                // Linha vertical (amarela no arraste, cyan no hover, branca semi-translúcida em repouso)
+                Rectangle()
+                    .fill(isThisDragging ? Color.yellow : (isThisHovered ? Color.cyan : Color.white.opacity(0.65)))
+                    .frame(width: isThisDragging || isThisHovered ? 2.5 : 1.5, height: 171)
+                    .shadow(color: isThisDragging ? Color.yellow.opacity(0.8) : (isThisHovered ? Color.cyan.opacity(0.6) : Color.clear), radius: 4)
+                    .offset(x: visualOffset, y: 0)
+                
+                // Ícone/alça visual no topo para indicar que é redimensionável
+                if isThisHovered || isThisDragging {
+                    Image(systemName: "arrow.left.and.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(isThisDragging ? .black : .white)
+                        .frame(width: 16, height: 12)
+                        .background(isThisDragging ? Color.yellow : Color.cyan)
+                        .cornerRadius(3)
+                        .shadow(color: Color.black.opacity(0.4), radius: 2)
+                        .offset(x: visualOffset, y: 4)
+                }
+            }
+            .frame(width: 24, height: 171)
+            .contentShape(Rectangle())
+            .overlay(alignment: .top) {
+                // Floating HUD Tooltip durante o arraste
+                if isThisDragging {
+                    let newCurBars = curDuration + clampedBars
+                    let newNextBars = nextDuration - clampedBars
+                    let signStr = clampedBars >= 0 ? "+\(formatBars(clampedBars))" : "\(formatBars(clampedBars))"
+                    let leftName = idx < state.currentCues.count ? state.currentCues[idx].shortBadgeName : "L"
+                    let rightName = (idx + 1) < state.currentCues.count ? state.currentCues[idx + 1].shortBadgeName : "R"
+                    
+                    HStack(spacing: 6) {
+                        Text("\(leftName): \(formatBars(newCurBars))b (\(signStr))")
+                            .foregroundColor(.yellow)
+                        Text("·")
+                            .foregroundColor(.white.opacity(0.5))
+                        Text("\(rightName): \(formatBars(newNextBars))b")
+                            .foregroundColor(.white)
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.90))
+                    .cornerRadius(6)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.yellow.opacity(0.7), lineWidth: 1))
+                    .shadow(color: Color.black.opacity(0.6), radius: 5, y: 2)
+                    .fixedSize()
+                    .offset(x: visualOffset, y: 20)
+                }
+            }
+            .onHover { isHovered in
+                guard state.isEditMode else { return }
+                if isHovered {
+                    hoveredDividerIdx = idx
+                    NSCursor.resizeLeftRight.set()
+                } else {
+                    if hoveredDividerIdx == idx {
+                        hoveredDividerIdx = nil
+                        NSCursor.arrow.set()
+                    }
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { val in
+                        guard state.isEditMode else { return }
+                        draggingDividerIdx = idx
+                        dividerDragTranslation = val.translation.width
+                    }
+                    .onEnded { _ in
+                        guard state.isEditMode else { return }
+                        if clampedBars != 0 {
+                            state.adjustSectionDuration(at: idx, deltaBars: clampedBars)
+                        }
+                        draggingDividerIdx = nil
+                        dividerDragTranslation = 0.0
+                        hoveredDividerIdx = nil
+                        NSCursor.arrow.set()
+                    }
+            )
+        }
+    }
+    
     private func isLooping(idx: Int, isPlaying: Bool) -> Bool {
         guard state.loopActive else { return false }
         if let loopCue = state.loopCueIdx {
@@ -6150,6 +6424,13 @@ struct SpectrogramWaveformView: View {
     }
     
     private func handleCueSelection(index idx: Int, section: CueSection, proxy: ScrollViewProxy) {
+        if state.isEditMode {
+            state.focusedCueIdx = idx
+            withAnimation(.easeInOut(duration: 0.20)) {
+                proxy.scrollTo(idx, anchor: .center)
+            }
+            return
+        }
         state.focusedCueIdx = nil
         lastUserScrollTime = .distantPast
         withAnimation(.easeInOut(duration: 0.25)) {
@@ -6190,6 +6471,7 @@ struct SpectrogramWaveformView: View {
             isPlaying: isPlaying,
             isQueued: isQueued,
             isFocused: isFocused,
+            isEditMode: state.isEditMode,
             isLoopActive: isLoop,
             isLoopInfinite: isInf,
             width: w,
@@ -6200,6 +6482,7 @@ struct SpectrogramWaveformView: View {
                 handleCueSelection(index: idx, section: section, proxy: proxy)
             },
             onLoopToggle: {
+                guard !state.isEditMode else { return }
                 if isInf {
                     state.toggleInfinite(cueIdx: idx)
                 } else {
@@ -6375,6 +6658,7 @@ struct WaveformSectionBlock: View, Equatable {
     let isPlaying: Bool
     let isQueued: Bool
     let isFocused: Bool
+    let isEditMode: Bool
     let isLoopActive: Bool
     let isLoopInfinite: Bool
     let width: CGFloat
@@ -6391,6 +6675,7 @@ struct WaveformSectionBlock: View, Equatable {
         lhs.isPlaying == rhs.isPlaying &&
         lhs.isQueued == rhs.isQueued &&
         lhs.isFocused == rhs.isFocused &&
+        lhs.isEditMode == rhs.isEditMode &&
         lhs.isLoopActive == rhs.isLoopActive &&
         lhs.isLoopInfinite == rhs.isLoopInfinite &&
         lhs.width == rhs.width &&
@@ -6448,17 +6733,21 @@ struct WaveformSectionBlock: View, Equatable {
                         Spacer()
                         
                         if width >= 22 {
-                            Button(action: onLoopToggle) {
+                            Button(action: {
+                                guard !isEditMode else { return }
+                                onLoopToggle()
+                            }) {
                                 TablerIcon(
                                     name: isLoopInfinite ? "infinity-2" : "loop",
                                     size: isLoopInfinite ? 26 : 20,
-                                    color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
+                                    color: Color.white.opacity(isEditMode ? 0.20 : (isLoopActive ? 1.0 : 0.50))
                                 )
                                 .frame(width: 26, height: 26)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
+                            .disabled(isEditMode)
+                            .help(isEditMode ? "" : (isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)")))
                         }
                     }
                     .padding(.top, 6)
@@ -6482,17 +6771,21 @@ struct WaveformSectionBlock: View, Equatable {
                         
                         Spacer(minLength: 0)
                         
-                        Button(action: onLoopToggle) {
+                        Button(action: {
+                            guard !isEditMode else { return }
+                            onLoopToggle()
+                        }) {
                             TablerIcon(
                                 name: isLoopInfinite ? "infinity-2" : "loop",
                                 size: isLoopInfinite ? 26 : 20,
-                                color: Color.white.opacity(isLoopActive ? 1.0 : 0.50)
+                                color: Color.white.opacity(isEditMode ? 0.20 : (isLoopActive ? 1.0 : 0.50))
                             )
                             .frame(width: 26, height: 26)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)"))
+                        .disabled(isEditMode)
+                        .help(isEditMode ? "" : (isLoopInfinite ? "Loop Infinito ativo (I)" : (isLoopActive ? "Repetir 1 vez ativo (L)" : "Repetir trecho (L = 1x, I = Infinito)")))
                     }
                     .padding(.leading, index > 0 ? max(5, min(8, (width - 24) / 4) + 2) : max(2, min(6, (width - 24) / 4)))
                     .padding(.trailing, max(2, min(6, (width - 24) / 4)))
@@ -6504,35 +6797,49 @@ struct WaveformSectionBlock: View, Equatable {
             // Borda de destaque quando ativa / enfileirada / focada com o teclado ou borda colorida da seção
             .overlay(
                 Group {
-                    if isPlaying {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.green, lineWidth: 2.5)
-                            .padding(2)
-                            .shadow(color: Color.green.opacity(0.6), radius: 6)
-                            .overlay(
-                                Group {
-                                    if isFocused && !isQueued {
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
-                                            .padding(2)
-                                            .shadow(color: Color.white.opacity(0.8), radius: 4)
-                                    }
-                                }
-                            )
-                    } else if isQueued {
-                        // APENAS o bloco em laranja (salto quantizado) fica pulsando
-                        QueuedJumpPulsingOverlay()
-                    } else if isFocused {
-                        // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white.opacity(0.95), lineWidth: 2.2)
-                            .padding(2)
-                            .shadow(color: Color.white.opacity(0.7), radius: 6)
+                    if isEditMode {
+                        if isFocused {
+                            // No modo EDIT: apenas um contorno limpo e nítido no bloco selecionado para edição
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.90), lineWidth: 1.8)
+                                .padding(2)
+                        } else {
+                            // Borda padrão sutil da seção
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(badgeColor.opacity(0.28), lineWidth: 1.0)
+                                .padding(2)
+                        }
                     } else {
-                        // Borda sutil estática com a cor da seção (sem pulsar)
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(badgeColor.opacity(0.28), lineWidth: 1.2)
-                            .padding(2)
+                        if isPlaying {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.green, lineWidth: 2.5)
+                                .padding(2)
+                                .shadow(color: Color.green.opacity(0.6), radius: 6)
+                                .overlay(
+                                    Group {
+                                        if isFocused && !isQueued {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.white.opacity(0.95), lineWidth: 2.0)
+                                                .padding(2)
+                                                .shadow(color: Color.white.opacity(0.8), radius: 4)
+                                        }
+                                    }
+                                )
+                        } else if isQueued {
+                            // APENAS o bloco em laranja (salto quantizado) fica pulsando
+                            QueuedJumpPulsingOverlay()
+                        } else if isFocused {
+                            // Destaque visual branco translúcido do cursor de navegação por setas (aguardando Enter)
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.95), lineWidth: 2.2)
+                                .padding(2)
+                                .shadow(color: Color.white.opacity(0.7), radius: 6)
+                        } else {
+                            // Borda sutil estática com a cor da seção (sem pulsar)
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(badgeColor.opacity(0.28), lineWidth: 1.2)
+                                .padding(2)
+                        }
                     }
                 }
             )
@@ -6543,13 +6850,14 @@ struct WaveformSectionBlock: View, Equatable {
         .frame(width: width, height: 175)
         .clipped()
         .modifier(RightClickModifier(action: {
+            guard isEditMode else { return }
             DispatchQueue.main.async {
                 state.quickEditingCueIdx = index
             }
         }))
         .popover(
             isPresented: Binding(
-                get: { isEditing },
+                get: { isEditing && isEditMode },
                 set: { if !$0 { state.quickEditingCueIdx = nil } }
             ),
             arrowEdge: .top
@@ -6559,6 +6867,10 @@ struct WaveformSectionBlock: View, Equatable {
     }
     
     private var blockBgColor: Color {
+        if isEditMode {
+            // No modo EDIT: sem máscara verde ou branca cobrindo a forma de onda
+            return badgeColor.opacity(0.08)
+        }
         if isPlaying {
             if isFocused && !isQueued {
                 return Color(red: 0.16, green: 0.45, blue: 0.28).opacity(0.55)
@@ -8028,25 +8340,6 @@ struct QuickSectionEditPopoverView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.gray)
                     Spacer()
-                    if state.canUndo {
-                        Button(action: {
-                            state.undo()
-                        }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .font(.system(size: 8, weight: .bold))
-                                Text("Undo")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .foregroundColor(.cyan)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.cyan.opacity(0.12))
-                            .cornerRadius(4)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .help("Undo last edit (⌘Z)")
-                    }
                     Button(action: { state.quickEditingCueIdx = nil }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .bold))

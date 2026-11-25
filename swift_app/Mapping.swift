@@ -322,6 +322,11 @@ final class MappingManager: ObservableObject {
         
         // 2. Se estiver em modo de execução normal (mode == .none):
         if mode == .none {
+            // Se estiver segurando Option, Control ou Command: não intercepta atalhos de sistema/edição
+            if event.modifierFlags.contains(.option) || event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control) {
+                return false
+            }
+            
             // Procura se a tecla pressionada possui ação mapeada
             for (action, mapping) in keyMappings {
                 if mapping.keyCode == event.keyCode {
